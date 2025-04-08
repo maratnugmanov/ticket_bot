@@ -1,6 +1,7 @@
 import enum
 import time
 from sqlmodel import SQLModel, Field, Relationship
+from sqlalchemy import UniqueConstraint
 from pydantic import PositiveInt, StrictBool
 
 
@@ -69,6 +70,10 @@ class Report(SQLModel, table=True):
     created_at: int = Field(default_factory=lambda: int(time.time()), index=True)
     updated_at: int | None = Field(default=None, index=True)
 
+    __table_args__ = (
+        UniqueConstraint("device_id", "ticket_id", name="unique_device_ticket_pair"),
+    )
+
 
 class Writeoff(SQLModel, table=True):
     __tablename__ = "writeoffs"
@@ -79,6 +84,10 @@ class Writeoff(SQLModel, table=True):
     user: User = Relationship(back_populates="writeoffs")
     created_at: int = Field(default_factory=lambda: int(time.time()), index=True)
     updated_at: int | None = Field(default=None, index=True)
+
+    __table_args__ = (
+        UniqueConstraint("device_id", "user_id", name="unique_device_user_pair"),
+    )
 
 
 class Device(SQLModel, table=True):
