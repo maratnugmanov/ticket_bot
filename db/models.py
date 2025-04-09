@@ -1,7 +1,7 @@
 import enum
 import time
-from sqlmodel import SQLModel, Field, Relationship
-from sqlalchemy import UniqueConstraint
+from sqlmodel import SQLModel, Field, Relationship, MetaData
+from sqlalchemy import UniqueConstraint, String
 from pydantic import PositiveInt, StrictBool
 
 
@@ -28,11 +28,27 @@ class UserRoleLink(SQLModel, table=True):
     )
 
 
+class RoleForCreation(SQLModel, table=True):
+    """This class is only used for creation to evade SQLite's VARCHAR(N)
+    limitation for Enums. Even though SQLite itself doesn't enforce the
+    limitation, it might introduce problems with other SQL database
+    engines. After the initial creation of tables the Role class
+    takes it's place, which is changing name type hint from str to
+    RoleName enum class."""
+
+    __tablename__ = "roles"
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(default=RoleName.GUEST, unique=True, index=True)
+    users: list["User"] = Relationship(back_populates="roles", link_model=UserRoleLink)
+
+
 class Role(SQLModel, table=True):
     __tablename__ = "roles"
     id: int | None = Field(default=None, primary_key=True)
-    name: RoleName = Field(default=RoleName.GUEST, unique=True, index=True)
+    name: RoleName = Field(default=RoleName.GUEST, unique=True)  # plus index=True
     users: list["User"] = Relationship(back_populates="roles", link_model=UserRoleLink)
+
+    __table_args__ = {"extend_existing": True}
 
 
 class User(SQLModel, table=True):
@@ -104,9 +120,26 @@ class Device(SQLModel, table=True):
     )
 
 
+class DeviceTypeForCreation(SQLModel, table=True):
+    """This class is only used for creation to evade SQLite's VARCHAR(N)
+    limitation for Enums. Even though SQLite itself doesn't enforce the
+    limitation, it might introduce problems with other SQL database
+    engines. After the initial creation of tables the DeviceType class
+    takes it's place, which is changing name type hint from str to
+    DeviceTypeName enum class."""
+
+    __tablename__ = "device_types"
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(unique=True, index=True)
+    is_disabled: StrictBool = Field(default=False, index=True)
+    devices: list[Device] = Relationship(back_populates="type")
+
+
 class DeviceType(SQLModel, table=True):
     __tablename__ = "device_types"
     id: int | None = Field(default=None, primary_key=True)
-    name: DeviceTypeName = Field(unique=True, index=True)
-    is_disabled: StrictBool = Field(default=False, index=True)
+    name: DeviceTypeName = Field(unique=True)  # plus index=True
+    is_disabled: StrictBool = Field(default=False)  # plus index=True
     devices: list[Device] = Relationship(back_populates="type")
+
+    __table_args__ = {"extend_existing": True}

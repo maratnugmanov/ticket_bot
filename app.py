@@ -1,47 +1,24 @@
-from os import getenv
+# Built-ins
 from typing import Annotated
 from contextlib import asynccontextmanager
+
+# Core dependencies
 from fastapi import Depends, FastAPI, HTTPException, Query
-from sqlmodel import Field, Session, SQLModel, create_engine, select, text
+from sqlmodel import Field, Session, SQLModel, select, text
 
-from db.models import Role, UserRoleLink, User, Ticket, Report, Device, DeviceType
-
-# from api.models import *
-
-
-if __debug__:
-    from dotenv import load_dotenv
-
-    load_dotenv()
-
-DATABASE_NAME = getenv("DATABASE_NAME")
-TOKEN = getenv("TOKEN")
-BOT_NAME = getenv("BOT_NAME")
-
-if DATABASE_NAME is None:
-    raise ValueError("The 'DATABASE_NAME' environment variable must be set.")
-
-if TOKEN is None:
-    raise ValueError("The 'TOKEN' environment variable must be set.")
-
-if BOT_NAME is None:
-    raise ValueError("The 'BOT_NAME' environment variable must be set.")
-
-sqlite_file_name = "db/" + DATABASE_NAME
-sqlite_url = f"sqlite:///{sqlite_file_name}"
-
-connect_args = {"check_same_thread": False}
-engine = create_engine(sqlite_url, connect_args=connect_args, echo=True)
-
-
-def create_db_and_tables():
-    SQLModel.metadata.create_all(engine)
-
-
-def get_session():
-    with Session(engine) as session:
-        session.exec(text("PRAGMA foreign_keys=ON"))
-        yield session
+# Local code
+from api.variables import TOKEN, BOT_NAME
+from db.models import (
+    UserRoleLink,
+    Role,
+    User,
+    Ticket,
+    Report,
+    Writeoff,
+    Device,
+    DeviceType,
+)
+from db.engine import engine, create_db_and_tables, get_session
 
 
 SessionDep = Annotated[Session, Depends(get_session)]
