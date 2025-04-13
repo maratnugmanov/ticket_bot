@@ -1,111 +1,117 @@
-from enum import Enum
 import time
-from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
-from pydantic import PositiveInt, StrictBool
+import enum
+from sqlalchemy import (
+    Enum as SQLAlchemyEnum,
+    Integer,
+    String,
+    Boolean,
+    ForeignKey,
+    UniqueConstraint,
+)
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
-class RoleName(str, Enum):
+class RoleName(str, enum.Enum):
     ADMIN = "admin"
     MANAGER = "manager"
     ENGINEER = "engineer"
     GUEST = "guest"
 
 
-class DeviceTypeName(str, Enum):
+class DeviceTypeName(str, enum.Enum):
     IP = "IP"
     TVE = "TVE"
     ROUTER = "Router"  # Russian?
 
 
-class UserRoleLink(SQLModel, table=True):
+class Base(DeclarativeBase):
+    pass
+
+
+# fmt:off
+
+
+class UserRoleLinkDB(Base):
     __tablename__ = "users_roles_link"
-    role_id: int | None = Field(
-        default=None, primary_key=True, foreign_key="roles.id", ondelete="CASCADE"
-    )
-    user_id: int | None = Field(
-        default=None, primary_key=True, foreign_key="users.id", ondelete="CASCADE"
-    )
+    role_id: Mapped[int] = mapped_column(ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True)
 
 
-class Role(SQLModel, table=True):
+class RoleDB(Base):
     __tablename__ = "roles"
-    id: int | None = Field(default=None, primary_key=True)
-    name: RoleName = Field(default=RoleName.GUEST, unique=True, index=True)
-    users: list["User"] = Relationship(back_populates="roles", link_model=UserRoleLink)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[RoleName] = mapped_column(SQLAlchemyEnum(RoleName, native_enum=False, length=128), default=RoleName.GUEST, index=True, unique=True)
+    users: Mapped[list["UserDB"]] = relationship(back_populates="roles", secondary="users_roles_link")
 
 
-class User(SQLModel, table=True):
+class UserDB(Base):
     __tablename__ = "users"
-    id: int | None = Field(default=None, primary_key=True)
-    telegram_uid: PositiveInt = Field(unique=True, index=True)
-    first_name: str | None = Field(default=None, index=True)
-    last_name: str | None = Field(default=None, index=True)
-    is_disabled: StrictBool = Field(default=False, index=True)
-    roles: list[Role] = Relationship(back_populates="users", link_model=UserRoleLink)
-    tickets: list["Ticket"] = Relationship(back_populates="user", cascade_delete=True)
-    writeoffs: list["Writeoff"] = Relationship(back_populates="user")
-    created_at: int = Field(default_factory=lambda: int(time.time()), index=True)
-    updated_at: int | None = Field(default=None, index=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    telegram_uid: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    first_name: Mapped[str | None] = mapped_column(String, index=True, nullable=True)
+    last_name: Mapped[str | None] = mapped_column(String, index=True, nullable=True)
+    is_disabled: Mapped[bool] = mapped_column(Boolean, default=False, index=True, nullable=False)
+    roles: Mapped[list[RoleDB]] = relationship(secondary="users_roles_link", back_populates="users")
+    tickets: Mapped[list["TicketDB"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
+    writeoffs: Mapped[list["WriteoffDB"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
+    created_at: Mapped[int] = mapped_column(Integer, default=lambda: int(time.time()), index=True, nullable=False)
+    updated_at: Mapped[int | None] = mapped_column(Integer, onupdate=lambda: int(time.time()), index=True, nullable=True)
+
+    def __repr__(self) -> str:
+        return f"UserDB(id={self.id!r}, telegram_uid={self.telegram_uid!r}, is_disabled={self.is_disabled!r})"
 
 
-class Ticket(SQLModel, table=True):
+class TicketDB(Base):
     __tablename__ = "tickets"
-    id: int | None = Field(default=None, primary_key=True)
-    ticket_number: PositiveInt = Field(unique=True, index=True)
-    user_id: int = Field(foreign_key="users.id", index=True, ondelete="CASCADE")
-    user: User = Relationship(back_populates="tickets")
-    reports: list["Report"] = Relationship(back_populates="ticket", cascade_delete=True)
-    created_at: int = Field(default_factory=lambda: int(time.time()), index=True)
-    updated_at: int | None = Field(default=None, index=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ticket_number: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user: Mapped[UserDB] = relationship(back_populates="tickets")
+    reports: Mapped[list["ReportDB"]] = relationship(back_populates="ticket", cascade="all, delete-orphan", passive_deletes=True)
+    created_at: Mapped[int] = mapped_column(Integer, default=lambda: int(time.time()), index=True, nullable=False)
+    updated_at: Mapped[int | None] = mapped_column(Integer, onupdate=lambda: int(time.time()), index=True, nullable=True)
 
 
-class Report(SQLModel, table=True):
+class ReportDB(Base):
     __tablename__ = "reports"
-    id: int | None = Field(default=None, primary_key=True)
-    device_id: int = Field(foreign_key="devices.id", index=True, ondelete="CASCADE")
-    device: "Device" = Relationship(back_populates="reports")
-    ticket_id: int = Field(foreign_key="tickets.id", index=True, ondelete="CASCADE")
-    ticket: Ticket = Relationship(back_populates="reports")
-    created_at: int = Field(default_factory=lambda: int(time.time()), index=True)
-    updated_at: int | None = Field(default=None, index=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    device_id: Mapped[int] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"), index=True)
+    device: Mapped["DeviceDB"] = relationship(back_populates="reports")
+    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id", ondelete="CASCADE"), index=True)
+    ticket: Mapped[TicketDB] = relationship(back_populates="reports")
+    created_at: Mapped[int] = mapped_column(Integer, default=lambda: int(time.time()), index=True, nullable=False)
+    updated_at: Mapped[int | None] = mapped_column(Integer, onupdate=lambda: int(time.time()), index=True, nullable=True)
 
-    __table_args__ = (
-        UniqueConstraint("device_id", "ticket_id", name="unique_device_ticket_pair"),
-    )
+    __table_args__ = (UniqueConstraint("device_id", "ticket_id", name="unique_device_ticket_pair"),)
 
 
-class Writeoff(SQLModel, table=True):
+class WriteoffDB(Base):
     __tablename__ = "writeoffs"
-    id: int | None = Field(default=None, primary_key=True)
-    device_id: int = Field(foreign_key="devices.id", index=True, ondelete="CASCADE")
-    device: "Device" = Relationship(back_populates="writeoffs")
-    user_id: int = Field(foreign_key="users.id", index=True)
-    user: User = Relationship(back_populates="writeoffs")
-    created_at: int = Field(default_factory=lambda: int(time.time()), index=True)
-    updated_at: int | None = Field(default=None, index=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    device_id: Mapped[int] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"), index=True)
+    device: Mapped["DeviceDB"] = relationship(back_populates="writeoffs")
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    user: Mapped[UserDB] = relationship(back_populates="writeoffs")
+    created_at: Mapped[int] = mapped_column(Integer, default=lambda: int(time.time()), index=True, nullable=False)
+    updated_at: Mapped[int | None] = mapped_column(Integer, onupdate=lambda: int(time.time()), index=True, nullable=True)
 
-    __table_args__ = (
-        UniqueConstraint("device_id", "user_id", name="unique_device_user_pair"),
-    )
+    __table_args__ = (UniqueConstraint("device_id", "user_id", name="unique_device_user_pair"),)
 
 
-class Device(SQLModel, table=True):
+class DeviceDB(Base):
     __tablename__ = "devices"
-    id: int | None = Field(default=None, primary_key=True)
-    type_id: int = Field(foreign_key="device_types.id", index=True, ondelete="RESTRICT")
-    type: "DeviceType" = Relationship(back_populates="devices")
-    serial_number: str = Field(unique=True, index=True)
-    is_defective: StrictBool = Field(default=False, index=True)
-    reports: list[Report] = Relationship(back_populates="device", cascade_delete=True)
-    writeoffs: list[Writeoff] = Relationship(
-        back_populates="device",
-        cascade_delete=True,
-    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    type_id: Mapped[int] = mapped_column(ForeignKey("device_types.id", ondelete="RESTRICT"), index=True)
+    type: Mapped["DeviceTypeDB"] = relationship(back_populates="devices")
+    serial_number: Mapped[str] = mapped_column(String, unique=True, index=True)
+    is_defective: Mapped[bool] = mapped_column(Boolean, default=False, index=True, nullable=False)
+    reports: Mapped[list[ReportDB]] = relationship(back_populates="device", cascade="all, delete-orphan", passive_deletes=True)
+    writeoffs: Mapped[list[WriteoffDB]] = relationship(back_populates="device", cascade="all, delete-orphan", passive_deletes=True)
 
 
-class DeviceType(SQLModel, table=True):
+class DeviceTypeDB(Base):
     __tablename__ = "device_types"
-    id: int | None = Field(default=None, primary_key=True)
-    name: DeviceTypeName = Field(unique=True, index=True)
-    is_disabled: StrictBool = Field(default=False, index=True)
-    devices: list[Device] = Relationship(back_populates="type")
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[DeviceTypeName] = mapped_column(SQLAlchemyEnum(DeviceTypeName, native_enum=False, length=128), index=True, unique=True)
+    is_disabled: Mapped[bool] = mapped_column(Boolean, default=False, index=True, nullable=False)
+    devices: Mapped[list[DeviceDB]] = relationship(back_populates="type")
