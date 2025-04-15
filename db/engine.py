@@ -1,6 +1,6 @@
 from api.variables import DATABASE_NAME
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import DeclarativeBase, Session
+from sqlalchemy.orm import Session
 from db.models import Base
 
 
