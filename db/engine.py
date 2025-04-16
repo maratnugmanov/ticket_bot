@@ -1,10 +1,14 @@
-from api.variables import DATABASE_NAME
-from sqlalchemy import create_engine, text
+from typing import Annotated
+from sqlalchemy import create_engine, text, select
 from sqlalchemy.orm import Session
-from db.models import Base
+from fastapi import Depends
+
+from api.variables import DATABASE_NAME
+from db.models import Base, RoleDB
+from core.enums import RoleName
 
 
-sqlite_file_name = "db/" + DATABASE_NAME
+sqlite_file_name = f"db/{DATABASE_NAME}"
 sqlite_url = f"sqlite:///{sqlite_file_name}"
 
 connect_args = {"check_same_thread": False}
@@ -19,3 +23,14 @@ def get_session():
     with Session(engine) as session:
         session.execute(text("PRAGMA foreign_keys=ON"))
         yield session
+
+
+SessionDep = Annotated[Session, Depends(get_session)]
+
+
+def create_user_roles(session: Session):
+    for role in RoleName:
+        query = select(RoleDB).where(RoleDB.name == role)
+        existing_role = session.scalar(query)
+        if not existing_role:
+            session.add(RoleDB(name=role))

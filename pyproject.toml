@@ -8,3 +8,8 @@ dependencies = [
     "fastapi[standard]>=0.115.12",
     "sqlalchemy>=2.0.40",
 ]
+
+[dependency-groups]
+dev = [
+    "requests>=2.32.3",
+]

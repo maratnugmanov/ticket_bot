@@ -13,5 +13,5 @@ wheels/
 .mypy_cache/
 .env
 *.db
-test.py
 db/schemas.py
+.temp/
