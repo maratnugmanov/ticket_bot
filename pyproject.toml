@@ -12,4 +12,5 @@ dependencies = [
 [dependency-groups]
 dev = [
     "requests>=2.32.3",
+    "types-requests>=2.32.0.20250328",
 ]

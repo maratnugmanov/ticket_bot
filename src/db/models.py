@@ -1,3 +1,4 @@
+from __future__ import annotations
 from datetime import datetime, timezone
 import zoneinfo
 from sqlalchemy import (
@@ -5,13 +6,12 @@ from sqlalchemy import (
     Integer,
     String,
     Boolean,
-    DateTime,
     ForeignKey,
     UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.dialects.sqlite import DATETIME
-from core.enums import RoleName, DeviceTypeName
+from src.core.enums import RoleName, DeviceTypeName
 
 
 def format_datetime_for_user(
@@ -59,7 +59,7 @@ class RoleDB(TimestampMixinDB, Base):
     __tablename__ = "roles"
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[RoleName] = mapped_column(default=RoleName.GUEST, index=True, unique=True)
-    users: Mapped[list["UserDB"]] = relationship(secondary="users_roles_link", back_populates="roles")
+    users: Mapped[list[UserDB]] = relationship(secondary="users_roles_link", back_populates="roles")
 
 
 class UserDB(TimestampMixinDB, Base):
@@ -71,8 +71,8 @@ class UserDB(TimestampMixinDB, Base):
     timezone: Mapped[str] = mapped_column(String, default="Europe/Samara", index=True)
     is_disabled: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     roles: Mapped[list[RoleDB]] = relationship(secondary="users_roles_link", back_populates="users")
-    tickets: Mapped[list["TicketDB"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
-    writeoffs: Mapped[list["WriteoffDB"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
+    tickets: Mapped[list[TicketDB]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
+    writeoffs: Mapped[list[WriteoffDB]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
 
     def __repr__(self) -> str:
         # created_repr = self.created_at.isoformat() if self.created_at else "None"
@@ -85,14 +85,14 @@ class TicketDB(TimestampMixinDB, Base):
     ticket_number: Mapped[int] = mapped_column(Integer, unique=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     user: Mapped[UserDB] = relationship(back_populates="tickets")
-    reports: Mapped[list["ReportDB"]] = relationship(back_populates="ticket", cascade="all, delete-orphan", passive_deletes=True)
+    reports: Mapped[list[ReportDB]] = relationship(back_populates="ticket", cascade="all, delete-orphan", passive_deletes=True)
 
 
 class ReportDB(TimestampMixinDB, Base):
     __tablename__ = "reports"
     id: Mapped[int] = mapped_column(primary_key=True)
     device_id: Mapped[int] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"), index=True)
-    device: Mapped["DeviceDB"] = relationship(back_populates="reports")
+    device: Mapped[DeviceDB] = relationship(back_populates="reports")
     ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id", ondelete="CASCADE"), index=True)
     ticket: Mapped[TicketDB] = relationship(back_populates="reports")
 
@@ -103,7 +103,7 @@ class WriteoffDB(TimestampMixinDB, Base):
     __tablename__ = "writeoffs"
     id: Mapped[int] = mapped_column(primary_key=True)
     device_id: Mapped[int] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"), index=True)
-    device: Mapped["DeviceDB"] = relationship(back_populates="writeoffs")
+    device: Mapped[DeviceDB] = relationship(back_populates="writeoffs")
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     user: Mapped[UserDB] = relationship(back_populates="writeoffs")
 
@@ -114,7 +114,7 @@ class DeviceDB(TimestampMixinDB, Base):
     __tablename__ = "devices"
     id: Mapped[int] = mapped_column(primary_key=True)
     type_id: Mapped[int] = mapped_column(ForeignKey("device_types.id", ondelete="RESTRICT"), index=True)
-    type: Mapped["DeviceTypeDB"] = relationship(back_populates="devices")
+    type: Mapped[DeviceTypeDB] = relationship(back_populates="devices")
     serial_number: Mapped[str] = mapped_column(String, unique=True, index=True)
     is_defective: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     reports: Mapped[list[ReportDB]] = relationship(back_populates="device", cascade="all, delete-orphan", passive_deletes=True)

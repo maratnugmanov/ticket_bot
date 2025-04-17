@@ -3,12 +3,12 @@ from sqlalchemy import create_engine, text, select
 from sqlalchemy.orm import Session
 from fastapi import Depends
 
-from api.variables import DATABASE_NAME
-from db.models import Base, RoleDB
-from core.enums import RoleName
+from src.api.constants import DATABASE_NAME
+from src.db.models import Base, RoleDB
+from src.core.enums import RoleName
 
 
-sqlite_file_name = f"db/{DATABASE_NAME}"
+sqlite_file_name = f"src/db/{DATABASE_NAME}"
 sqlite_url = f"sqlite:///{sqlite_file_name}"
 
 connect_args = {"check_same_thread": False}

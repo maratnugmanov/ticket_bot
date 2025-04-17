@@ -8,9 +8,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 # Local code
-from api.variables import TOKEN, BOT_NAME
-from db.engine import create_db_and_tables, create_user_roles, engine
-from db.models import (
+from src.tg.models import Update
+from src.api.constants import TOKEN, BOT_NAME
+from src.db.engine import create_db_and_tables, create_user_roles, engine
+from src.db.models import (
     RoleName,
     DeviceTypeName,
     UserRoleLinkDB,
@@ -40,7 +41,8 @@ app = FastAPI(lifespan=lifespan)
 @app.post("/", status_code=status.HTTP_200_OK)
 async def read_root(request: Request):
     result = await request.json()
-    print(result)
+    update = Update.model_validate(result)
+    print(update.model_dump_json(exclude_none=True))
     return {"Hello": "World"}
 
 

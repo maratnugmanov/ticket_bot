@@ -14,4 +14,4 @@ wheels/
 .env
 *.db
 db/schemas.py
-.temp/
+temp/
