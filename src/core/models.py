@@ -16,26 +16,22 @@ class BaseModelConfig(BaseModel):
 class Role(BaseModelConfig, TimestampMixin):
     id: int
     name: RoleName
-    users: list[User]
 
 
 class User(BaseModelConfig, TimestampMixin):
     id: int
     telegram_uid: int
-    first_name: str | None
-    last_name: str | None
-    timezone: str
-    is_disabled: bool
+    first_name: str | None = None
+    last_name: str | None = None
+    timezone: str | None = None
+    is_disabled: bool = False
     roles: list[Role]
-    tickets: list[Ticket]
-    writeoffs: list[Writeoff]
 
 
 class Ticket(BaseModelConfig, TimestampMixin):
     id: int
     ticket_number: int
     user: User
-    reports: list[Report]
 
 
 class Report(BaseModelConfig, TimestampMixin):
@@ -55,12 +51,9 @@ class Device(BaseModelConfig, TimestampMixin):
     type: DeviceType
     serial_number: str
     is_defective: bool
-    reports: list[Report]
-    writeoffs: list[Writeoff]
 
 
 class DeviceType(BaseModelConfig, TimestampMixin):
     id: int
     name: DeviceTypeName
     is_disabled: bool
-    devices: list[Device]

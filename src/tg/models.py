@@ -3,42 +3,42 @@ from pydantic import BaseModel, Field, AwareDatetime
 from typing import Literal
 
 
-class Update(BaseModel):
+class UpdateTG(BaseModel):
     update_id: int
-    message: Message | None = None
-    callback_query: CallbackQuery | None = None
+    message: MessageTG | None = None
+    callback_query: CallbackQueryTG | None = None
 
 
-class Message(BaseModel):
+class MessageTG(BaseModel):
     message_id: int
-    from_: User = Field(alias="from")  # Mandatory since private chats only
+    from_: UserTG = Field(alias="from")  # Mandatory since private chats only
     date: AwareDatetime
-    chat: Chat
+    chat: ChatTG
     forward_origin: (
-        MessageOriginUser
-        | MessageOriginHiddenUser
-        | MessageOriginChat
-        | MessageOriginChannel
+        MessageOriginUserTG
+        | MessageOriginHiddenUserTG
+        | MessageOriginChatTG
+        | MessageOriginChannelTG
         | None
     ) = None
-    forward_from: User | None = None
+    forward_from: UserTG | None = None
     forward_date: AwareDatetime | None = None
-    reply_to_message: Message | None = None  # Same chat reply
+    reply_to_message: MessageTG | None = None  # Same chat reply
     is_from_offline: bool | None = None  # Scheduled message
     text: str | None = None
-    entities: list[MessageEntity] | None = None
-    reply_markup: InlineKeyboardMarkup | None = None
+    entities: list[MessageEntityTG] | None = None
+    reply_markup: InlineKeyboardMarkupTG | None = None
 
 
-class CallbackQuery(BaseModel):
+class CallbackQueryTG(BaseModel):
     id: int
-    from_: User = Field(alias="from")
-    message: Message  # Mandatory since no "inline_message_id" will be used
+    from_: UserTG = Field(alias="from")
+    message: MessageTG  # Mandatory since no "inline_message_id" will be used
     chat_instance: str
     data: str  # Mandatory since no "game_short_name" will be used
 
 
-class User(BaseModel):
+class UserTG(BaseModel):
     id: int
     is_bot: bool
     first_name: str
@@ -48,7 +48,7 @@ class User(BaseModel):
     is_premium: bool | None = None
 
 
-class Chat(BaseModel):
+class ChatTG(BaseModel):
     id: int
     type: Literal["private", "group", "supergroup", "channel"]  # cspell: disable-line
     username: str | None = None
@@ -56,36 +56,36 @@ class Chat(BaseModel):
     last_name: str | None = None
 
 
-class MessageOrigin(BaseModel):
+class MessageOriginTG(BaseModel):
     type: str
     date: AwareDatetime
 
 
-class MessageOriginUser(MessageOrigin):
-    sender_user: User
+class MessageOriginUserTG(MessageOriginTG):
+    sender_user: UserTG
 
 
-class MessageOriginHiddenUser(MessageOrigin):
+class MessageOriginHiddenUserTG(MessageOriginTG):
     sender_user_name: str
 
 
-class MessageOriginChat(MessageOrigin):
-    sender_chat: Chat
+class MessageOriginChatTG(MessageOriginTG):
+    sender_chat: ChatTG
     author_signature: str | None = None
 
 
-class MessageOriginChannel(MessageOrigin):
-    chat: Chat
+class MessageOriginChannelTG(MessageOriginTG):
+    chat: ChatTG
     message_id: int
     author_signature: str | None = None
 
 
-class InlineKeyboardMarkup(BaseModel):
-    inline_keyboard: list[list[InlineKeyboardButton]]
+class InlineKeyboardMarkupTG(BaseModel):
+    inline_keyboard: list[list[InlineKeyboardButtonTG]]
 
 
-class ReplyKeyboardMarkup(BaseModel):
-    keyboard: list[list[KeyboardButton]]
+class ReplyKeyboardMarkupTG(BaseModel):
+    keyboard: list[list[KeyboardButtonTG]]
     is_persistent: bool | None = None
     resize_keyboard: bool | None = None
     one_time_keyboard: bool | None = None
@@ -93,19 +93,19 @@ class ReplyKeyboardMarkup(BaseModel):
     selective: bool | None = None
 
 
-class ReplyKeyboardRemove(BaseModel):
+class ReplyKeyboardRemoveTG(BaseModel):
     remove_keyboard: bool
     selective: bool | None = None
 
 
-class InlineKeyboardButton(BaseModel):
+class InlineKeyboardButtonTG(BaseModel):
     text: str
     url: str | None = Field(default=None, pattern=r"^(https*|tg):\/\/.*$")
     callback_data: str | None = None
-    copy_text: CopyTextButton | None = None
+    copy_text: CopyTextButtonTG | None = None
 
 
-class ForceReply(BaseModel):
+class ForceReplyTG(BaseModel):
     """Upon receiving a message with this object, Telegram clients will
     display a reply interface to the user (act as if the user has
     selected the bot's message and tapped 'Reply'). This can be
@@ -119,7 +119,7 @@ class ForceReply(BaseModel):
     selective: bool | None = None
 
 
-class KeyboardButton(BaseModel):
+class KeyboardButtonTG(BaseModel):
     """This object represents one button of the reply keyboard. At most
     one of the optional fields must be used to specify type of the
     button. For simple text buttons, String can be used instead of this
@@ -130,36 +130,53 @@ class KeyboardButton(BaseModel):
     request_location: bool | None = None
 
 
-class CopyTextButton(BaseModel):
+class CopyTextButtonTG(BaseModel):
     text: str | None = Field(default=None, max_length=256)
 
 
-class MessageEntity(BaseModel):
+class MessageEntityTG(BaseModel):
     type: str  # "bot_command"
     offset: int
     length: int
     url: str | None = None
-    user: User | None = None
+    user: UserTG | None = None
     language: str | None = None
     custom_emoji_id: str | None = None
 
 
-class SendMessage(BaseModel):
+class ResponseTG(BaseModel):
+    """The response contains a JSON object, which always has a Boolean
+    field 'ok' and may have an optional String field 'description' with
+    a human-readable description of the result. If 'ok' equals True, the
+    request was successful and the result of the query can be found in
+    the 'result' field. In case of an unsuccessful request, 'ok' equals
+    false and the error is explained in the 'description'. An Integer
+    'error_code' field is also returned, but its contents are subject to
+    change in the future. Some errors may also have an optional field
+    'parameters' of the type ResponseParameters, which can help to
+    automatically handle the error."""
+
+    ok: bool
+    description: str | None = None
+    result: MessageTG | None = None
+
+
+class SendMessageTG(BaseModel):
     chat_id: int | str
     text: str
     # https://core.telegram.org/bots/api#formatting-options
     parse_mode: Literal["MarkdownV2", "HTML"] | None = None
     reply_markup: (
-        InlineKeyboardMarkup
-        | ReplyKeyboardMarkup
-        | ReplyKeyboardRemove
-        | ForceReply
+        InlineKeyboardMarkupTG
+        | ReplyKeyboardMarkupTG
+        | ReplyKeyboardRemoveTG
+        | ForceReplyTG
         | None
     ) = None
 
 
 if __name__ == "__main__":
-    d: dict = {
+    d: dict[str, object] = {
         "update_id": 661826899,
         "callback_query": {
             "id": "1827344727401131",
@@ -205,7 +222,7 @@ if __name__ == "__main__":
         },
     }
 
-    obj = Update.model_validate(d)
+    obj = UpdateTG.model_validate(d)
 
     print(obj.model_dump_json(exclude_none=True))
     print(obj.update_id)
