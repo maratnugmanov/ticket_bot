@@ -17,7 +17,7 @@ engine = create_engine(sqlite_url, connect_args=connect_args, echo=settings.echo
 def get_session():
     with Session(engine) as session:
         session.execute(text("PRAGMA foreign_keys=ON"))
-        logger.debug("Session to be yielded")
+        logger.debug("Session with 'PRAGMA foreign_keys=ON' initialized.")
         yield session
 
 

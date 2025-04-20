@@ -11,11 +11,11 @@ from src.core.logger import logger
 async def lifespan(app: FastAPI):
     logger.debug("Application startup: Initializing database...")
     create_db_and_tables()
-    logger.debug("Application startup: Database and Tables: Available.")
+    logger.debug("Application startup: Database, tables: Initialized.")
     with Session(engine) as session:
         create_user_roles(session)
         create_main_users(session)
         session.commit()
-    logger.debug("Application startup: Default Roles and Users: Available.")
+    logger.debug("Application startup: Default roles, users: Initialized.")
     yield
     logger.debug("Application shutdown: Complete.")

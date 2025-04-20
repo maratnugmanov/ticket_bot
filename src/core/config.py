@@ -10,11 +10,12 @@ class Settings(BaseSettings):
     database_name: str = Field(alias="DATABASE_NAME")
     token: str = Field(alias="TOKEN")
     bot_name: str = Field(alias="BOT_NAME")
+    bot_id: int = Field(alias="BOT_ID")
 
     log_level: str = Field(default="info", alias="LOG_LEVEL")
     echo_sql: bool = Field(True, alias="ECHO_SQL")
 
-    telegram_api_base: HttpUrl = HttpUrl("https://api.telegram.org")
+    telegram_api_base: HttpUrl = "https://api.telegram.org/"
 
     user_default_timezone: str = Field(alias="USER_DEFAULT_TIMEZONE")
 
@@ -30,7 +31,7 @@ class Settings(BaseSettings):
 
     def get_tg_endpoint(self, method: str) -> str:
         """Constructs the full Telegram API endpoint URL for a given method."""
-        return f"{self.telegram_api_base}/bot{self.token}/{method}"
+        return f"{self.telegram_api_base}bot{self.token}/{method}"
 
 
 settings = Settings()

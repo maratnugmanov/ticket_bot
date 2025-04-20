@@ -1,31 +1,36 @@
-import logging
 import httpx
-from fastapi import APIRouter, Request, status, HTTPException
+from fastapi import APIRouter, Request, status
 
 from src.core.config import settings
 from src.core.logger import logger
-from src.core.dispatcher import DispatcherDep
-from src.tg.models import UpdateTG, SendMessageTG, ResponseTG
+from src.core.dispatcher import DispatcherDep, SessionDep
+from src.tg.models import UpdateTG, ResponseTG
 
 router = APIRouter()
 
 
-# ssh -R 80:localhost:8000 nokey@localhost.run
 @router.post("/", status_code=status.HTTP_200_OK)
-async def handle_telegram_webhook(request: Request, dispatcher: DispatcherDep):
-    logger.debug("POST '/' triggered (webhook)")
+async def handle_telegram_webhook(
+    request: Request, dispatcher: DispatcherDep, session: SessionDep
+):
+    logger.debug("Webhook triggered.")
     request_result = await request.json()
     update = UpdateTG.model_validate(request_result)
-    print(update.model_dump_json(exclude_none=True))
-    if update.message and update.message.text:
-        chat_id = update.message.chat.id
-        text = update.message.text
-        answer = SendMessageTG(chat_id=chat_id, text=text)
+    logger.debug(
+        f"Received update: {UpdateTG.__name__}.model_dump_json(): {update.model_dump_json(exclude_none=True)}"
+    )
+    dispatcher_response = await dispatcher.process(update, session)
+    if dispatcher_response:
         async with httpx.AsyncClient() as client:
-            response_result = await client.post(
-                settings.get_tg_endpoint("sendMessage"),
-                json=answer.model_dump(exclude_none=True),
+            response_result: httpx.Response = await client.post(**dispatcher_response)
+            response_result.raise_for_status()
+        response = ResponseTG.model_validate(response_result.json())
+        if response and response.ok is True:
+            logger.debug(
+                f"Successful reply: {ResponseTG.__name__}.model_dump_json(): {response.model_dump_json(exclude_none=True)}"
             )
-            response = ResponseTG.model_validate(response_result.json())
-            print(response.model_dump_json(exclude_none=True))
-    return
+        else:
+            logger.debug(
+                f"Reply failed: {ResponseTG.__name__}.model_dump_json(): {response.model_dump_json(exclude_none=True)}"
+            )
+    return None
