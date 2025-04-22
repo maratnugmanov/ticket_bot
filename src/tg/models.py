@@ -1,6 +1,6 @@
 from __future__ import annotations
-from pydantic import BaseModel, Field, AwareDatetime
 from typing import Literal
+from pydantic import BaseModel, Field, AwareDatetime
 
 
 class UpdateTG(BaseModel):
@@ -46,6 +46,16 @@ class UserTG(BaseModel):
     username: str | None = None
     language_code: str | None = None
     is_premium: bool | None = None
+
+    @property
+    def full_name(self) -> str:
+        stripped_first = self.first_name.strip() if self.first_name is not None else ""
+        stripped_last = self.last_name.strip() if self.last_name is not None else ""
+        combined_names = " ".join((stripped_first, stripped_last)).strip()
+        if combined_names:
+            return f"'{combined_names}' [{self.id}]"
+        else:
+            return f"[{self.id}]"
 
 
 class ChatTG(BaseModel):

@@ -1,6 +1,6 @@
-from typing import Annotated
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import Session
+from typing import Annotated, AsyncGenerator
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy import text
 from fastapi import Depends
 
 from src.core.config import settings
@@ -8,17 +8,25 @@ from src.core.logger import logger
 
 
 sqlite_file_name = f"src/db/{settings.database_name}"
-sqlite_url = f"sqlite:///{sqlite_file_name}"
+sqlite_url = f"sqlite+aiosqlite:///{sqlite_file_name}"
 
-connect_args = {"check_same_thread": False}
-engine = create_engine(sqlite_url, connect_args=connect_args, echo=settings.echo_sql)
+async_engine = create_async_engine(
+    sqlite_url,
+    echo=settings.echo_sql,
+)
+
+AsyncSessionFactory = async_sessionmaker(
+    bind=async_engine,
+    class_=AsyncSession,
+    expire_on_commit=True,
+)
 
 
-def get_session():
-    with Session(engine) as session:
-        session.execute(text("PRAGMA foreign_keys=ON"))
-        logger.debug("Session with 'PRAGMA foreign_keys=ON' initialized.")
-        yield session
+async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
+    async with AsyncSessionFactory() as async_session:
+        await async_session.execute(text("PRAGMA foreign_keys=ON"))
+        logger.debug("Async Session with 'PRAGMA foreign_keys=ON' initialized.")
+        yield async_session
 
 
-SessionDep = Annotated[Session, Depends(get_session)]
+SessionDep = Annotated[AsyncSession, Depends(get_async_session)]

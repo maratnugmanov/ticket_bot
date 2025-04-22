@@ -5,11 +5,11 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "asyncio>=3.4.3",
+    "aiosqlite>=0.21.0",
     "fastapi[standard]>=0.115.12",
     "httpx>=0.28.1",
     "pydantic-settings>=2.9.1",
-    "sqlalchemy>=2.0.40",
+    "sqlalchemy[asyncio]>=2.0.40",
 ]
 
 [dependency-groups]

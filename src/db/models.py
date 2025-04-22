@@ -2,6 +2,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import zoneinfo
 from sqlalchemy import (
+    event,
+    inspect,
     Enum as SQLAlchemyEnum,
     Integer,
     String,
@@ -15,9 +17,13 @@ from sqlalchemy.orm import (
     MappedAsDataclass,
     mapped_column,
     relationship,
+    Mapper,
 )
+from sqlalchemy.ext.asyncio import AsyncAttrs, AsyncConnection
+from sqlalchemy.engine import Connection
 from sqlalchemy.dialects.sqlite import DATETIME
 from src.core.config import settings
+from src.core.logger import logger
 from src.core.enums import RoleName, DeviceTypeName
 
 
@@ -49,7 +55,7 @@ class TimestampMixinDB():
     updated_at: Mapped[datetime] = mapped_column(DATETIME(storage_format=SQLITE_ISO8601_ISO_UTC_FORMAT), init=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), index=True)
 
 
-class Base(DeclarativeBase, MappedAsDataclass):
+class Base(AsyncAttrs, DeclarativeBase, MappedAsDataclass):
     type_annotation_map = {
         RoleName: SQLAlchemyEnum(RoleName, native_enum=False, length=128, validate_strings=True),
         DeviceTypeName: SQLAlchemyEnum(DeviceTypeName, native_enum=False, length=128, validate_strings=True),
@@ -70,6 +76,19 @@ class RoleDB(Base, TimestampMixinDB):
     users: Mapped[list[UserDB]] = relationship(default_factory=list, secondary="users_roles_link", back_populates="roles")
 
 
+@event.listens_for(RoleDB, 'before_delete')
+def receive_role_before_delete(mapper: Mapper, connection: Connection, target: RoleDB):
+    """Listener function executed before a RoleDB instance is
+    deleted. Updates 'updated_at' for associated users. Now defined
+    inside the RoleDB class."""
+    state = inspect(target)
+    if state.identity is not None:
+            for user in target.users:
+                user_state = inspect(user)
+                if not user_state.deleted:
+                    user.updated_at = datetime.now(timezone.utc)
+
+
 class UserDB(Base, TimestampMixinDB):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(init=False, primary_key=True)
@@ -82,9 +101,31 @@ class UserDB(Base, TimestampMixinDB):
     tickets: Mapped[list[TicketDB]] = relationship(default_factory=list, back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     writeoffs: Mapped[list[WriteoffDB]] = relationship(default_factory=list, back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
 
-    def __repr__(self) -> str:
-        # created_repr = self.created_at.isoformat() if self.created_at else "None"
-        return f"UserDB(id={self.id!r}, telegram_uid={self.telegram_uid!r}, first_name={self.first_name!r}, last_name={self.last_name!r}, is_disabled={self.is_disabled!r})"
+
+@event.listens_for(UserDB.roles, 'append')
+def receive_role_append(target: UserDB, value: RoleDB, initiator):
+    state = inspect(target)
+    logger.debug(f"Append listener triggered for User ID: {target.id}, Role: {value.name}")
+    if not state.deleted:
+            now = datetime.now(timezone.utc)
+            logger.debug(f"Updating updated_at for User ID: {target.id} to {now}")
+            target.updated_at = now
+            logger.debug(f"User ID: {target.id} updated_at history after set: {inspect(target).attrs.updated_at.history}")
+    else:
+        logger.debug(f"Append listener skipped for deleted User ID: {target.id}")
+
+
+@event.listens_for(UserDB.roles, 'remove')
+def receive_role_remove(target: UserDB, value: RoleDB, initiator):
+    state = inspect(target)
+    logger.debug(f"Remove listener triggered for User ID: {target.id}, Role: {value.name}")
+    if not state.deleted:
+            now = datetime.now(timezone.utc)
+            logger.debug(f"Updating updated_at for User ID: {target.id} to {now}")
+            target.updated_at = now
+            logger.debug(f"User ID: {target.id} updated_at history after set: {inspect(target).attrs.updated_at.history}")
+    else:
+        logger.debug(f"Remove listener skipped for deleted User ID: {target.id}")
 
 
 class TicketDB(Base, TimestampMixinDB):
