@@ -3,7 +3,8 @@ from fastapi import APIRouter, Request, status
 
 from src.core.config import settings
 from src.core.logger import logger
-from src.core.dispatcher import DispatcherDep, SessionDep
+from src.core.dispatcher import DispatcherDep
+from src.db.engine import SessionDepDB, SessionDepCC
 from src.tg.models import UpdateTG, ResponseTG
 
 router = APIRouter()
@@ -11,7 +12,10 @@ router = APIRouter()
 
 @router.post("/", status_code=status.HTTP_200_OK)
 async def handle_telegram_webhook(
-    request: Request, dispatcher: DispatcherDep, session: SessionDep
+    request: Request,
+    dispatcher: DispatcherDep,
+    session_db: SessionDepDB,
+    session_cc: SessionDepCC,
 ):
     logger.debug("Webhook triggered.")
     request_result = await request.json()
@@ -19,13 +23,13 @@ async def handle_telegram_webhook(
     logger.debug(
         f"Received update: {UpdateTG.__name__}.model_dump_json(): {update.model_dump_json(exclude_none=True)}"
     )
-    dispatcher_response = await dispatcher.process(update, session)
+    dispatcher_response = await dispatcher.process(update, session_db, session_cc)
     if dispatcher_response:
         async with httpx.AsyncClient() as client:
             response_result: httpx.Response = await client.post(**dispatcher_response)
             response_result.raise_for_status()
         response = ResponseTG.model_validate(response_result.json())
-        if response and response.ok is True:
+        if response and response.ok:
             logger.debug(
                 f"Successful reply: {ResponseTG.__name__}.model_dump_json(): {response.model_dump_json(exclude_none=True)}"
             )

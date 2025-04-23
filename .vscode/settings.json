@@ -1,5 +1,8 @@
 {
     "cSpell.words": [
-        "selectinload"
+        "ondelete",
+        "onupdate",
+        "selectinload",
+        "sessionmaker"
     ]
 }
