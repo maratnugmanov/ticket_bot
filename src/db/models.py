@@ -55,18 +55,7 @@ class TimestampMixinDB():
     updated_at: Mapped[datetime] = mapped_column(DATETIME(storage_format=SQLITE_ISO8601_ISO_UTC_FORMAT), init=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), index=True)
 
 
-class TimestampMixinCC():
-    created_at: Mapped[datetime] = mapped_column(DATETIME(storage_format=SQLITE_ISO8601_ISO_UTC_FORMAT), index=True)
-    updated_at: Mapped[datetime] = mapped_column(DATETIME(storage_format=SQLITE_ISO8601_ISO_UTC_FORMAT), index=True)
-
-
 class BaseDB(AsyncAttrs, DeclarativeBase, MappedAsDataclass):
-    type_annotation_map = {
-        RoleName: SQLAlchemyEnum(RoleName, native_enum=False, length=128, validate_strings=True),
-        DeviceTypeName: SQLAlchemyEnum(DeviceTypeName, native_enum=False, length=128, validate_strings=True),
-    }
-
-class BaseCC(AsyncAttrs, DeclarativeBase, MappedAsDataclass):
     type_annotation_map = {
         RoleName: SQLAlchemyEnum(RoleName, native_enum=False, length=128, validate_strings=True),
         DeviceTypeName: SQLAlchemyEnum(DeviceTypeName, native_enum=False, length=128, validate_strings=True),
@@ -77,12 +66,6 @@ class UserRoleLinkDB(BaseDB):
     __tablename__ = "users_roles_link"
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True)
     role_id: Mapped[int] = mapped_column(ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True, index=True)
-
-
-class UserRoleLinkCC(BaseCC):
-    __tablename__ = "users_roles_link_cache"
-    user_id: Mapped[int] = mapped_column(ForeignKey("users_cache.id", ondelete="CASCADE"), primary_key=True, index=True)
-    role_id: Mapped[int] = mapped_column(ForeignKey("roles_cache.id", ondelete="CASCADE"), primary_key=True, index=True)
 
 
 class RoleDB(BaseDB, TimestampMixinDB):
@@ -103,13 +86,6 @@ def receive_role_before_delete(mapper: Mapper, connection: Connection, target: R
                 user_state = inspect(user)
                 if not user_state.deleted:
                     user.updated_at = datetime.now(timezone.utc)
-
-
-class RoleCC(BaseCC, TimestampMixinCC):
-    __tablename__ = "roles_cache"
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
-    name: Mapped[RoleName] = mapped_column(index=True, unique=True)
-    users: Mapped[list[UserCC]] = relationship(default_factory=list, secondary="users_roles_link_cache", back_populates="roles")
 
 
 class UserDB(BaseDB, TimestampMixinDB):
@@ -174,44 +150,6 @@ def receive_role_remove(target: UserDB, value: RoleDB, initiator):
             logger.debug(f"User ID: {target.id} updated_at history after set: {inspect(target).attrs.updated_at.history}")
     else:
         logger.debug(f"Remove listener skipped for deleted User ID: {target.id}")
-
-
-class UserCC(BaseCC, TimestampMixinCC):
-    __tablename__ = "users_cache"
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
-    telegram_uid: Mapped[int] = mapped_column(Integer, unique=True, index=True)
-    first_name: Mapped[str | None] = mapped_column(String, index=True)
-    last_name: Mapped[str | None] = mapped_column(String, index=True)
-    timezone: Mapped[str] = mapped_column(String, index=True)
-    is_hiring: Mapped[bool] = mapped_column(Boolean, index=True)
-    is_disabled: Mapped[bool] = mapped_column(Boolean, index=True)
-    roles: Mapped[list[RoleCC]] = relationship(default_factory=list, secondary="users_roles_link_cache", back_populates="users")
-
-    @property
-    def full_name(self) -> str:
-        stripped_first = self.first_name.strip() if self.first_name is not None else ""
-        stripped_last = self.last_name.strip() if self.last_name is not None else ""
-        combined_names = " ".join((stripped_first, stripped_last)).strip()
-        if combined_names:
-            return f"'{combined_names}' [{self.telegram_uid}]"
-        else:
-            return f"[{self.telegram_uid}]"
-
-    @property
-    def is_admin(self) -> bool:
-        return any(role.name == RoleName.ADMIN for role in self.roles)
-
-    @property
-    def is_manager(self) -> bool:
-        return any(role.name == RoleName.MANAGER for role in self.roles)
-
-    @property
-    def is_engineer(self) -> bool:
-        return any(role.name == RoleName.ENGINEER for role in self.roles)
-
-    @property
-    def is_guest(self) -> bool:
-        return any(role.name == RoleName.GUEST for role in self.roles)
 
 
 class TicketDB(BaseDB, TimestampMixinDB):

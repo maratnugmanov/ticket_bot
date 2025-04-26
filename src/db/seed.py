@@ -5,8 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.config import settings
 from src.core.logger import logger
 from src.core.enums import RoleName
-from src.db.engine import async_engine_db, async_engine_cc, SessionDepDB, SessionDepCC
-from src.db.models import BaseDB, RoleDB, UserDB, BaseCC, RoleCC
+from src.db.engine import async_engine_db
+from src.db.models import BaseDB, RoleDB, UserDB
 
 
 async def create_db_and_tables():
@@ -14,10 +14,6 @@ async def create_db_and_tables():
     async with async_engine_db.begin() as conn:
         await conn.run_sync(BaseDB.metadata.create_all)
     logger.debug("Main DB tables created.")
-    logger.debug("Creating tables for cache DB...")
-    async with async_engine_cc.begin() as conn:
-        await conn.run_sync(BaseCC.metadata.create_all)
-    logger.debug("Cache DB tables created.")
 
 
 async def create_user_roles(session: AsyncSession):
@@ -85,31 +81,3 @@ async def create_main_users(session: AsyncSession):
         )
         session.add(manager_user)
         logger.debug("Application startup: User Manager: in Session.")
-
-
-async def sync_roles_to_cache(session_db: SessionDepDB, session_cc: SessionDepCC):
-    logger.debug("Starting initial role population into cache DB...")
-    roles_db = await session_db.scalars(select(RoleDB))
-    added_count = 0
-    for role_db in roles_db:
-        role_cc = RoleCC(
-            id=role_db.id,
-            name=role_db.name,
-            created_at=role_db.created_at,
-            updated_at=role_db.updated_at,
-        )
-        session_cc.add(role_cc)
-        added_count += 1
-        logger.debug(
-            f"Adding RoleCC ID {role_db.id} ('{role_db.name}') to cache session."
-        )
-    if added_count > 0:
-        await session_cc.flush()
-        logger.debug(
-            f"Initial role population complete. Added {added_count} roles to cache."
-        )
-    else:
-        logger.debug(
-            "Initial role population complete. "
-            "No roles found in main DB to add to cache."
-        )
