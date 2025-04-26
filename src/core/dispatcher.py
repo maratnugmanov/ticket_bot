@@ -81,17 +81,17 @@ class Dispatcher:
     async def process(
         self, update: UpdateTG, session_db: SessionDepDB, session_cc: SessionDepCC
     ) -> dict[str, Any] | None:
-        user_tg: UserTG | None = await self.extract_user(update)
+        user_tg: UserTG | None = await self.get_user_tg(update)
         if not user_tg:
             logger.debug(
                 "Ignoring update: Could not extract User from "
                 "supported update types (private message/callback)."
             )
             return None
-        relevant_user: UserCC | None = self.get_relevant_user(
+        existing_user: UserCC | None = self.get_existing_user(
             user_tg, session_db, session_cc
         )
-        if relevant_user is None:
+        if existing_user is None:
             logger.debug(f"Guest {user_tg.full_name} is not registered.")
             if not self.is_hiring:
                 logger.debug(
@@ -103,8 +103,8 @@ class Dispatcher:
                 f"User registration is enabled. "
                 f"Guest {user_tg.full_name} is being created."
             )
-            new_user = await self.insert_new_user(user_tg, session_db)
-            if new_user is None:
+            user_db = await self.add_user_db(user_tg, session_db)
+            if user_db is None:
                 logger.warning(
                     f"Failed to insert new user {user_tg.full_name}. "
                     "Aborting processing."
@@ -112,11 +112,11 @@ class Dispatcher:
                 return None
             # I'm here
             async with self.users_lock:
-                self.users[new_user.telegram_uid] = new_user
+                self.users[user_db.telegram_uid] = user_db
             return None
-        if relevant_user.is_disabled:
+        if existing_user.is_disabled:
             logger.debug(
-                f"User {relevant_user.full_name} is disabled and will be ignored."
+                f"User {existing_user.full_name} is disabled and will be ignored."
             )
             return None
         return None
@@ -127,91 +127,135 @@ class Dispatcher:
         # }
         # return reply_args
 
-    async def insert_new_user(self, user_tg: UserTG, session: SessionDepDB):
-        guest_role = await session.scalar(
-            select(RoleDB).where(RoleDB.name == RoleName.GUEST)
-        )
-        if not guest_role:
-            logger.error(
-                f"CRITICAL: Default role '{RoleName.GUEST}' not "
-                "found in the database. Cannot create new user."
-            )
-            return None
-        new_user = UserDB(
-            telegram_uid=user_tg.id,
-            first_name=user_tg.first_name,
-            last_name=user_tg.last_name,
-        )
-        new_user.roles.append(guest_role)
-        session.add(new_user)
-        await session.flush()
-        await session.refresh(new_user)
-        logger.info(
-            f"User {new_user.full_name} (ID: {new_user.id}) "
-            f"created with role '{RoleName.GUEST}'."
-        )
-        return new_user
-
-    async def get_relevant_user(
+    async def get_existing_user(
         self, user_tg: UserTG, session_db: SessionDepDB, session_cc: SessionDepCC
     ) -> UserCC | None:
-        user_cc = await session_cc.scalar(
+        """Returns up-to-date Cached User (UserCC) by either validating
+        existing Cached User or by caching an existing User from DB
+        (UserDB). Deletes Cached User and returns None if User doesn't
+        exist in DB. Raises an error and removes Cached User if User in
+        DB (UserDB) is older than its cached counterpart - which
+        shouldn't be possible."""
+        logger.debug(f"Querying cache for Telegram User {user_tg.full_name}.")
+        user_cc = await self.get_user_cc(user_tg, session_cc)
+        if not user_cc:
+            logger.debug(f"Telegram User {user_tg.full_name} was not found in cache.")
+            logger.debug(f"Querying DB for Telegram User {user_tg.full_name}.")
+            user_db = await self.get_user_db(user_tg, session_db)
+            if not user_db:
+                logger.debug(f"Telegram User {user_tg.full_name} was not found in DB.")
+                logger.debug("Returning None.")
+                return None
+            logger.debug(
+                f"Telegram User {user_tg.full_name} was found in DB "
+                f"as {user_db.full_name}."
+            )
+            logger.debug(f"Caching User {user_db.full_name}.")
+            user_cc = await self.add_user_cc(user_db, session_db, session_cc)
+            logger.debug(f"Returning Cached User {user_cc.full_name}.")
+            return user_cc
+        logger.debug(
+            f"Telegram User {user_tg.full_name} was found in cache "
+            f"as {user_cc.full_name}."
+        )
+        logger.debug(f"Validating Cached User {user_cc.full_name}")
+        user_db_updated_at = await session_db.scalar(
+            select(UserDB.updated_at).where(UserDB.telegram_uid == user_cc.telegram_uid)
+        )
+        if not user_db_updated_at:
+            logger.debug(f"Cached User {user_cc.full_name} was not found in DB.")
+            logger.debug(f"Deleting Cached User {user_cc.full_name} as orphan.")
+            await self.del_user_cc(user_cc, session_cc)
+            logger.debug("Returning None.")
+            return None
+        if user_cc.updated_at == user_db_updated_at:
+            logger.debug(
+                f"Cached User {user_cc.full_name} is valid. Returning Cached User."
+            )
+            return user_cc
+        if user_cc.updated_at < user_db_updated_at:
+            logger.debug(f"Cached User {user_cc.full_name} is outdated.")
+            logger.debug(f"Deleting Cached User {user_cc.full_name} as outdated.")
+            await self.del_user_cc(user_cc, session_cc)
+            logger.debug(f"Querying DB for Telegram User {user_tg.full_name}.")
+            user_db = await self.get_user_db(user_tg, session_db)
+            if not user_db:
+                logger.debug(f"Telegram User {user_tg.full_name} was not found in DB.")
+                logger.debug("Returning None.")
+                return None
+            logger.debug(
+                f"Telegram User {user_tg.full_name} was found in DB "
+                f"as {user_db.full_name}."
+            )
+            logger.debug(f"Caching User {user_db.full_name}.")
+            user_cc = await self.add_user_cc(user_db, session_db, session_cc)
+            return user_cc
+        if user_cc.updated_at > user_db_updated_at:
+            error_message = (
+                f"Inconsistent state detected for user {user_cc.full_name}: "
+                f"Cached timestamp ({user_cc.updated_at}) is newer than "
+                f"database timestamp ({user_db_updated_at}). Potential cache issue."
+            )
+            logger.debug(f"Deleting Inconsistent Cached User {user_cc.full_name}.")
+            await session_cc.delete(user_cc)
+            await session_cc.flush()
+            logger.error(error_message)
+            raise CacheInconsistencyError(error_message)
+
+    async def del_user_cc(self, user_cc: UserCC, session_cc: SessionDepCC) -> None:
+        await session_cc.delete(user_cc)
+        await session_cc.flush()
+
+    async def get_user_cc(
+        self, user_tg: UserTG, session_cc: SessionDepCC
+    ) -> UserCC | None:
+        """Returns Cached User (UserCC) with its roles if the User
+        exists. Returns None if not."""
+        logger.debug(f"Querying cache for user {user_tg.full_name} by telegram_uid.")
+        user_cc: UserCC | None = await session_cc.scalar(
             select(UserCC)
             .where(UserCC.telegram_uid == user_tg.id)
             .options(selectinload(UserCC.roles))
         )
         if user_cc:
-            user_db_updated_at = await session_db.scalar(
-                select(UserDB.updated_at).where(
-                    UserDB.telegram_uid == user_cc.telegram_uid
-                )
-            )
-            if user_db_updated_at is None:
-                logger.warning(
-                    f"User {user_tg.full_name} was found in cache but not "
-                    "in DB. Cache entry might be stale. Forcing refresh."
-                )
-                is_obsolete = True
-            else:
-                is_obsolete = user_cc.updated_at < user_db_updated_at
-                is_anomaly = user_cc.updated_at > user_db_updated_at
-            if is_anomaly:
-                error_message = (
-                    f"Inconsistent state detected for user {user_tg.full_name}: "
-                    f"Cached timestamp ({user_cc.updated_at}) is newer than "
-                    f"database timestamp ({user_db_updated_at}). Potential cache issue."
-                )
-                logger.error(error_message)
-                raise CacheInconsistencyError(error_message)
-        if not user_cc or is_obsolete:
+            logger.debug(f"User found in cache: {user_cc.full_name}. Returning UserCC.")
+        else:
             logger.debug(
-                f"User {user_tg.full_name} "
-                f"{'in cache is obsolete' if is_obsolete else 'was not found in cache'}."
+                f"User {user_tg.full_name} was not found in cache by telegram_uid."
             )
-            user_db = await self.get_user_db(user_tg, session_db)
-            if not user_db:
-                logger.debug(f"User {user_tg.full_name} was not found in DB.")
-                if is_obsolete and user_cc:
-                    logger.debug(
-                        f"Deleting orphaned User in cache {user_tg.full_name}."
-                    )
-                    await session_cc.delete(user_cc)
-                    await session_cc.flush()
-                return None
-            logger.debug(f"Caching User {user_tg.full_name}.")
-            user_cc = await self.add_user_cc(user_db, session_db, session_cc)
-        logger.debug(f"User {user_cc.full_name} in cache is relevant.")
         return user_cc
+
+    async def get_user_db(
+        self, user_tg: UserTG, session: SessionDepDB
+    ) -> UserDB | None:
+        """Returns User in DB (UserDB) with its roles if the User
+        exists. Returns None if not."""
+        logger.debug(f"Querying DB for user {user_tg.full_name} by telegram_uid.")
+        user_db: UserDB | None = await session.scalar(
+            select(UserDB)
+            .where(UserDB.telegram_uid == user_tg.id)
+            .options(selectinload(UserDB.roles))
+        )
+        if user_db:
+            logger.debug(f"User found in DB: {user_db.full_name}. Returning UserDB.")
+        else:
+            logger.debug(
+                f"User {user_tg.full_name} was not found in DB by telegram_uid."
+            )
+        return user_db
 
     async def add_user_cc(
         self, user_db: UserDB, session_db: SessionDepDB, session_cc: SessionDepCC
-    ):
+    ) -> UserCC:
+        """Returns Cached User (UserCC) with its roles by creating it
+        from existing User in DB (UserDB)."""
         user_cc = UserCC(
             id=user_db.id,
             telegram_uid=user_db.telegram_uid,
             first_name=user_db.first_name,
             last_name=user_db.last_name,
             timezone=user_db.timezone,
+            is_hiring=user_db.is_hiring,
             is_disabled=user_db.is_disabled,
             created_at=user_db.created_at,
             updated_at=user_db.updated_at,
@@ -226,24 +270,40 @@ class Dispatcher:
         logger.debug(f"User {user_cc.full_name} including roles was added to cache DB.")
         return user_cc
 
-    async def get_user_db(
-        self, user_tg: UserTG, session: SessionDepDB
+    async def add_user_db(
+        self, user_tg: UserTG, session_db: SessionDepDB
     ) -> UserDB | None:
-        logger.debug(f"Querying DB for user {user_tg.full_name} by telegram_uid.")
-        user_db = await session.scalar(
-            select(UserDB)
-            .where(UserDB.telegram_uid == user_tg.id)
-            .options(selectinload(UserDB.roles))
+        """Returns User in DB (UserDB) with Guest role by creating it
+        from Telegram User (UserTG). Returns None if Guest role was not
+        found in Roles DB table."""
+        guest_role = await session_db.scalar(
+            select(RoleDB).where(RoleDB.name == RoleName.GUEST)
         )
-        if not user_db:
-            logger.debug(
-                f"User {user_tg.full_name} was not found in DB by telegram_uid."
+        if guest_role is None:
+            logger.error(
+                f"CRITICAL: Default role '{RoleName.GUEST}' not "
+                "found in the DB. Cannot create new User DB."
             )
             return None
-        logger.debug(f"User found in DB: {user_db.full_name}. Returning UserDB.")
+        user_db = UserDB(
+            telegram_uid=user_tg.id,
+            first_name=user_tg.first_name,
+            last_name=user_tg.last_name,
+        )
+        user_db.roles.append(guest_role)
+        session_db.add(user_db)
+        await session_db.flush()
+        await session_db.refresh(user_db, attribute_names=["roles"])
+        logger.debug(
+            f"User DB {user_db.full_name} (ID: {user_db.id}) was "
+            f"created with role '{RoleName.GUEST.name}' in the DB."
+        )
         return user_db
 
-    def extract_user(self, update: UpdateTG) -> UserTG | None:
+    def get_user_tg(self, update: UpdateTG) -> UserTG | None:
+        """Returns Telegram User (UserTG) by extracting it from relevant
+        Telegram Update object. Returns None otherwise."""
+        user_tg = None
         if (
             update.message
             and update.message.from_
@@ -252,7 +312,6 @@ class Dispatcher:
         ):
             user_tg = update.message.from_
             logger.debug(f"Processing private message update from {user_tg.full_name}.")
-            return user_tg
         elif (
             update.callback_query
             and update.callback_query.from_
@@ -265,8 +324,7 @@ class Dispatcher:
         ):
             user_tg = update.callback_query.from_
             logger.debug(f"Processing callback query update from {user_tg.full_name}.")
-            return user_tg
-        return None
+        return user_tg
 
     async def get_conversation(self, user_id: int) -> Conversation:
         """Safely gets or creates Conversation object for a user.

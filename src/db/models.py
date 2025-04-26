@@ -119,6 +119,7 @@ class UserDB(BaseDB, TimestampMixinDB):
     first_name: Mapped[str | None] = mapped_column(String, index=True)
     last_name: Mapped[str | None] = mapped_column(String, index=True)
     timezone: Mapped[str] = mapped_column(String, default=settings.user_default_timezone, index=True)
+    is_hiring: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     is_disabled: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     roles: Mapped[list[RoleDB]] = relationship(default_factory=list, secondary="users_roles_link", back_populates="users")
     tickets: Mapped[list[TicketDB]] = relationship(default_factory=list, back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
@@ -182,6 +183,7 @@ class UserCC(BaseCC, TimestampMixinCC):
     first_name: Mapped[str | None] = mapped_column(String, index=True)
     last_name: Mapped[str | None] = mapped_column(String, index=True)
     timezone: Mapped[str] = mapped_column(String, index=True)
+    is_hiring: Mapped[bool] = mapped_column(Boolean, index=True)
     is_disabled: Mapped[bool] = mapped_column(Boolean, index=True)
     roles: Mapped[list[RoleCC]] = relationship(default_factory=list, secondary="users_roles_link_cache", back_populates="users")
 
