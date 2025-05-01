@@ -95,6 +95,7 @@ class UserDB(BaseDB, TimestampMixinDB):
     first_name: Mapped[str | None] = mapped_column(String, index=True)
     last_name: Mapped[str | None] = mapped_column(String, index=True)
     timezone: Mapped[str] = mapped_column(String, default=settings.user_default_timezone, index=True)
+    conversation_json: Mapped[str | None] = mapped_column(String, default=None)
     is_hiring: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     is_disabled: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     roles: Mapped[list[RoleDB]] = relationship(default_factory=list, secondary="users_roles_link", back_populates="users")

@@ -5,7 +5,7 @@ from src.core.config import settings
 from src.core.logger import logger
 from src.core.dispatcher import Dispatcher
 from src.db.engine import SessionDepDB
-from src.tg.models import UpdateTG, ResponseTG
+from src.tg.models import MethodTG, UpdateTG, ResponseTG
 
 router = APIRouter()
 
@@ -21,18 +21,26 @@ async def handle_telegram_webhook(
     logger.debug(
         f"Received update: {UpdateTG.__name__}.model_dump_json(): {update_tg.model_dump_json(exclude_none=True)}"
     )
-    dispatcher_response = await Dispatcher(update_tg, session_db).process()
-    if dispatcher_response:
+    dispatcher_response_sequence: list[MethodTG] | None = await Dispatcher(
+        update_tg, session_db
+    ).process()
+    if dispatcher_response_sequence:
         async with httpx.AsyncClient() as client:
-            response_result: httpx.Response = await client.post(**dispatcher_response)
-            response_result.raise_for_status()
-        response = ResponseTG.model_validate(response_result.json())
-        if response and response.ok:
-            logger.debug(
-                f"Successful reply: {ResponseTG.__name__}.model_dump_json(): {response.model_dump_json(exclude_none=True)}"
-            )
-        else:
-            logger.debug(
-                f"Reply failed: {ResponseTG.__name__}.model_dump_json(): {response.model_dump_json(exclude_none=True)}"
-            )
+            logger.debug("Response iteration started.")
+            for response in dispatcher_response_sequence:
+                response_result: httpx.Response = await client.post(
+                    url=settings.get_tg_endpoint(response._url),
+                    json=response.model_dump(exclude_none=True),
+                )
+                response_result.raise_for_status()
+            response = ResponseTG.model_validate(response_result.json())
+            if response and response.ok:
+                logger.debug(
+                    f"Successful reply: {ResponseTG.__name__}.model_dump_json(): {response.model_dump_json(exclude_none=True)}"
+                )
+            else:
+                logger.debug(
+                    f"Reply failed: {ResponseTG.__name__}.model_dump_json(): {response.model_dump_json(exclude_none=True)}"
+                )
+            logger.debug("Response iteration ended.")
     return None

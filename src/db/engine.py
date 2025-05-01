@@ -36,6 +36,8 @@ async def get_async_session_db() -> AsyncGenerator[AsyncSession, None]:
         await async_session_db.execute(text("PRAGMA foreign_keys=ON"))
         logger.debug("Async Session with 'PRAGMA foreign_keys=ON' initialized.")
         yield async_session_db
+        await async_session_db.commit()
+        logger.debug("Async Session closed.")
 
 
 SessionDepDB = Annotated[AsyncSession, Depends(get_async_session_db)]

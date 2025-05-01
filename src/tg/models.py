@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Literal
-from pydantic import BaseModel, Field, AwareDatetime
+from pydantic import BaseModel, Field, AwareDatetime, PrivateAttr
 
 
 class UpdateTG(BaseModel):
@@ -171,7 +171,11 @@ class ResponseTG(BaseModel):
     result: MessageTG | None = None
 
 
-class SendMessageTG(BaseModel):
+class MethodTG(BaseModel):
+    _url: str = PrivateAttr()
+
+
+class SendMessageTG(MethodTG):
     chat_id: int | str
     text: str
     # https://core.telegram.org/bots/api#formatting-options
@@ -183,6 +187,23 @@ class SendMessageTG(BaseModel):
         | ForceReplyTG
         | None
     ) = None
+    _url: str = PrivateAttr(default="sendMessage")
+
+
+class EditMessageTextTG(MethodTG):
+    chat_id: int | str
+    message_id: int
+    text: str
+    # https://core.telegram.org/bots/api#formatting-options
+    parse_mode: Literal["MarkdownV2", "HTML"] | None = None
+    reply_markup: (
+        InlineKeyboardMarkupTG
+        | ReplyKeyboardMarkupTG
+        | ReplyKeyboardRemoveTG
+        | ForceReplyTG
+        | None
+    ) = None
+    _url: str = PrivateAttr(default="editMessageText")
 
 
 if __name__ == "__main__":
