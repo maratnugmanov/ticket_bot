@@ -59,7 +59,7 @@ async def backup_db(target_file: str = backup_file_name):
             sqlalchemy_connection_wrapper: AsyncConnection = source_sqlalchemy_conn
             # Access the underlying aiosqlite connection wrapper for the source
             raw_connection_wrapper: AsyncAdapt_aiosqlite_connection = (
-                await sqlalchemy_connection_wrapper.get_raw_connection()
+                await sqlalchemy_connection_wrapper.get_raw_connection()  # type: ignore[assignment]
             )
             # Access the actual aiosqlite driver connection for the source
             source_aiosqlite_conn: aiosqlite.Connection = (

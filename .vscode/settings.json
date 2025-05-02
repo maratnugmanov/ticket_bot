@@ -1,8 +1,18 @@
 {
     "cSpell.words": [
+        "aiosqlite",
+        "asyncio",
+        "fastapi",
+        "httpx",
+        "maratnugmanov",
+        "mypy",
+        "Nugmanov",
         "ondelete",
         "onupdate",
+        "pydantic",
         "selectinload",
-        "sessionmaker"
+        "sessionmaker",
+        "sqlalchemy",
+        "РГКС"
     ]
 }

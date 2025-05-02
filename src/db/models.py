@@ -42,18 +42,33 @@ def format_datetime_for_user(
 SQLITE_ISO8601_ISO_UTC_FORMAT = (
     "%(year)04d-%(month)02d-%(day)02dT%(hour)02d:%(minute)02d:%(second)02dZ"
 )
-# fmt:off
+
 
 # from sqlalchemy import DateTime
-# class TimestampMixinDB():
+# class TimestampMixinDB:
 #     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
-#     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), index=True)
+#     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),default=lambda: datetime.now(timezone.utc),
+#         onupdate=lambda: datetime.now(timezone.utc),index=True)
+
 
 # https://docs.python.org/3/library/datetime.html#datetime.datetime.fromisoformat
-class TimestampMixinDB():
-    created_at: Mapped[datetime] = mapped_column(DATETIME(storage_format=SQLITE_ISO8601_ISO_UTC_FORMAT), init=False, default=lambda: datetime.now(timezone.utc), index=True)
-    updated_at: Mapped[datetime] = mapped_column(DATETIME(storage_format=SQLITE_ISO8601_ISO_UTC_FORMAT), init=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), index=True)
+class TimestampMixinDB:
+    created_at: Mapped[datetime] = mapped_column(
+        DATETIME(storage_format=SQLITE_ISO8601_ISO_UTC_FORMAT),
+        init=False,
+        default=lambda: datetime.now(timezone.utc),
+        index=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DATETIME(storage_format=SQLITE_ISO8601_ISO_UTC_FORMAT),
+        init=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        index=True,
+    )
 
+
+# fmt:off
 
 class BaseDB(AsyncAttrs, DeclarativeBase, MappedAsDataclass):
     type_annotation_map = {
