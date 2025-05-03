@@ -14,6 +14,7 @@ class DeviceJS(BaseModel):
 
 
 class StateJS(BaseModel):
+    relevant_message_id: int
     scenario: Scenario
     modifier: Modifier | None = None
     ticket_number: int | None = None

@@ -21,25 +21,26 @@ async def handle_telegram_webhook(
     logger.debug(
         f"Received update: {UpdateTG.__name__}.model_dump_json(): {update_tg.model_dump_json(exclude_none=True)}"
     )
-    dispatcher_response_sequence: list[MethodTG] | None = await Dispatcher(
+    dispatcher_methods_tg_list: list[MethodTG] | None = await Dispatcher(
         update_tg, session_db
     ).process()
-    if dispatcher_response_sequence:
+    if dispatcher_methods_tg_list:
         async with httpx.AsyncClient() as client:
             logger.debug("Response iteration started.")
-            for response in dispatcher_response_sequence:
+            for method_tg in dispatcher_methods_tg_list:
                 response_result: httpx.Response = await client.post(
-                    url=settings.get_tg_endpoint(response._url),
-                    json=response.model_dump(exclude_none=True),
+                    url=settings.get_tg_endpoint(method_tg._url),
+                    json=method_tg.model_dump(exclude_none=True),
                 )
-                response_result.raise_for_status()
+                # response_result.raise_for_status()
+                print(response_result.json())
             response = ResponseTG.model_validate(response_result.json())
             if response and response.ok:
                 logger.debug(
                     f"Successful reply: {ResponseTG.__name__}.model_dump_json(): {response.model_dump_json(exclude_none=True)}"
                 )
             else:
-                logger.debug(
+                logger.warning(
                     f"Reply failed: {ResponseTG.__name__}.model_dump_json(): {response.model_dump_json(exclude_none=True)}"
                 )
             logger.debug("Response iteration ended.")

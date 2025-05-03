@@ -29,178 +29,88 @@ class Conversation:
             if not user_db.conversation_json
             else StateJS.model_validate_json(user_db.conversation_json)
         )
+        self.response_methods_list: list[MethodTG] = []
         logger.debug(
             f"Conversation with {self.user_db.full_name}, "
             f"Update #{self.update_tg.update_id} initialized."
         )
 
     async def process(self) -> list[MethodTG]:
-        response_methods_list = []
         if self.state is None:
             logger.debug(
                 f"There is no Conversation State with {self.user_db.full_name}."
             )
-            if self.update_tg.message:
-                logger.debug(f"Responding with Main Menu to {self.user_db.full_name}.")
-                response_methods_list.append(self.mainmenu())
-            elif self.update_tg.callback_query:
-                data = self.update_tg.callback_query.data
-                chat_id = self.update_tg.callback_query.message.chat.id
-                message_id = self.update_tg.callback_query.message.message_id
-                if data == Scenario.ENABLE_HIRING:
-                    if not self.user_db.is_hiring:
-                        self.user_db.is_hiring = True
-                        buttons = self.get_mainmenu_buttons_array()
-                        response_methods_list.append(
-                            EditMessageTextTG(
-                                chat_id=chat_id,
-                                message_id=message_id,
-                                text=f"{self.user_db.first_name}, {Strings.HIRING_ENABLED}",
-                                reply_markup=InlineKeyboardMarkupTG(
-                                    inline_keyboard=buttons
-                                ),
-                            )
-                        )
-                    else:
-                        buttons = self.get_mainmenu_buttons_array()
-                        response_methods_list.append(
-                            EditMessageTextTG(
-                                chat_id=chat_id,
-                                message_id=message_id,
-                                text=f"{self.user_db.first_name}, {Strings.HIRING_ALREADY_ENABLED}",
-                                reply_markup=InlineKeyboardMarkupTG(
-                                    inline_keyboard=buttons
-                                ),
-                            )
-                        )
-                elif data == Scenario.DISABLE_HIRING:
-                    if self.user_db.is_hiring:
-                        self.user_db.is_hiring = False
-                        buttons = self.get_mainmenu_buttons_array()
-                        response_methods_list.append(
-                            EditMessageTextTG(
-                                chat_id=chat_id,
-                                message_id=message_id,
-                                text=f"{self.user_db.first_name}, {Strings.HIRING_DISABLED}",
-                                reply_markup=InlineKeyboardMarkupTG(
-                                    inline_keyboard=buttons
-                                ),
-                            )
-                        )
-                    else:
-                        buttons = self.get_mainmenu_buttons_array()
-                        response_methods_list.append(
-                            EditMessageTextTG(
-                                chat_id=chat_id,
-                                message_id=message_id,
-                                text=f"{self.user_db.first_name}, {Strings.HIRING_ALREADY_DISABLED}",
-                                reply_markup=InlineKeyboardMarkupTG(
-                                    inline_keyboard=buttons
-                                ),
-                            )
-                        )
-                elif data == Scenario.TICKET_NUMBER_INPUT:
-                    self.user_db.conversation_json = StateJS(
-                        scenario=Scenario.TICKET_NUMBER_INPUT,
-                        modifier=Modifier.INITIAL_DATA,
-                    ).model_dump_json(exclude_none=True)
-                    response_methods_list.append(
-                        self.enter_ticket_number(Strings.ENTER_TICKET_NUMBER)
-                    )
+            self.response_methods_list.append(self.initiate_stateless_conversation())
         elif self.state.modifier == Modifier.INITIAL_DATA:
-            if self.state.scenario == Scenario.TICKET_NUMBER_INPUT:
-                if self.update_tg.message and self.update_tg.message.text:
-                    message_text = self.update_tg.message.text
-                    if re.fullmatch(r"\d+", message_text):
-                        self.user_db.conversation_json = StateJS(
-                            scenario=Scenario.DEVICE_TYPE_BUTTONS,
-                            modifier=Modifier.INITIAL_DATA,
-                            ticket_number=message_text,
-                        ).model_dump_json(exclude_none=True)
-                        response_methods_list.append(self.pick_device_type())
-                    else:
-                        response_methods_list.append(
-                            self.enter_ticket_number(
-                                f"{Strings.INCORRECT_TICKET_NUMBER} "
-                                f"{Strings.ENTER_TICKET_NUMBER}"
-                            )
-                        )
-            elif self.state.scenario == Scenario.DEVICE_TYPE_BUTTONS:
-                if self.update_tg.callback_query:
-                    data = self.update_tg.callback_query.data
-                    try:
-                        device_type_enum = DeviceTypeName(data)
-                        if device_type_enum.name in Strings.__members__:
-                            chat_id = self.update_tg.callback_query.message.chat.id
-                            message_id = (
-                                self.update_tg.callback_query.message.message_id
-                            )
-                            self.user_db.conversation_json = StateJS(
-                                scenario=Scenario.DEVICE_SERIAL_NUMBER,
-                                modifier=Modifier.INITIAL_DATA,
-                                ticket_number=self.state.ticket_number,
-                                device_type=device_type_enum,
-                            ).model_dump_json(exclude_none=True)
-                            response_methods_list.append(
-                                EditMessageTextTG(
-                                    chat_id=chat_id,
-                                    message_id=message_id,
-                                    text=f"{Strings.DEVICE_TYPE_PICKED}: {Strings[device_type_enum.name]}. {Strings.ENTER_SERIAL_NUMBER}.",
-                                )
-                            )
-                    except ValueError:
-                        logger.debug(
-                            f"Received invalid callback data '{data}' "
-                            "for device type selection."
-                            "Cannot convert to DeviceTypeName."
-                        )
-        return response_methods_list
+            logger.debug(f"Initial device conversation with {self.user_db.full_name}.")
+            self.response_methods_list.append(self.initial_device_conversation())
+        return self.response_methods_list
+
+    def initiate_stateless_conversation(self) -> MethodTG:
+        logger.debug(
+            f"Initiating stateless conversation with {self.user_db.full_name}."
+        )
+        if self.update_tg.message:
+            logger.debug(f"Responding with Main Menu to {self.user_db.full_name}.")
+            method_tg = self.mainmenu()
+        elif self.update_tg.callback_query:
+            data = self.update_tg.callback_query.data
+            chat_id = self.update_tg.callback_query.message.chat.id
+            message_id = self.update_tg.callback_query.message.message_id
+            if data == Scenario.TICKET_NUMBER_INPUT:
+                self.user_db.conversation_json = StateJS(
+                    relevant_message_id=message_id,
+                    scenario=Scenario.TICKET_NUMBER_INPUT,
+                    modifier=Modifier.INITIAL_DATA,
+                ).model_dump_json(exclude_none=True)
+                method_tg = self.enter_ticket_number(Strings.ENTER_TICKET_NUMBER)
+            elif data == Scenario.ENABLE_HIRING:
+                if not self.user_db.is_hiring:
+                    self.user_db.is_hiring = True
+                    buttons = self.get_mainmenu_buttons_array()
+                    method_tg = EditMessageTextTG(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        text=f"{self.user_db.first_name}, {Strings.HIRING_ENABLED}",
+                        reply_markup=InlineKeyboardMarkupTG(inline_keyboard=buttons),
+                    )
+                else:
+                    buttons = self.get_mainmenu_buttons_array()
+                    method_tg = EditMessageTextTG(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        text=f"{self.user_db.first_name}, {Strings.HIRING_ALREADY_ENABLED}",
+                        reply_markup=InlineKeyboardMarkupTG(inline_keyboard=buttons),
+                    )
+            elif data == Scenario.DISABLE_HIRING:
+                if self.user_db.is_hiring:
+                    self.user_db.is_hiring = False
+                    buttons = self.get_mainmenu_buttons_array()
+                    method_tg = EditMessageTextTG(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        text=f"{self.user_db.first_name}, {Strings.HIRING_DISABLED}",
+                        reply_markup=InlineKeyboardMarkupTG(inline_keyboard=buttons),
+                    )
+                else:
+                    buttons = self.get_mainmenu_buttons_array()
+                    method_tg = EditMessageTextTG(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        text=f"{self.user_db.first_name}, {Strings.HIRING_ALREADY_DISABLED}",
+                        reply_markup=InlineKeyboardMarkupTG(inline_keyboard=buttons),
+                    )
+        return method_tg
 
     def mainmenu(self) -> MethodTG:
         buttons = self.get_mainmenu_buttons_array()
-        send_message_tg = SendMessageTG(
+        method_tg = SendMessageTG(
             chat_id=self.user_db.telegram_uid,
             text=f"{Strings.HELLO}, {self.user_db.first_name}, "
             f"{Strings.THESE_FUNCTIONS_ARE_AVAILABLE}",
             reply_markup=InlineKeyboardMarkupTG(inline_keyboard=buttons),
         )
-        return send_message_tg
-
-    def enter_ticket_number(self, text: str = Strings.ENTER_TICKET_NUMBER):
-        return SendMessageTG(
-            chat_id=self.user_db.telegram_uid,
-            text=text,
-        )
-
-    def pick_device_type(self):
-        return SendMessageTG(
-            chat_id=self.user_db.telegram_uid,
-            text=Strings.PICK_DEVICE_TYPE,
-            reply_markup=InlineKeyboardMarkupTG(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButtonTG(
-                            text=Strings.IP,
-                            callback_data=DeviceTypeName.IP,
-                        ),
-                        InlineKeyboardButtonTG(
-                            text=Strings.TVE,
-                            callback_data=DeviceTypeName.TVE,
-                        ),
-                        InlineKeyboardButtonTG(
-                            text=Strings.ROUTER,
-                            callback_data=DeviceTypeName.ROUTER,
-                        ),
-                    ]
-                ]
-            ),
-        )
-
-    def echo(self):
-        return SendMessageTG(
-            chat_id=self.update_tg.message.chat.id,
-            text=self.update_tg.message.text,
-        )
+        return method_tg
 
     def get_mainmenu_buttons_array(self) -> list[list[InlineKeyboardButtonTG]]:
         buttons = []
@@ -253,6 +163,98 @@ class Conversation:
                     ],
                 )
         return buttons
+
+    def initial_device_conversation(self) -> MethodTG:
+        assert self.state is not None, (
+            "State cannot be None in initial_device_conversation"
+        )
+        if self.state.scenario == Scenario.TICKET_NUMBER_INPUT:
+            if self.update_tg.message and self.update_tg.message.text:
+                message_id = self.update_tg.message.message_id
+                message_text = self.update_tg.message.text
+                if re.fullmatch(r"\d+", message_text):
+                    self.user_db.conversation_json = StateJS(
+                        relevant_message_id=message_id,
+                        scenario=Scenario.DEVICE_TYPE_BUTTONS,
+                        modifier=Modifier.INITIAL_DATA,
+                        ticket_number=message_text,
+                    ).model_dump_json(exclude_none=True)
+                    method_tg = self.pick_device_type(f"{Strings.PICK_DEVICE_TYPE}.")
+                else:
+                    method_tg = self.enter_ticket_number(
+                        f"{Strings.INCORRECT_TICKET_NUMBER} "
+                        f"{Strings.ENTER_TICKET_NUMBER}"
+                    )
+            elif self.update_tg.callback_query:
+                pass
+        elif self.state.scenario == Scenario.DEVICE_TYPE_BUTTONS:
+            if self.update_tg.callback_query:
+                data = self.update_tg.callback_query.data
+                chat_id = self.update_tg.callback_query.message.chat.id
+                message_id = self.update_tg.callback_query.message.message_id
+                try:
+                    device_type_enum = DeviceTypeName(data)
+                    if device_type_enum.name in Strings.__members__:
+                        self.user_db.conversation_json = StateJS(
+                            relevant_message_id=message_id,
+                            scenario=Scenario.DEVICE_SERIAL_NUMBER,
+                            modifier=Modifier.INITIAL_DATA,
+                            ticket_number=self.state.ticket_number,
+                            device_type=device_type_enum,
+                        ).model_dump_json(exclude_none=True)
+                        method_tg = EditMessageTextTG(
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            text=f"{Strings.DEVICE_TYPE_PICKED}: {Strings[device_type_enum.name]}. {Strings.ENTER_SERIAL_NUMBER}.",
+                        )
+                except ValueError:
+                    logger.debug(
+                        f"Received invalid callback data '{data}' "
+                        "for device type selection."
+                        "Cannot convert to DeviceTypeName."
+                    )
+                    method_tg = self.pick_device_type(
+                        f"{Strings.UNEXPECTED_CALLBACK}. {Strings.PICK_DEVICE_TYPE} {Strings.FROM_THESE_VARIANTS}."
+                    )
+            elif self.update_tg.message:
+                logger.debug(
+                    f"User {self.user_db.full_name} responded with "
+                    "message while callback data was awaited."
+                )
+                method_tg = self.pick_device_type(
+                    f"{Strings.DEVICE_TYPE_WAS_NOT_PICKED}. {Strings.PICK_DEVICE_TYPE} {Strings.FROM_THESE_VARIANTS}."
+                )
+        return method_tg
+
+    def enter_ticket_number(self, text: str = Strings.ENTER_TICKET_NUMBER):
+        return SendMessageTG(
+            chat_id=self.user_db.telegram_uid,
+            text=text,
+        )
+
+    def pick_device_type(self, text: str = Strings.PICK_DEVICE_TYPE):
+        return SendMessageTG(
+            chat_id=self.user_db.telegram_uid,
+            text=text,
+            reply_markup=InlineKeyboardMarkupTG(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButtonTG(
+                            text=Strings.IP,
+                            callback_data=DeviceTypeName.IP,
+                        ),
+                        InlineKeyboardButtonTG(
+                            text=Strings.TVE,
+                            callback_data=DeviceTypeName.TVE,
+                        ),
+                        InlineKeyboardButtonTG(
+                            text=Strings.ROUTER,
+                            callback_data=DeviceTypeName.ROUTER,
+                        ),
+                    ]
+                ]
+            ),
+        )
 
     def serial_number_input(self):
         return SendMessageTG(
@@ -330,4 +332,10 @@ class Conversation:
                     ],
                 ]
             ),
+        )
+
+    def echo(self):
+        return SendMessageTG(
+            chat_id=self.update_tg.message.chat.id,
+            text=self.update_tg.message.text,
         )

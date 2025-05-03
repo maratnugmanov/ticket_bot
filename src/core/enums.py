@@ -38,7 +38,10 @@ class Strings(enum.StrEnum):
     TICKET_DEVICES_LIST = "Возможные действия: изменение номера текущей заявки, изменение/удаление добавленных устройств, закрытие заявки и полный выход без сохранения."
     INCORRECT_TICKET_NUMBER = "Номер заявки должен состоять из цифр. Попробуйте снова."
     ENTER_TICKET_NUMBER = "Введите номер заявки."
-    PICK_DEVICE_TYPE = "Выберите тип устройства."
+    PICK_DEVICE_TYPE = "Выберите тип устройства"
+    FROM_THESE_VARIANTS = "из предложенных ниже вариантов"
+    DEVICE_TYPE_WAS_NOT_PICKED = "Вы не выбрали тип устройства"
+    UNEXPECTED_CALLBACK = "Ваш выбор не распознан"
     DEVICE_TYPE_PICKED = "Выбран тип устройства"
     ENTER_SERIAL_NUMBER = "Введите серийный номер устройства"
     PICK_INSTALL_OR_RETURN = (

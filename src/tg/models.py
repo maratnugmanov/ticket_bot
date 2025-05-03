@@ -168,6 +168,7 @@ class ResponseTG(BaseModel):
     automatically handle the error."""
 
     ok: bool
+    error_code: int | str | None = None
     description: str | None = None
     result: MessageTG | None = None
 
