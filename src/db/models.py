@@ -79,7 +79,7 @@ class BaseDB(AsyncAttrs, DeclarativeBase, MappedAsDataclass):
 
 class UserRoleLinkDB(BaseDB):
     __tablename__ = "users_roles_link"
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     role_id: Mapped[int] = mapped_column(ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True, index=True)
 
 
@@ -107,10 +107,10 @@ class UserDB(BaseDB, TimestampMixinDB):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(init=False, primary_key=True)
     telegram_uid: Mapped[int] = mapped_column(Integer, unique=True, index=True)
-    first_name: Mapped[str | None] = mapped_column(String, index=True)
+    first_name: Mapped[str] = mapped_column(String, index=True)
     last_name: Mapped[str | None] = mapped_column(String, index=True)
     timezone: Mapped[str] = mapped_column(String, default=settings.user_default_timezone, index=True)
-    conversation_json: Mapped[str | None] = mapped_column(String, default=None)
+    state_json: Mapped[str | None] = mapped_column(String, default=None)
     is_hiring: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     is_disabled: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     roles: Mapped[list[RoleDB]] = relationship(default_factory=list, secondary="users_roles_link", back_populates="users")

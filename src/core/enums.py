@@ -57,7 +57,7 @@ class Strings(enum.StrEnum):
     HIRING_ALREADY_DISABLED = f"найм уже закрыт. {HIRING_DISABLED_TIP}"
 
 
-class Scenario(enum.StrEnum):
+class Action(enum.StrEnum):
     ENABLE_HIRING = enum.auto()
     DISABLE_HIRING = enum.auto()
     # INTRODUCTION_MAINMENU_BUTTONS = enum.auto()
@@ -82,7 +82,7 @@ class Scenario(enum.StrEnum):
     QUIT_WITHOUT_SAVING_BUTTONS = enum.auto()
 
 
-class Modifier(enum.StrEnum):
+class Script(enum.StrEnum):
     INITIAL_DATA = enum.auto()
     FROM_HISTORY = enum.auto()
     FROM_WRITEOFF = enum.auto()

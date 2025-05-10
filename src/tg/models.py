@@ -1,19 +1,25 @@
 from __future__ import annotations
-import enum
 from typing import Literal
 from pydantic import BaseModel, Field, AwareDatetime, PrivateAttr
 
 
 class UpdateTG(BaseModel):
     update_id: int
-    message: MessageTG | None = None
-    callback_query: CallbackQueryTG | None = None
+
+
+class MessageUpdateTG(UpdateTG):
+    message: MessageTG
+
+
+class CallbackQueryUpdateTG(UpdateTG):
+    callback_query: CallbackQueryTG
 
 
 class MessageTG(BaseModel):
     message_id: int
     from_: UserTG = Field(alias="from")  # Mandatory since private chats only
     date: AwareDatetime
+    edit_date: AwareDatetime | None = None
     chat: ChatTG
     forward_origin: (
         MessageOriginUserTG
@@ -167,17 +173,23 @@ class ResponseTG(BaseModel):
     'parameters' of the type ResponseParameters, which can help to
     automatically handle the error."""
 
-    ok: bool
-    error_code: int | str | None = None
-    description: str | None = None
-    result: MessageTG | None = None
+
+class SuccessTG(ResponseTG):
+    ok: Literal[True]
+    result: MessageTG | CallbackQueryTG
+
+
+class ErrorTG(ResponseTG):
+    ok: Literal[False]
+    error_code: int | str
+    description: str
 
 
 class MethodTG(BaseModel):
     _url: str = PrivateAttr()
 
 
-class SendMessageTG(MethodTG):
+class OutgoingMessageTG(MethodTG):
     chat_id: int | str
     text: str
     # https://core.telegram.org/bots/api#formatting-options
@@ -189,22 +201,14 @@ class SendMessageTG(MethodTG):
         | ForceReplyTG
         | None
     ) = None
+
+
+class SendMessageTG(OutgoingMessageTG):
     _url: str = PrivateAttr(default="sendMessage")
 
 
-class EditMessageTextTG(MethodTG):
-    chat_id: int | str
+class EditMessageTextTG(OutgoingMessageTG):
     message_id: int
-    text: str
-    # https://core.telegram.org/bots/api#formatting-options
-    parse_mode: Literal["MarkdownV2", "HTML"] | None = None
-    reply_markup: (
-        InlineKeyboardMarkupTG
-        | ReplyKeyboardMarkupTG
-        | ReplyKeyboardRemoveTG
-        | ForceReplyTG
-        | None
-    ) = None
     _url: str = PrivateAttr(default="editMessageText")
 
 

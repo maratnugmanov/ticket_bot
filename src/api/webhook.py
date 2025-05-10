@@ -1,47 +1,37 @@
 import httpx
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, status
 
 from src.core.config import settings
 from src.core.logger import logger
-from src.core.dispatcher import Dispatcher
+from src.core.conversation import Conversation
 from src.db.engine import SessionDepDB
-from src.tg.models import MethodTG, UpdateTG, ResponseTG
+from src.tg.models import UpdateTG, MessageUpdateTG, CallbackQueryUpdateTG, ResponseTG
 
 router = APIRouter()
 
 
 @router.post("/", status_code=status.HTTP_200_OK)
 async def handle_telegram_webhook(
-    request: Request,
+    update_tg: MessageUpdateTG | CallbackQueryUpdateTG | UpdateTG,
     session_db: SessionDepDB,
 ):
-    logger.debug("Webhook triggered.")
-    request_result = await request.json()
-    update_tg = UpdateTG.model_validate(request_result)
     logger.debug(
-        f"Received update: {UpdateTG.__name__}.model_dump_json(): {update_tg.model_dump_json(exclude_none=True)}"
+        f"Received update: {type(update_tg).__name__}.model_dump_json(exclude_none=True): "
+        f"{update_tg.model_dump_json(exclude_none=True)}"
     )
-    dispatcher_methods_tg_list: list[MethodTG] | None = await Dispatcher(
-        update_tg, session_db
-    ).process()
-    if dispatcher_methods_tg_list:
-        async with httpx.AsyncClient() as client:
-            logger.debug("Response iteration started.")
-            for method_tg in dispatcher_methods_tg_list:
-                response_result: httpx.Response = await client.post(
-                    url=settings.get_tg_endpoint(method_tg._url),
-                    json=method_tg.model_dump(exclude_none=True),
-                )
-                # response_result.raise_for_status()
-                print(response_result.json())
-            response = ResponseTG.model_validate(response_result.json())
-            if response and response.ok:
-                logger.debug(
-                    f"Successful reply: {ResponseTG.__name__}.model_dump_json(): {response.model_dump_json(exclude_none=True)}"
-                )
+    if isinstance(update_tg, (MessageUpdateTG, CallbackQueryUpdateTG)):
+        conversation = await Conversation.create(update_tg, session_db)
+        if conversation:
+            success = await conversation.process()
+            if success:
+                logger.debug(f"Success in processing of Update #{update_tg.update_id}.")
             else:
-                logger.warning(
-                    f"Reply failed: {ResponseTG.__name__}.model_dump_json(): {response.model_dump_json(exclude_none=True)}"
-                )
-            logger.debug("Response iteration ended.")
+                logger.error(f"Failed in processing of Update #{update_tg.update_id}.")
+    elif isinstance(update_tg, UpdateTG):
+        logger.debug(
+            "No valid conversation created for Update #"
+            f"{update_tg.update_id}. No action taken."
+        )
+    else:
+        logger.debug("Couldn't process the Update.")
     return None

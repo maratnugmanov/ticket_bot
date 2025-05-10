@@ -27,6 +27,7 @@ async_engine_db = create_async_engine(
 AsyncSessionFactoryDB = async_sessionmaker(
     bind=async_engine_db,
     class_=AsyncSession,
+    autoflush=False,
     expire_on_commit=True,
 )
 

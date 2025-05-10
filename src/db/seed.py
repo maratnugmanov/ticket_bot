@@ -23,6 +23,7 @@ async def create_user_roles(session: AsyncSession):
         if not existing_role:
             session.add(RoleDB(name=role))
             logger.debug(f"Application startup: User role '{role.name}': in Session.")
+    await session.flush()
 
 
 async def create_main_users(session: AsyncSession):
@@ -41,7 +42,7 @@ async def create_main_users(session: AsyncSession):
         )
         admin_roles = list(admin_roles_result)
         if len(admin_roles) != len(admin_role_enums):
-            logger.warning(
+            logger.error(
                 "Admin user creation: Not all expected roles found "
                 f"in DB. Found: {[role.name for role in admin_roles]}"
             )
@@ -50,9 +51,10 @@ async def create_main_users(session: AsyncSession):
             first_name=settings.admin_first_name,
             last_name=settings.admin_last_name,
             timezone=settings.admin_timezone,
-            roles=list(admin_roles),
+            roles=admin_roles,
         )
         session.add(admin_user)
+        await session.flush()
         logger.debug("Application startup: User Admin: in Session.")
     manager_exists = await session.scalar(
         select(UserDB.id).where(UserDB.telegram_uid == settings.manager_telegram_uid)
@@ -68,7 +70,7 @@ async def create_main_users(session: AsyncSession):
         )
         manager_roles = list(manager_roles_result)
         if len(manager_roles) != len(manager_role_enums):
-            logger.warning(
+            logger.error(
                 "Manager user creation: Not all expected roles found "
                 f"in DB. Found: {[role.name for role in manager_roles]}"
             )
@@ -77,7 +79,8 @@ async def create_main_users(session: AsyncSession):
             first_name=settings.manager_first_name,
             last_name=settings.manager_last_name,
             timezone=settings.manager_timezone,
-            roles=list(manager_roles),
+            roles=manager_roles,
         )
         session.add(manager_user)
+        await session.flush()
         logger.debug("Application startup: User Manager: in Session.")
