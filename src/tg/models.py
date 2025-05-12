@@ -189,6 +189,12 @@ class MethodTG(BaseModel):
     _url: str = PrivateAttr()
 
 
+class DeleteMessagesTG(MethodTG):
+    chat_id: int | str
+    message_ids: list[int]
+    _url: str = PrivateAttr(default="deleteMessages")
+
+
 class OutgoingMessageTG(MethodTG):
     chat_id: int | str
     text: str

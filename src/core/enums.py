@@ -49,12 +49,15 @@ class Strings(enum.StrEnum):
     )
     HELLO = "Здравствуйте"
     THESE_FUNCTIONS_ARE_AVAILABLE = "вам доступны следующие функции."
+    NO_FUNCTIONS_ARE_AVAILABLE = "у вас нет доступа к каким-либо функциям."
     HIRING_ENABLED_TIP = "Соискателям необходимо отправить мне любое сообщение со своего Телеграм аккаунта."
     HIRING_ENABLED = f"найм открыт. {HIRING_ENABLED_TIP}"
     HIRING_ALREADY_ENABLED = f"найм уже открыт. {HIRING_ENABLED_TIP}"
     HIRING_DISABLED_TIP = "Если найм закрыт у всех менеджеров, то все незарегистрированные пользователи будут удалены из базы данных."
     HIRING_DISABLED = f"найм закрыт. {HIRING_DISABLED_TIP}"
     HIRING_ALREADY_DISABLED = f"найм уже закрыт. {HIRING_DISABLED_TIP}"
+    MESSAGE_HAS_EXPIRED = "Сообщение устарело"
+    YOU_HAVE_CHOSEN = "Вы выбрали"
 
 
 class Action(enum.StrEnum):

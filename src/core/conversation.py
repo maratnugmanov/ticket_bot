@@ -22,6 +22,7 @@ from src.tg.models import (
     SuccessTG,
     ErrorTG,
     MethodTG,
+    DeleteMessagesTG,
     EditMessageTextTG,
 )
 from src.db.engine import SessionDepDB
@@ -175,56 +176,94 @@ class Conversation:
 
     async def process(self) -> bool:
         success = False
-        if self.state is None or self.state.message_id and not self.state.action:
+        if self.state is None:
+            logger.debug(f"No Conversation State with {self.user_db.full_name}.")
+            success = await self.make_delivery(self.expire_old_and_or_send_new_mainmenu)
+        elif self.state:
+            if not self.state.action:
+                logger.debug(
+                    f"Only message_id='{self.state.message_id}' in "
+                    f"Conversation State with {self.user_db.full_name}."
+                )
+                success = await self.make_delivery(
+                    self.expire_old_and_or_send_new_mainmenu
+                )
+            elif self.state.action:
+                logger.debug(f"Found Conversation State with {self.user_db.full_name}.")
+                message_id = self.state.message_id
+                if not self.state.action:
+                    logger.debug(
+                        f"Only message_id='{message_id}' in Conversation "
+                        f"State with {self.user_db.full_name}."
+                    )
+                pass
+        elif (
+            self.state
+            and isinstance(self.update_tg, CallbackQueryUpdateTG)
+            and self.update_tg.callback_query.message.message_id
+            != self.state.message_id
+        ):
+            logger.debug(
+                f"Callback data received is not from the latest "
+                f"sent message #{self.state.message_id}."
+            )
+            success = await self.make_delivery(self.expire_old_keyboard_message)
+        elif self.state is None or self.state.message_id and not self.state.action:
             logger.debug(
                 f"There is no Conversation State with {self.user_db.full_name}."
             )
-            success = await self.ensure_delivery(self.get_stateless_conversation)
+            success = await self.make_delivery(self.get_stateless_conversation)
         elif self.state.script == Script.INITIAL_DATA:
             logger.debug(f"Initial device conversation with {self.user_db.full_name}.")
             self.response_methods_list.extend(self.initial_device_conversation_list())
         return success
 
-    async def ensure_delivery(
+    async def make_delivery(
         self,
-        method_generator: Callable[[], tuple[tuple[MethodTG, ...], StateJS | None]],
+        method_generator: Callable[[], tuple[list[MethodTG], StateJS | None]],
+        not_exist_fix: bool = True,
     ) -> bool:
-        retry_response_tg: SuccessTG | ErrorTG | None
-        method_tg_tuple, state_obj = method_generator()
-        last_method_tg_index = len(method_tg_tuple) - 1
+        response_tg: SuccessTG | ErrorTG | None
+        method_tg_list, state_obj = method_generator()
+        last_method_tg_index = len(method_tg_list) - 1
         success = False
-        for index, method_tg in enumerate(method_tg_tuple):
-            retry_response_tg = await self.post_method_tg(method_tg)
+        for index, method_tg in enumerate(method_tg_list):
+            response_tg = await self.post_method_tg(method_tg)
             if index == last_method_tg_index:
-                if isinstance(retry_response_tg, SuccessTG):
-                    if state_obj:
-                        if isinstance(retry_response_tg.result, MessageTG):
-                            state_obj.message_id = retry_response_tg.result.message_id
+                if isinstance(response_tg, SuccessTG):
+                    if isinstance(response_tg.result, MessageTG):
+                        if not state_obj:
+                            state_obj = StateJS(
+                                message_id=response_tg.result.message_id
+                            )
                         state_json = state_obj.model_dump_json(exclude_none=True)
                         self.user_db.state_json = state_json
                     success = True
                 elif (
-                    isinstance(method_tg, EditMessageTextTG)
-                    and isinstance(retry_response_tg, ErrorTG)
-                    and retry_response_tg.error_code == 400
-                    and retry_response_tg.description
+                    not_exist_fix is True
+                    and isinstance(method_tg, EditMessageTextTG)
+                    and isinstance(response_tg, ErrorTG)
+                    and response_tg.error_code == 400
+                    and response_tg.description
                     in (
                         "Bad Request: message not found",
                         "Bad Request: message to edit not found",
                     )
                 ):
-                    retry_method_tg = SendMessageTG(
+                    method_tg = SendMessageTG(
                         chat_id=method_tg.chat_id,
                         text=method_tg.text,
                         parse_mode=method_tg.parse_mode,
                         reply_markup=method_tg.reply_markup,
                     )
-                    retry_response_tg = await self.post_method_tg(retry_method_tg)
-                    if isinstance(retry_response_tg, SuccessTG):
-                        if state_obj:
-                            if isinstance(retry_response_tg.result, MessageTG):
-                                state_obj.message_id = (
-                                    retry_response_tg.result.message_id
+                    response_tg = await self.post_method_tg(method_tg)
+                    if isinstance(response_tg, SuccessTG):
+                        if isinstance(response_tg.result, MessageTG):
+                            if state_obj:
+                                state_obj.message_id = response_tg.result.message_id
+                            else:
+                                state_obj = StateJS(
+                                    message_id=response_tg.result.message_id
                                 )
                             state_json = state_obj.model_dump_json(exclude_none=True)
                             self.user_db.state_json = state_json
@@ -309,75 +348,282 @@ class Conversation:
                 )
                 return None
 
-    def get_stateless_conversation(self) -> tuple[tuple[MethodTG], StateJS | None]:
+    def expire_old_and_or_send_new_mainmenu(
+        self,
+    ) -> tuple[list[MethodTG], StateJS | None]:
+        methods_tg_list: list[MethodTG] = []
+        state_obj: StateJS | None = None
+        if isinstance(self.update_tg, MessageUpdateTG):
+            logger.debug(f"Received a Message Update from {self.user_db.full_name}.")
+            if self.state and not self.state.action:
+                methods_tg_list.append(self.delete_message_method_tg())
+            logger.debug(f"Sending out Main Menu to {self.user_db.full_name}.")
+            methods_tg_list.append(self.stateless_mainmenu_method_tg())
+        elif isinstance(self.update_tg, CallbackQueryUpdateTG):
+            if self.state is None:
+                data = self.update_tg.callback_query.data
+                message_id = self.update_tg.callback_query.message.message_id
+                logger.debug(
+                    f"Received Callback Query Data '{data}' from "
+                    f"unknown message #{message_id} from "
+                    f"{self.user_db.full_name}. Expiring the unknown "
+                    "message."
+                )
+                methods_tg_list.append(self.delete_message_method_tg())
+                logger.debug(f"Sending out Main Menu to {self.user_db.full_name}.")
+                methods_tg_list.append(self.stateless_mainmenu_method_tg())
+            elif self.state and not self.state.action:
+                if (
+                    self.update_tg.callback_query.message.message_id
+                    != self.state.message_id
+                ):
+                    data = self.update_tg.callback_query.data
+                    message_id = self.update_tg.callback_query.message.message_id
+                    logger.debug(
+                        f"Received Callback Query Data '{data}' from "
+                        f"obsolete message #{message_id} instead of "
+                        f"relevant message #{self.state.message_id} "
+                        f"from {self.user_db.full_name}. Expiring the "
+                        "obsolete message."
+                    )
+                    methods_tg_list.append(
+                        self.delete_message_method_tg(delete_relevant=True)
+                    )
+                    logger.debug(f"Sending out Main Menu to {self.user_db.full_name}.")
+                    methods_tg_list.append(self.stateless_mainmenu_method_tg())
+                elif (
+                    self.update_tg.callback_query.message.message_id
+                    == self.state.message_id
+                ):
+                    data = self.update_tg.callback_query.data
+                    message_id = self.update_tg.callback_query.message.message_id
+                    logger.debug(
+                        f"Received Callback Query Data '{data}' from a "
+                        f"relevant message #{message_id} from "
+                        f"{self.user_db.full_name}. Changing the state."
+                    )
+                    chat_id = self.update_tg.callback_query.message.chat.id
+                    if data == Action.TICKET_NUMBER_INPUT:
+                        state_obj = StateJS(
+                            message_id=message_id,
+                            action=Action.TICKET_NUMBER_INPUT,
+                            script=Script.INITIAL_DATA,
+                        )
+                        methods_tg_list.append(
+                            self.archive_message_method_tg(Strings.CLOSE_TICKET_BTN)
+                        )
+                        methods_tg_list.append(
+                            self.enter_ticket_number(Strings.ENTER_TICKET_NUMBER)
+                        )
+                    elif data == Action.ENABLE_HIRING:
+                        if not self.user_db.is_hiring:
+                            self.user_db.is_hiring = True
+                            methods_tg_list.append(
+                                EditMessageTextTG(
+                                    chat_id=chat_id,
+                                    message_id=message_id,
+                                    text=f"{self.user_db.first_name}, {Strings.HIRING_ENABLED}",
+                                    reply_markup=InlineKeyboardMarkupTG(
+                                        inline_keyboard=self.get_mainmenu_keyboard_array()
+                                    ),
+                                )
+                            )
+                        else:
+                            methods_tg_list.append(
+                                EditMessageTextTG(
+                                    chat_id=chat_id,
+                                    message_id=message_id,
+                                    text=f"{self.user_db.first_name}, {Strings.HIRING_ALREADY_ENABLED}",
+                                    reply_markup=InlineKeyboardMarkupTG(
+                                        inline_keyboard=self.get_mainmenu_keyboard_array()
+                                    ),
+                                )
+                            )
+                    elif data == Action.DISABLE_HIRING:
+                        if self.user_db.is_hiring:
+                            self.user_db.is_hiring = False
+                            methods_tg_list.append(
+                                EditMessageTextTG(
+                                    chat_id=chat_id,
+                                    message_id=message_id,
+                                    text=f"{self.user_db.first_name}, {Strings.HIRING_DISABLED}",
+                                    reply_markup=InlineKeyboardMarkupTG(
+                                        inline_keyboard=self.get_mainmenu_keyboard_array()
+                                    ),
+                                )
+                            )
+                        else:
+                            methods_tg_list.append(
+                                EditMessageTextTG(
+                                    chat_id=chat_id,
+                                    message_id=message_id,
+                                    text=f"{self.user_db.first_name}, {Strings.HIRING_ALREADY_DISABLED}",
+                                    reply_markup=InlineKeyboardMarkupTG(
+                                        inline_keyboard=self.get_mainmenu_keyboard_array()
+                                    ),
+                                )
+                            )
+        return methods_tg_list, state_obj
+
+    def expire_old_keyboard_message(self) -> tuple[list[MethodTG], StateJS | None]:
+        assert isinstance(self.update_tg, CallbackQueryUpdateTG), (
+            "expire_method_tg method only works with CallbackQueryUpdateTG"
+        )
+        method_tg = self.delete_message_method_tg()
+        return [method_tg], None
+
+    def delete_message_method_tg(self, delete_relevant: bool = False) -> MethodTG:
+        message_ids: list[int] = []
+        if isinstance(self.update_tg, CallbackQueryUpdateTG):
+            chat_id = self.update_tg.callback_query.message.chat.id
+            if delete_relevant and self.state:
+                message_ids.append(self.state.message_id)
+            if self.update_tg.callback_query.message.message_id not in message_ids:
+                message_ids.append(self.update_tg.callback_query.message.message_id)
+        elif isinstance(self.update_tg, MessageUpdateTG) and self.state:
+            chat_id = self.update_tg.message.chat.id
+            message_ids.append(self.state.message_id)
+        logger.debug(f"Deleting messages ##{message_ids}.")
+        method_tg = DeleteMessagesTG(
+            chat_id=chat_id,
+            message_ids=message_ids,
+        )
+        return method_tg
+
+    def expire_message_method_tg(self, expire_relevant: bool = False) -> MethodTG:
+        if isinstance(self.update_tg, CallbackQueryUpdateTG):
+            chat_id = self.update_tg.callback_query.message.chat.id
+            if expire_relevant and self.state:
+                message_id = self.state.message_id
+            else:
+                message_id = self.update_tg.callback_query.message.message_id
+            # old_text = self.update_tg.callback_query.message.text
+        elif isinstance(self.update_tg, MessageUpdateTG) and self.state:
+            chat_id = self.update_tg.message.chat.id
+            message_id = self.state.message_id
+        logger.debug(f"Expiring message #{message_id}.")
+        method_tg = EditMessageTextTG(
+            chat_id=chat_id,
+            message_id=message_id,
+            # text=f"<s>{old_text}</s>\n\n{Strings.MESSAGE_HAS_EXPIRED_USE_THE_NEW_ONE}.",
+            text=f"<i>{Strings.MESSAGE_HAS_EXPIRED}</i>",
+            parse_mode="HTML",
+        )
+        return method_tg
+
+    def archive_message_method_tg(self, string: Strings) -> MethodTG:
+        assert isinstance(self.update_tg, CallbackQueryUpdateTG), (
+            "archive_message_method_tg only works with CallbackQueryUpdateTG"
+        )
+        chat_id = self.update_tg.callback_query.message.chat.id
+        message_id = self.update_tg.callback_query.message.message_id
+        # old_text = self.update_tg.callback_query.message.text
+        logger.debug(f"Archiving message #{message_id}.")
+        method_tg = EditMessageTextTG(
+            chat_id=chat_id,
+            message_id=message_id,
+            # text=f"<s>{old_text}</s>\n\n{Strings.YOU_HAVE_CHOSEN}: {string}.",
+            text=string,
+            # parse_mode="HTML",
+        )
+        return method_tg
+
+    def get_stateless_conversation(self) -> tuple[list[MethodTG], StateJS | None]:
         logger.debug(
             f"Initiating stateless conversation with {self.user_db.full_name}."
         )
+        methods_tg_list: list[MethodTG] = []
         state_obj = None
         if isinstance(self.update_tg, MessageUpdateTG):
             logger.debug(f"Responding with Main Menu to {self.user_db.full_name}.")
-            method_tg = self.stateless_mainmenu()
+            methods_tg_list.append(self.stateless_mainmenu_method_tg())
         elif isinstance(self.update_tg, CallbackQueryUpdateTG):
-            data = self.update_tg.callback_query.data
-            chat_id = self.update_tg.callback_query.message.chat.id
-            message_id = self.update_tg.callback_query.message.message_id
-            if data == Action.TICKET_NUMBER_INPUT:
-                state_obj = StateJS(
-                    message_id=message_id,
-                    action=Action.TICKET_NUMBER_INPUT,
-                    script=Script.INITIAL_DATA,
-                )
-                method_tg = self.enter_ticket_number(Strings.ENTER_TICKET_NUMBER)
-            elif data == Action.ENABLE_HIRING:
-                if not self.user_db.is_hiring:
-                    self.user_db.is_hiring = True
-                    method_tg = EditMessageTextTG(
-                        chat_id=chat_id,
+            if self.state is None:
+                methods_tg_list.append(self.delete_message_method_tg())
+                methods_tg_list.append(self.stateless_mainmenu_method_tg())
+            else:
+                data = self.update_tg.callback_query.data
+                chat_id = self.update_tg.callback_query.message.chat.id
+                message_id = self.update_tg.callback_query.message.message_id
+                if data == Action.TICKET_NUMBER_INPUT:
+                    state_obj = StateJS(
                         message_id=message_id,
-                        text=f"{self.user_db.first_name}, {Strings.HIRING_ENABLED}",
-                        reply_markup=InlineKeyboardMarkupTG(
-                            inline_keyboard=self.get_mainmenu_keyboard_array()
-                        ),
+                        action=Action.TICKET_NUMBER_INPUT,
+                        script=Script.INITIAL_DATA,
                     )
-                else:
-                    method_tg = EditMessageTextTG(
-                        chat_id=chat_id,
-                        message_id=message_id,
-                        text=f"{self.user_db.first_name}, {Strings.HIRING_ALREADY_ENABLED}",
-                        reply_markup=InlineKeyboardMarkupTG(
-                            inline_keyboard=self.get_mainmenu_keyboard_array()
-                        ),
+                    methods_tg_list.append(
+                        self.enter_ticket_number(Strings.ENTER_TICKET_NUMBER)
                     )
-            elif data == Action.DISABLE_HIRING:
-                if self.user_db.is_hiring:
-                    self.user_db.is_hiring = False
-                    method_tg = EditMessageTextTG(
-                        chat_id=chat_id,
-                        message_id=message_id,
-                        text=f"{self.user_db.first_name}, {Strings.HIRING_DISABLED}",
-                        reply_markup=InlineKeyboardMarkupTG(
-                            inline_keyboard=self.get_mainmenu_keyboard_array()
-                        ),
-                    )
-                else:
-                    method_tg = EditMessageTextTG(
-                        chat_id=chat_id,
-                        message_id=message_id,
-                        text=f"{self.user_db.first_name}, {Strings.HIRING_ALREADY_DISABLED}",
-                        reply_markup=InlineKeyboardMarkupTG(
-                            inline_keyboard=self.get_mainmenu_keyboard_array()
-                        ),
-                    )
-        return (method_tg,), state_obj
+                elif data == Action.ENABLE_HIRING:
+                    if not self.user_db.is_hiring:
+                        self.user_db.is_hiring = True
+                        methods_tg_list.append(
+                            EditMessageTextTG(
+                                chat_id=chat_id,
+                                message_id=message_id,
+                                text=f"{self.user_db.first_name}, {Strings.HIRING_ENABLED}",
+                                reply_markup=InlineKeyboardMarkupTG(
+                                    inline_keyboard=self.get_mainmenu_keyboard_array()
+                                ),
+                            )
+                        )
+                    else:
+                        methods_tg_list.append(
+                            EditMessageTextTG(
+                                chat_id=chat_id,
+                                message_id=message_id,
+                                text=f"{self.user_db.first_name}, {Strings.HIRING_ALREADY_ENABLED}",
+                                reply_markup=InlineKeyboardMarkupTG(
+                                    inline_keyboard=self.get_mainmenu_keyboard_array()
+                                ),
+                            )
+                        )
+                elif data == Action.DISABLE_HIRING:
+                    if self.user_db.is_hiring:
+                        self.user_db.is_hiring = False
+                        methods_tg_list.append(
+                            EditMessageTextTG(
+                                chat_id=chat_id,
+                                message_id=message_id,
+                                text=f"{self.user_db.first_name}, {Strings.HIRING_DISABLED}",
+                                reply_markup=InlineKeyboardMarkupTG(
+                                    inline_keyboard=self.get_mainmenu_keyboard_array()
+                                ),
+                            )
+                        )
+                    else:
+                        methods_tg_list.append(
+                            EditMessageTextTG(
+                                chat_id=chat_id,
+                                message_id=message_id,
+                                text=f"{self.user_db.first_name}, {Strings.HIRING_ALREADY_DISABLED}",
+                                reply_markup=InlineKeyboardMarkupTG(
+                                    inline_keyboard=self.get_mainmenu_keyboard_array()
+                                ),
+                            )
+                        )
+        return methods_tg_list, state_obj
 
-    def stateless_mainmenu(self) -> MethodTG:
+    def stateless_mainmenu_method_tg(self) -> MethodTG:
+        mainmenu_keyboard_array = self.get_mainmenu_keyboard_array()
+        if mainmenu_keyboard_array:
+            text = (
+                f"{Strings.HELLO}, {self.user_db.first_name}, "
+                f"{Strings.THESE_FUNCTIONS_ARE_AVAILABLE}"
+            )
+            reply_markup = InlineKeyboardMarkupTG(
+                inline_keyboard=mainmenu_keyboard_array
+            )
+        else:
+            text = (
+                f"{Strings.HELLO}, {self.user_db.first_name}, "
+                f"{Strings.NO_FUNCTIONS_ARE_AVAILABLE}"
+            )
+            reply_markup = None
         method_tg = SendMessageTG(
             chat_id=self.user_db.telegram_uid,
-            text=f"{Strings.HELLO}, {self.user_db.first_name}, "
-            f"{Strings.THESE_FUNCTIONS_ARE_AVAILABLE}",
-            reply_markup=InlineKeyboardMarkupTG(
-                inline_keyboard=self.get_mainmenu_keyboard_array()
-            ),
+            text=text,
+            reply_markup=reply_markup,
         )
         return method_tg
 
