@@ -7,8 +7,15 @@ from sqlalchemy import select, exists
 from sqlalchemy.orm import selectinload
 from src.core.config import settings
 from src.core.logger import logger
-from src.core.enums import RoleName, DeviceTypeName, Strings, Action, Script
-from src.core.models import StateJS
+from src.core.enums import (
+    RoleName,
+    DeviceTypeName,
+    CallbackData,
+    Strings,
+    Action,
+    Script,
+)
+from src.core.models import DeviceJS, StateJS
 from src.tg.models import (
     UpdateTG,
     MessageUpdateTG,
@@ -177,45 +184,17 @@ class Conversation:
     async def process(self) -> bool:
         success = False
         if self.state is None:
-            logger.debug(f"No Conversation State with {self.user_db.full_name}.")
-            success = await self.make_delivery(self.expire_old_and_or_send_new_mainmenu)
-        elif self.state:
-            if not self.state.action:
-                logger.debug(
-                    f"Only message_id='{self.state.message_id}' in "
-                    f"Conversation State with {self.user_db.full_name}."
-                )
-                success = await self.make_delivery(
-                    self.expire_old_and_or_send_new_mainmenu
-                )
-            elif self.state.action:
-                logger.debug(f"Found Conversation State with {self.user_db.full_name}.")
-                message_id = self.state.message_id
-                if not self.state.action:
-                    logger.debug(
-                        f"Only message_id='{message_id}' in Conversation "
-                        f"State with {self.user_db.full_name}."
-                    )
-                pass
-        elif (
-            self.state
-            and isinstance(self.update_tg, CallbackQueryUpdateTG)
-            and self.update_tg.callback_query.message.message_id
-            != self.state.message_id
-        ):
-            logger.debug(
-                f"Callback data received is not from the latest "
-                f"sent message #{self.state.message_id}."
-            )
-            success = await self.make_delivery(self.expire_old_keyboard_message)
-        elif self.state is None or self.state.message_id and not self.state.action:
-            logger.debug(
-                f"There is no Conversation State with {self.user_db.full_name}."
-            )
+            logger.debug(f"Starting new conversation with {self.user_db.full_name}.")
             success = await self.make_delivery(self.get_stateless_conversation)
-        elif self.state.script == Script.INITIAL_DATA:
-            logger.debug(f"Initial device conversation with {self.user_db.full_name}.")
-            self.response_methods_list.extend(self.initial_device_conversation_list())
+        else:
+            logger.debug(
+                f"Continuing existing conversation with {self.user_db.full_name}."
+            )
+            if self.state.script == Script.INITIAL_DATA:
+                logger.debug(
+                    f"Initial device conversation with {self.user_db.full_name}."
+                )
+                success = await self.make_delivery(self.get_initial_device_conversation)
         return success
 
     async def make_delivery(
@@ -231,11 +210,7 @@ class Conversation:
             response_tg = await self.post_method_tg(method_tg)
             if index == last_method_tg_index:
                 if isinstance(response_tg, SuccessTG):
-                    if isinstance(response_tg.result, MessageTG):
-                        if not state_obj:
-                            state_obj = StateJS(
-                                message_id=response_tg.result.message_id
-                            )
+                    if state_obj:
                         state_json = state_obj.model_dump_json(exclude_none=True)
                         self.user_db.state_json = state_json
                     success = True
@@ -258,13 +233,7 @@ class Conversation:
                     )
                     response_tg = await self.post_method_tg(method_tg)
                     if isinstance(response_tg, SuccessTG):
-                        if isinstance(response_tg.result, MessageTG):
-                            if state_obj:
-                                state_obj.message_id = response_tg.result.message_id
-                            else:
-                                state_obj = StateJS(
-                                    message_id=response_tg.result.message_id
-                                )
+                        if state_obj:
                             state_json = state_obj.model_dump_json(exclude_none=True)
                             self.user_db.state_json = state_json
                         success = True
@@ -348,177 +317,14 @@ class Conversation:
                 )
                 return None
 
-    def expire_old_and_or_send_new_mainmenu(
-        self,
-    ) -> tuple[list[MethodTG], StateJS | None]:
-        methods_tg_list: list[MethodTG] = []
-        state_obj: StateJS | None = None
-        if isinstance(self.update_tg, MessageUpdateTG):
-            logger.debug(f"Received a Message Update from {self.user_db.full_name}.")
-            if self.state and not self.state.action:
-                methods_tg_list.append(self.delete_message_method_tg())
-            logger.debug(f"Sending out Main Menu to {self.user_db.full_name}.")
-            methods_tg_list.append(self.stateless_mainmenu_method_tg())
-        elif isinstance(self.update_tg, CallbackQueryUpdateTG):
-            if self.state is None:
-                data = self.update_tg.callback_query.data
-                message_id = self.update_tg.callback_query.message.message_id
-                logger.debug(
-                    f"Received Callback Query Data '{data}' from "
-                    f"unknown message #{message_id} from "
-                    f"{self.user_db.full_name}. Expiring the unknown "
-                    "message."
-                )
-                methods_tg_list.append(self.delete_message_method_tg())
-                logger.debug(f"Sending out Main Menu to {self.user_db.full_name}.")
-                methods_tg_list.append(self.stateless_mainmenu_method_tg())
-            elif self.state and not self.state.action:
-                if (
-                    self.update_tg.callback_query.message.message_id
-                    != self.state.message_id
-                ):
-                    data = self.update_tg.callback_query.data
-                    message_id = self.update_tg.callback_query.message.message_id
-                    logger.debug(
-                        f"Received Callback Query Data '{data}' from "
-                        f"obsolete message #{message_id} instead of "
-                        f"relevant message #{self.state.message_id} "
-                        f"from {self.user_db.full_name}. Expiring the "
-                        "obsolete message."
-                    )
-                    methods_tg_list.append(
-                        self.delete_message_method_tg(delete_relevant=True)
-                    )
-                    logger.debug(f"Sending out Main Menu to {self.user_db.full_name}.")
-                    methods_tg_list.append(self.stateless_mainmenu_method_tg())
-                elif (
-                    self.update_tg.callback_query.message.message_id
-                    == self.state.message_id
-                ):
-                    data = self.update_tg.callback_query.data
-                    message_id = self.update_tg.callback_query.message.message_id
-                    logger.debug(
-                        f"Received Callback Query Data '{data}' from a "
-                        f"relevant message #{message_id} from "
-                        f"{self.user_db.full_name}. Changing the state."
-                    )
-                    chat_id = self.update_tg.callback_query.message.chat.id
-                    if data == Action.TICKET_NUMBER_INPUT:
-                        state_obj = StateJS(
-                            message_id=message_id,
-                            action=Action.TICKET_NUMBER_INPUT,
-                            script=Script.INITIAL_DATA,
-                        )
-                        methods_tg_list.append(
-                            self.archive_message_method_tg(Strings.CLOSE_TICKET_BTN)
-                        )
-                        methods_tg_list.append(
-                            self.enter_ticket_number(Strings.ENTER_TICKET_NUMBER)
-                        )
-                    elif data == Action.ENABLE_HIRING:
-                        if not self.user_db.is_hiring:
-                            self.user_db.is_hiring = True
-                            methods_tg_list.append(
-                                EditMessageTextTG(
-                                    chat_id=chat_id,
-                                    message_id=message_id,
-                                    text=f"{self.user_db.first_name}, {Strings.HIRING_ENABLED}",
-                                    reply_markup=InlineKeyboardMarkupTG(
-                                        inline_keyboard=self.get_mainmenu_keyboard_array()
-                                    ),
-                                )
-                            )
-                        else:
-                            methods_tg_list.append(
-                                EditMessageTextTG(
-                                    chat_id=chat_id,
-                                    message_id=message_id,
-                                    text=f"{self.user_db.first_name}, {Strings.HIRING_ALREADY_ENABLED}",
-                                    reply_markup=InlineKeyboardMarkupTG(
-                                        inline_keyboard=self.get_mainmenu_keyboard_array()
-                                    ),
-                                )
-                            )
-                    elif data == Action.DISABLE_HIRING:
-                        if self.user_db.is_hiring:
-                            self.user_db.is_hiring = False
-                            methods_tg_list.append(
-                                EditMessageTextTG(
-                                    chat_id=chat_id,
-                                    message_id=message_id,
-                                    text=f"{self.user_db.first_name}, {Strings.HIRING_DISABLED}",
-                                    reply_markup=InlineKeyboardMarkupTG(
-                                        inline_keyboard=self.get_mainmenu_keyboard_array()
-                                    ),
-                                )
-                            )
-                        else:
-                            methods_tg_list.append(
-                                EditMessageTextTG(
-                                    chat_id=chat_id,
-                                    message_id=message_id,
-                                    text=f"{self.user_db.first_name}, {Strings.HIRING_ALREADY_DISABLED}",
-                                    reply_markup=InlineKeyboardMarkupTG(
-                                        inline_keyboard=self.get_mainmenu_keyboard_array()
-                                    ),
-                                )
-                            )
-        return methods_tg_list, state_obj
-
-    def expire_old_keyboard_message(self) -> tuple[list[MethodTG], StateJS | None]:
+    def archive_choice_method_tg(self, string: Strings) -> MethodTG:
         assert isinstance(self.update_tg, CallbackQueryUpdateTG), (
-            "expire_method_tg method only works with CallbackQueryUpdateTG"
-        )
-        method_tg = self.delete_message_method_tg()
-        return [method_tg], None
-
-    def delete_message_method_tg(self, delete_relevant: bool = False) -> MethodTG:
-        message_ids: list[int] = []
-        if isinstance(self.update_tg, CallbackQueryUpdateTG):
-            chat_id = self.update_tg.callback_query.message.chat.id
-            if delete_relevant and self.state:
-                message_ids.append(self.state.message_id)
-            if self.update_tg.callback_query.message.message_id not in message_ids:
-                message_ids.append(self.update_tg.callback_query.message.message_id)
-        elif isinstance(self.update_tg, MessageUpdateTG) and self.state:
-            chat_id = self.update_tg.message.chat.id
-            message_ids.append(self.state.message_id)
-        logger.debug(f"Deleting messages ##{message_ids}.")
-        method_tg = DeleteMessagesTG(
-            chat_id=chat_id,
-            message_ids=message_ids,
-        )
-        return method_tg
-
-    def expire_message_method_tg(self, expire_relevant: bool = False) -> MethodTG:
-        if isinstance(self.update_tg, CallbackQueryUpdateTG):
-            chat_id = self.update_tg.callback_query.message.chat.id
-            if expire_relevant and self.state:
-                message_id = self.state.message_id
-            else:
-                message_id = self.update_tg.callback_query.message.message_id
-            # old_text = self.update_tg.callback_query.message.text
-        elif isinstance(self.update_tg, MessageUpdateTG) and self.state:
-            chat_id = self.update_tg.message.chat.id
-            message_id = self.state.message_id
-        logger.debug(f"Expiring message #{message_id}.")
-        method_tg = EditMessageTextTG(
-            chat_id=chat_id,
-            message_id=message_id,
-            # text=f"<s>{old_text}</s>\n\n{Strings.MESSAGE_HAS_EXPIRED_USE_THE_NEW_ONE}.",
-            text=f"<i>{Strings.MESSAGE_HAS_EXPIRED}</i>",
-            parse_mode="HTML",
-        )
-        return method_tg
-
-    def archive_message_method_tg(self, string: Strings) -> MethodTG:
-        assert isinstance(self.update_tg, CallbackQueryUpdateTG), (
-            "archive_message_method_tg only works with CallbackQueryUpdateTG"
+            "Choice archiving method only works with CallbackQueryUpdateTG type"
         )
         chat_id = self.update_tg.callback_query.message.chat.id
         message_id = self.update_tg.callback_query.message.message_id
         # old_text = self.update_tg.callback_query.message.text
-        logger.debug(f"Archiving message #{message_id}.")
+        logger.debug(f"Archiving message #{message_id} by editing it to '{string}'.")
         method_tg = EditMessageTextTG(
             chat_id=chat_id,
             message_id=message_id,
@@ -528,80 +334,111 @@ class Conversation:
         )
         return method_tg
 
-    def get_stateless_conversation(self) -> tuple[list[MethodTG], StateJS | None]:
+    def get_stateless_conversation(
+        self,
+    ) -> tuple[list[MethodTG], StateJS | None]:
         logger.debug(
-            f"Initiating stateless conversation with {self.user_db.full_name}."
+            f"Initiating Stateless Conversation with {self.user_db.full_name}."
         )
+        assert self.state is None, "This method is designed for stateless conversation"
         methods_tg_list: list[MethodTG] = []
-        state_obj = None
+        state_obj: StateJS | None = None
+        update_id = self.update_tg.update_id
         if isinstance(self.update_tg, MessageUpdateTG):
-            logger.debug(f"Responding with Main Menu to {self.user_db.full_name}.")
+            message_id = self.update_tg.message.message_id
+            logger.debug(
+                f"Update #{update_id} is a message #{message_id} from "
+                f"{self.user_db.full_name}."
+            )
+            logger.debug(f"Preparing Main Menu for {self.user_db.full_name}.")
             methods_tg_list.append(self.stateless_mainmenu_method_tg())
         elif isinstance(self.update_tg, CallbackQueryUpdateTG):
-            if self.state is None:
-                methods_tg_list.append(self.delete_message_method_tg())
-                methods_tg_list.append(self.stateless_mainmenu_method_tg())
-            else:
-                data = self.update_tg.callback_query.data
-                chat_id = self.update_tg.callback_query.message.chat.id
-                message_id = self.update_tg.callback_query.message.message_id
-                if data == Action.TICKET_NUMBER_INPUT:
-                    state_obj = StateJS(
-                        message_id=message_id,
-                        action=Action.TICKET_NUMBER_INPUT,
-                        script=Script.INITIAL_DATA,
-                    )
+            data = self.update_tg.callback_query.data
+            message_id = self.update_tg.callback_query.message.message_id
+            chat_id = self.update_tg.callback_query.message.chat.id
+            logger.debug(
+                f"Update #{update_id} is a data='{data}' from {self.user_db.full_name}."
+            )
+            if data == Action.TICKET_NUMBER_INPUT:
+                logger.debug(
+                    f"data='{data}' is recognized as a ticket number input. "
+                    f"Preparing the answer for {self.user_db.full_name}."
+                )
+                state_obj = StateJS(
+                    action=Action.TICKET_NUMBER_INPUT,
+                    script=Script.INITIAL_DATA,
+                )
+                methods_tg_list.append(
+                    self.archive_choice_method_tg(Strings.CLOSE_TICKET_BTN)
+                )
+                methods_tg_list.append(
+                    self.enter_ticket_number(f"{Strings.ENTER_TICKET_NUMBER}.")
+                )
+            elif data == Action.ENABLE_HIRING:
+                logger.debug(
+                    f"data='{data}' is recognized as enable hiring. "
+                    f"Preparing the answer for {self.user_db.full_name}."
+                )
+                if not self.user_db.is_hiring:
+                    self.user_db.is_hiring = True
                     methods_tg_list.append(
-                        self.enter_ticket_number(Strings.ENTER_TICKET_NUMBER)
+                        EditMessageTextTG(
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            text=f"{self.user_db.first_name}, {Strings.HIRING_ENABLED}",
+                            reply_markup=InlineKeyboardMarkupTG(
+                                inline_keyboard=self.get_mainmenu_keyboard_array()
+                            ),
+                        )
                     )
-                elif data == Action.ENABLE_HIRING:
-                    if not self.user_db.is_hiring:
-                        self.user_db.is_hiring = True
-                        methods_tg_list.append(
-                            EditMessageTextTG(
-                                chat_id=chat_id,
-                                message_id=message_id,
-                                text=f"{self.user_db.first_name}, {Strings.HIRING_ENABLED}",
-                                reply_markup=InlineKeyboardMarkupTG(
-                                    inline_keyboard=self.get_mainmenu_keyboard_array()
-                                ),
-                            )
+                else:
+                    methods_tg_list.append(
+                        EditMessageTextTG(
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            text=(
+                                f"{self.user_db.first_name}, "
+                                f"{Strings.HIRING_ALREADY_ENABLED}"
+                            ),
+                            reply_markup=InlineKeyboardMarkupTG(
+                                inline_keyboard=self.get_mainmenu_keyboard_array()
+                            ),
                         )
-                    else:
-                        methods_tg_list.append(
-                            EditMessageTextTG(
-                                chat_id=chat_id,
-                                message_id=message_id,
-                                text=f"{self.user_db.first_name}, {Strings.HIRING_ALREADY_ENABLED}",
-                                reply_markup=InlineKeyboardMarkupTG(
-                                    inline_keyboard=self.get_mainmenu_keyboard_array()
-                                ),
-                            )
+                    )
+            elif data == Action.DISABLE_HIRING:
+                logger.debug(
+                    f"data='{data}' is recognized as disable hiring. "
+                    f"Preparing the answer for {self.user_db.full_name}."
+                )
+                if self.user_db.is_hiring:
+                    self.user_db.is_hiring = False
+                    methods_tg_list.append(
+                        EditMessageTextTG(
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            text=f"{self.user_db.first_name}, {Strings.HIRING_DISABLED}",
+                            reply_markup=InlineKeyboardMarkupTG(
+                                inline_keyboard=self.get_mainmenu_keyboard_array()
+                            ),
                         )
-                elif data == Action.DISABLE_HIRING:
-                    if self.user_db.is_hiring:
-                        self.user_db.is_hiring = False
-                        methods_tg_list.append(
-                            EditMessageTextTG(
-                                chat_id=chat_id,
-                                message_id=message_id,
-                                text=f"{self.user_db.first_name}, {Strings.HIRING_DISABLED}",
-                                reply_markup=InlineKeyboardMarkupTG(
-                                    inline_keyboard=self.get_mainmenu_keyboard_array()
-                                ),
-                            )
+                    )
+                else:
+                    methods_tg_list.append(
+                        EditMessageTextTG(
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            text=f"{self.user_db.first_name}, {Strings.HIRING_ALREADY_DISABLED}",
+                            reply_markup=InlineKeyboardMarkupTG(
+                                inline_keyboard=self.get_mainmenu_keyboard_array()
+                            ),
                         )
-                    else:
-                        methods_tg_list.append(
-                            EditMessageTextTG(
-                                chat_id=chat_id,
-                                message_id=message_id,
-                                text=f"{self.user_db.first_name}, {Strings.HIRING_ALREADY_DISABLED}",
-                                reply_markup=InlineKeyboardMarkupTG(
-                                    inline_keyboard=self.get_mainmenu_keyboard_array()
-                                ),
-                            )
-                        )
+                    )
+            else:
+                logger.debug(
+                    f"data='{data}' is not recognized. "
+                    f"Preparing Main Menu for {self.user_db.full_name}."
+                )
+                methods_tg_list.append(self.stateless_mainmenu_method_tg())
         return methods_tg_list, state_obj
 
     def stateless_mainmenu_method_tg(self) -> MethodTG:
@@ -679,86 +516,188 @@ class Conversation:
                 )
         return inline_keyboard_array
 
-    def initial_device_conversation_list(self) -> list[MethodTG]:
-        assert self.state is not None, (
-            "State cannot be None in initial_device_conversation"
+    def get_initial_device_conversation(self) -> tuple[list[MethodTG], StateJS | None]:
+        logger.debug(
+            f"Initiating initial data conversation with {self.user_db.full_name}."
         )
-        method_tg_list: list[MethodTG] = []
+        assert self.state and self.state.script == Script.INITIAL_DATA, (
+            "This method is designed for Script.INITIAL_DATA conversation"
+        )
+        methods_tg_list: list[MethodTG] = []
+        state_obj: StateJS | None = None
         if self.state.action == Action.TICKET_NUMBER_INPUT:
-            if self.update_tg.message and self.update_tg.message.text:
-                message_id = self.update_tg.message.message_id
+            if (
+                isinstance(self.update_tg, MessageUpdateTG)
+                and self.update_tg.message.text
+            ):
                 message_text = self.update_tg.message.text
                 if re.fullmatch(r"\d+", message_text):
-                    self.user_db.state_json = StateJS(
-                        message_id=message_id,
-                        action=Action.DEVICE_TYPE_BUTTONS,
+                    state_obj = StateJS(
+                        action=Action.PICK_DEVICE_TYPE,
                         script=Script.INITIAL_DATA,
                         ticket_number=message_text,
-                    ).model_dump_json(exclude_none=True)
-                    method_tg_list.append(
+                    )
+                    methods_tg_list.append(
                         self.pick_device_type(f"{Strings.PICK_DEVICE_TYPE}.")
                     )
                 else:
-                    method_tg_list.append(
+                    methods_tg_list.append(
                         self.enter_ticket_number(
-                            f"{Strings.INCORRECT_TICKET_NUMBER} "
-                            f"{Strings.ENTER_TICKET_NUMBER}"
+                            f"{Strings.INCORRECT_TICKET_NUMBER}. "
+                            f"{Strings.ENTER_TICKET_NUMBER}."
                         )
                     )
-            elif self.update_tg.callback_query:
-                pass
-        elif self.state.action == Action.DEVICE_TYPE_BUTTONS:
-            if self.update_tg.callback_query:
+            elif isinstance(self.update_tg, CallbackQueryUpdateTG):
+                methods_tg_list.append(
+                    self.enter_ticket_number(
+                        f"{Strings.GOT_DATA_NOT_TICKET_NUMBER}. "
+                        f"{Strings.ENTER_TICKET_NUMBER}."
+                    )
+                )
+        elif self.state.action == Action.PICK_DEVICE_TYPE:
+            if isinstance(self.update_tg, CallbackQueryUpdateTG):
                 data = self.update_tg.callback_query.data
-                chat_id = self.update_tg.callback_query.message.chat.id
-                message_id = self.update_tg.callback_query.message.message_id
                 try:
                     device_type_enum = DeviceTypeName(data)
                     if device_type_enum.name in Strings.__members__:
-                        self.next_state_json = StateJS(
-                            message_id=message_id,
-                            action=Action.DEVICE_SERIAL_NUMBER,
+                        state_obj = StateJS(
+                            action=Action.ENTER_SERIAL_NUMBER,
                             script=Script.INITIAL_DATA,
                             ticket_number=self.state.ticket_number,
                             device_type=device_type_enum,
-                        ).model_dump_json(exclude_none=True)
-                        method_tg_list.append(
-                            EditMessageTextTG(
-                                chat_id=chat_id,
-                                message_id=message_id,
-                                text=f"{Strings.DEVICE_TYPE_PICKED}: {Strings[device_type_enum.name]}. {Strings.ENTER_SERIAL_NUMBER}.",
+                        )
+                        methods_tg_list.append(
+                            self.archive_choice_method_tg(
+                                Strings[device_type_enum.name]
                             )
                         )
+                        methods_tg_list.append(
+                            self.enter_serial_number(f"{Strings.ENTER_SERIAL_NUMBER}.")
+                        )
+                    else:
+                        raise ValueError
                 except ValueError:
                     logger.debug(
                         f"Received invalid callback data '{data}' "
-                        "for device type selection."
+                        "for device type selection. "
                         "Cannot convert to DeviceTypeName."
                     )
-                    method_tg_list.append(
+                    methods_tg_list.append(
                         self.pick_device_type(
-                            f"{Strings.UNEXPECTED_CALLBACK}. {Strings.PICK_DEVICE_TYPE} {Strings.FROM_THESE_VARIANTS}."
+                            f"{Strings.GOT_UNEXPECTED_DATA}. {Strings.PICK_DEVICE_TYPE} {Strings.FROM_OPTIONS_BELOW}."
                         )
                     )
-            elif self.update_tg.message:
+            elif isinstance(self.update_tg, MessageUpdateTG):
                 logger.debug(
                     f"User {self.user_db.full_name} responded with "
                     "message while callback data was awaited."
                 )
-                method_tg_list.append(
+                methods_tg_list.append(
                     self.pick_device_type(
-                        f"{Strings.DEVICE_TYPE_WAS_NOT_PICKED}. {Strings.PICK_DEVICE_TYPE} {Strings.FROM_THESE_VARIANTS}."
+                        f"{Strings.DEVICE_TYPE_WAS_NOT_PICKED}. "
+                        f"{Strings.PICK_DEVICE_TYPE} {Strings.FROM_OPTIONS_BELOW}."
                     )
                 )
-        return method_tg_list
+        elif self.state.action == Action.ENTER_SERIAL_NUMBER:
+            if (
+                isinstance(self.update_tg, MessageUpdateTG)
+                and self.update_tg.message.text
+            ):
+                message_text = self.update_tg.message.text
+                if re.fullmatch(r"[\dA-Za-z]+", message_text):
+                    state_obj = StateJS(
+                        action=Action.PICK_INSTALL_OR_RETURN,
+                        script=Script.INITIAL_DATA,
+                        ticket_number=self.state.ticket_number,
+                        device_type=self.state.device_type,
+                        device_serial_number=message_text,
+                    )
+                    methods_tg_list.append(
+                        self.pick_install_or_return(
+                            f"{Strings.PICK_INSTALL_OR_RETURN}."
+                        )
+                    )
+                else:
+                    methods_tg_list.append(
+                        self.enter_serial_number(
+                            f"{Strings.INCORRECT_SERIAL_NUM}. "
+                            f"{Strings.ENTER_SERIAL_NUMBER}."
+                        )
+                    )
+            elif isinstance(self.update_tg, CallbackQueryUpdateTG):
+                methods_tg_list.append(
+                    self.enter_serial_number(
+                        f"{Strings.GOT_DATA_NOT_SERIAL_NUMBER}. "
+                        f"{Strings.ENTER_SERIAL_NUMBER}."
+                    )
+                )
+        elif self.state.action == Action.PICK_INSTALL_OR_RETURN:
+            if isinstance(self.update_tg, CallbackQueryUpdateTG):
+                expected_callback_data = [
+                    CallbackData.INSTALL_DEVICE_BTN,
+                    CallbackData.REMOVE_DEVICE_BTN,
+                    CallbackData.EDIT_DEVICE_SN_BTN,
+                ]
+                data = self.update_tg.callback_query.data
+                try:
+                    received_callback_data = CallbackData(data)
+                    if received_callback_data in expected_callback_data:
+                        if received_callback_data == CallbackData.INSTALL_DEVICE_BTN:
+                            state_obj = StateJS(
+                                action=Action.PICK_TICKET_DEVICES,
+                                script=Script.INITIAL_DATA,
+                                ticket_number=self.state.ticket_number,
+                                devices_list=[
+                                    DeviceJS(
+                                        type=self.state.device_type,
+                                        serial_number=self.state.device_serial_number,
+                                        is_defective=False,
+                                    )
+                                ],
+                            )
+                            methods_tg_list.append(
+                                self.archive_choice_method_tg(
+                                    Strings[received_callback_data.name]
+                                )
+                            )
+                            methods_tg_list.append(
+                                self.pick_ticket_devices(
+                                    f"{Strings.ENTER_SERIAL_NUMBER}."
+                                )
+                            )
+                    else:
+                        raise ValueError
+                except ValueError:
+                    logger.debug(
+                        f"Received invalid callback data '{data}' "
+                        "for device action selection. "
+                        "Cannot convert to CallbackData."
+                    )
+                    methods_tg_list.append(
+                        self.pick_install_or_return(
+                            f"{Strings.GOT_UNEXPECTED_DATA}. {Strings.PICK_INSTALL_OR_RETURN}."
+                        )
+                    )
+            elif isinstance(self.update_tg, MessageUpdateTG):
+                logger.debug(
+                    f"User {self.user_db.full_name} responded with "
+                    "message while callback data was awaited."
+                )
+                methods_tg_list.append(
+                    self.pick_install_or_return(
+                        f"{Strings.DEVICE_ACTION_WAS_NOT_PICKED}. "
+                        f"{Strings.PICK_INSTALL_OR_RETURN}."
+                    )
+                )
+        return methods_tg_list, state_obj
 
-    def enter_ticket_number(self, text: str = Strings.ENTER_TICKET_NUMBER):
+    def enter_ticket_number(self, text: str = f"{Strings.ENTER_TICKET_NUMBER}."):
         return SendMessageTG(
             chat_id=self.user_db.telegram_uid,
             text=text,
         )
 
-    def pick_device_type(self, text: str = Strings.PICK_DEVICE_TYPE):
+    def pick_device_type(self, text: str = f"{Strings.PICK_DEVICE_TYPE}."):
         return SendMessageTG(
             chat_id=self.user_db.telegram_uid,
             text=text,
@@ -782,82 +721,92 @@ class Conversation:
             ),
         )
 
-    def serial_number_input(self):
+    def enter_serial_number(self, text: str = f"{Strings.ENTER_SERIAL_NUMBER}."):
         return SendMessageTG(
             chat_id=self.user_db.telegram_uid,
-            text=Strings.ENTER_SERIAL_NUMBER,
+            text=text,
         )
 
-    def install_return_input(self):
+    def pick_install_or_return(self, text: str = f"{Strings.PICK_INSTALL_OR_RETURN}."):
         return SendMessageTG(
             chat_id=self.user_db.telegram_uid,
-            text=Strings.PICK_INSTALL_OR_RETURN,
+            text=text,
             reply_markup=InlineKeyboardMarkupTG(
                 inline_keyboard=[
                     [
                         InlineKeyboardButtonTG(
                             text=Strings.INSTALL_DEVICE_BTN,
-                            callback_data="install_btn",
+                            callback_data=CallbackData.INSTALL_DEVICE_BTN,
                         ),
                         InlineKeyboardButtonTG(
                             text=Strings.REMOVE_DEVICE_BTN,
-                            callback_data="remove_btn",
+                            callback_data=CallbackData.REMOVE_DEVICE_BTN,
                         ),
                     ],
                     [
                         InlineKeyboardButtonTG(
                             text=Strings.EDIT_DEVICE_SN_BTN,
-                            callback_data="edit_sn_btn",
+                            callback_data=CallbackData.EDIT_DEVICE_SN_BTN,
                         ),
                     ],
                 ]
             ),
         )
 
-    def ticket_devices_list(self):
+    def pick_ticket_devices(self, text: str = f"{Strings.PICK_TICKET_DEVICES}."):
+        assert self.state and self.state.ticket_number and self.state.devices_list, (
+            "The ticket menu only works with state having at least one device being filled in."
+        )
+        inline_keyboard_array: list[list[InlineKeyboardButtonTG]] = []
+        ticket_number_button: list[InlineKeyboardButtonTG] = [
+            InlineKeyboardButtonTG(
+                text=f"{Strings.TICKET_NUMBER_BTN}{self.state.ticket_number}",
+                callback_data=CallbackData.TICKET_NUMBER_INPUT,
+            ),
+        ]
+        device_button_array: list[list[InlineKeyboardButtonTG]] = []
+        for index, device in enumerate(self.state.devices_list):
+            device_number = index + 1
+            device_icon = "↪️" if device.is_defective else "✅"
+            device_type = Strings[device.type.name]
+            device_serial_number = device.serial_number
+            device_button_array.append(
+                [
+                    InlineKeyboardButtonTG(
+                        text=f"{device_number}. {device_icon} {device_type} {device_serial_number}",
+                        callback_data=CallbackData[f"DEVICE_{index}"],
+                    )
+                ]
+            )
+        add_device_button: list[InlineKeyboardButtonTG] = [
+            InlineKeyboardButtonTG(
+                text=Strings.ADD_DEVICE_BTN,
+                callback_data=CallbackData.ADD_DEVICE_BTN,
+            ),
+        ]
+        close_ticket_button: list[InlineKeyboardButtonTG] = [
+            InlineKeyboardButtonTG(
+                text=Strings.CLOSE_TICKET_BTN,
+                callback_data=CallbackData.CLOSE_TICKET_BTN,
+            ),
+        ]
+        quit_without_saving_button: list[InlineKeyboardButtonTG] = [
+            InlineKeyboardButtonTG(
+                text=Strings.QUIT_WITHOUT_SAVING_BTN,
+                callback_data=CallbackData.QUIT_WITHOUT_SAVING_BTN,
+            ),
+        ]
+        inline_keyboard_array.append(ticket_number_button)
+        inline_keyboard_array.extend(device_button_array)
+        if len(self.state.devices_list) < 6:
+            inline_keyboard_array.append(add_device_button)
+        if len(self.state.devices_list) > 0:
+            inline_keyboard_array.append(close_ticket_button)
+        inline_keyboard_array.append(quit_without_saving_button)
         return SendMessageTG(
             chat_id=self.user_db.telegram_uid,
-            text=Strings.TICKET_DEVICES_LIST,
-            reply_markup=InlineKeyboardMarkupTG(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButtonTG(
-                            text=f"{Strings.TICKET_NUMBER_BTN} 123456789",
-                            callback_data="install_btn1",
-                        ),
-                    ],
-                    [
-                        InlineKeyboardButtonTG(
-                            text="1. ✅ IP / SS1458745697",
-                            callback_data="install_btn2",
-                        ),
-                    ],
-                    [
-                        InlineKeyboardButtonTG(
-                            text="2. ↪️ TVE / SS1458745697",
-                            callback_data="install_bt3n",
-                        ),
-                    ],
-                    [
-                        InlineKeyboardButtonTG(
-                            text=Strings.ADD_DEVICE_BTN,
-                            callback_data="install_b4tn",
-                        ),
-                    ],
-                    [
-                        InlineKeyboardButtonTG(
-                            text=Strings.CLOSE_TICKET_BTN,
-                            callback_data="install5_btn",
-                        ),
-                    ],
-                    [
-                        InlineKeyboardButtonTG(
-                            text=Strings.QUIT_WITHOUT_SAVING_BTN,
-                            callback_data="install6_btn",
-                        ),
-                    ],
-                ]
-            ),
+            text=text,
+            reply_markup=InlineKeyboardMarkupTG(inline_keyboard=inline_keyboard_array),
         )
 
     def echo(self):

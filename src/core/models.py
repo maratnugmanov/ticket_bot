@@ -14,11 +14,12 @@ class DeviceJS(BaseModel):
 
 
 class StateJS(BaseModel):
-    message_id: int
-    action: Action | None = None
-    script: Script | None = None
+    #  message_id: int
+    action: Action
+    script: Script
     ticket_number: int | None = None
     device_type: DeviceTypeName | None = None
+    device_serial_number: str | None = None
     device_index: int | None = None
     writeoff_sn: int | None = None
     devices_list: list[DeviceJS] | None = None
