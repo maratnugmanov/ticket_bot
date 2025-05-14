@@ -18,6 +18,7 @@ class StateJS(BaseModel):
     action: Action
     script: Script
     ticket_number: int | None = None
+    contract_number: int | None = None
     device_type: DeviceTypeName | None = None
     device_serial_number: str | None = None
     device_index: int | None = None

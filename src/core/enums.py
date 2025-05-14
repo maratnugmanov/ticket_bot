@@ -20,7 +20,8 @@ class CallbackData(enum.StrEnum):
     REMOVE_DEVICE_BTN = enum.auto()
     EDIT_DEVICE_SN_BTN = enum.auto()
 
-    TICKET_NUMBER_INPUT = enum.auto()
+    ENTER_TICKET_NUMBER = enum.auto()
+    ENTER_CONTRACT_NUMBER = enum.auto()
 
     DEVICE_0 = enum.auto()
     DEVICE_1 = enum.auto()
@@ -59,6 +60,13 @@ class Strings(enum.StrEnum):
     ENTER_TICKET_NUMBER = "Введите номер заявки"
     GOT_DATA_NOT_TICKET_NUMBER = "Вы нажали кнопку, а должны были ввести номер заявки"
     INCORRECT_TICKET_NUMBER = "Номер заявки должен состоять из цифр, попробуйте снова"
+    ENTER_CONTRACT_NUMBER = "Введите номер договора"
+    GOT_DATA_NOT_CONTRACT_NUMBER = (
+        "Вы нажали кнопку, а должны были ввести номер договора"
+    )
+    INCORRECT_CONTRACT_NUMBER = (
+        "Номер договора должен состоять из цифр, попробуйте снова"
+    )
     PICK_DEVICE_TYPE = "Выберите тип устройства"
     FROM_OPTIONS_BELOW = "из предложенных ниже вариантов"
     DEVICE_TYPE_WAS_NOT_PICKED = "Вы не выбрали тип устройства"
@@ -74,8 +82,10 @@ class Strings(enum.StrEnum):
     DEVICE_ACTION_WAS_NOT_PICKED = "Вы не выбрали действие с устройством"
     GOT_UNEXPECTED_DATA = "Ваш выбор не распознан"
 
-    PICK_TICKET_DEVICES = "Возможные действия: изменение номера текущей заявки, изменение/удаление добавленных устройств, закрытие заявки и полный выход без сохранения"
+    PICK_TICKET_DEVICES = "Возможные действия: изменение номера текущей заявки/договора, изменение/добавление/удаление устройств, закрытие заявки и полный выход без сохранения"
     TICKET_NUMBER_BTN = "Заявка №"
+    CONTRACT_NUMBER_BTN = "Договор №"
+    S_N = "с/н"
     ADD_DEVICE_BTN = "Добавить устройство"
     # REMOVE_DEVICE_BTN = "Удалить устройство"
     QUIT_WITHOUT_SAVING_BTN = "Выйти без сохранения"
@@ -105,7 +115,8 @@ class Action(enum.StrEnum):
     # INITIAL_SERIAL_NUMBER_INPUT = enum.auto()
     # INITIAL_INSTALL_OR_RETURN_BUTTONS = enum.auto()
     PICK_TICKET_DEVICES = enum.auto()
-    TICKET_NUMBER_INPUT = enum.auto()
+    ENTER_TICKET_NUMBER = enum.auto()
+    ENTER_CONTRACT_NUMBER = enum.auto()
     DEVICE_MENU_BUTTONS = enum.auto()
     PICK_DEVICE_TYPE = enum.auto()
     ENTER_SERIAL_NUMBER = enum.auto()

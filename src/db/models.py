@@ -172,6 +172,7 @@ class TicketDB(BaseDB, TimestampMixinDB):
     __tablename__ = "tickets"
     id: Mapped[int] = mapped_column(init=False, primary_key=True)
     ticket_number: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    contract_number: Mapped[int] = mapped_column(Integer, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     user: Mapped[UserDB] = relationship(back_populates="tickets")
     reports: Mapped[list[ReportDB]] = relationship(back_populates="ticket", cascade="all, delete-orphan", passive_deletes=True)
