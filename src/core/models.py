@@ -17,10 +17,10 @@ class StateJS(BaseModel):
     #  message_id: int
     action: Action
     script: Script
+    device_index: int = 0
     ticket_number: int | None = None
     contract_number: int | None = None
     device_type: DeviceTypeName | None = None
     device_serial_number: str | None = None
-    device_index: int | None = None
-    writeoff_sn: int | None = None
-    devices_list: list[DeviceJS] | None = None
+    writeoff_serial_number: int | None = None
+    devices_list: list[DeviceJS] = []
