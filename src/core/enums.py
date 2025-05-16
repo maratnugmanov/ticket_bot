@@ -26,10 +26,10 @@ class CallbackData(enum.StrEnum):
 
     INSTALL_DEVICE_BTN = enum.auto()
     REMOVE_DEVICE_BTN = enum.auto()
-    EDIT_DEVICE_SN_BTN = enum.auto()
+    # EDIT_DEVICE_SN_BTN = enum.auto()
 
-    ENABLE_HIRING = enum.auto()
-    DISABLE_HIRING = enum.auto()
+    # ENABLE_HIRING = enum.auto()
+    # DISABLE_HIRING = enum.auto()
     ENTER_TICKET_NUMBER = enum.auto()
     EDIT_TICKET_NUMBER = enum.auto()
     ENTER_CONTRACT_NUMBER = enum.auto()
@@ -66,7 +66,7 @@ class String(enum.StrEnum):
 
     INSTALL_DEVICE_BTN = "✅ Установить"
     REMOVE_DEVICE_BTN = "↪️ Забрать"
-    EDIT_DEVICE_SN_BTN = "Ввели неверный номер?"
+    # EDIT_DEVICE_SN_BTN = "Ввели неверный номер?"
 
     CLOSE_TICKET_BTN = "⚙ Закрыть заявку"
     TICKETS_HISTORY_BTN = "🗓 История"
@@ -105,10 +105,10 @@ class String(enum.StrEnum):
     TICKET_ACTION_WAS_NOT_PICKED = "Вы не выбрали действие с текущей заявкой"
     GOT_UNEXPECTED_DATA = "Ваш выбор не распознан"
     PICK_TICKET_ACTION = "Возможные действия: изменение номера текущей заявки/договора, изменение/добавление/удаление устройств, закрытие заявки и полный выход без сохранения"
-    TICKET_NUMBER_BTN = "Заявка №"
-    CONTRACT_NUMBER_BTN = "Договор №"
+    TICKET_NUMBER_BTN = "✏️ Заявка №"
+    CONTRACT_NUMBER_BTN = "✏️ Договор №"
     S_N = "с/н"
-    ADD_DEVICE_BTN = "Добавить устройство"
+    ADD_DEVICE_BTN = "➕ Добавить устройство"
     QUIT_WITHOUT_SAVING_BTN = "Выйти без сохранения"
     PICK_A_FUNCTION = "Выберите функцию"
     NO_FUNCTIONS_ARE_AVAILABLE = "У вас нет доступа к каким-либо функциям"
