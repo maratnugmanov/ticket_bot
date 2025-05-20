@@ -2,8 +2,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import zoneinfo
 from sqlalchemy import (
-    event,
-    inspect,
     Enum as SQLAlchemyEnum,
     Integer,
     String,
@@ -17,10 +15,8 @@ from sqlalchemy.orm import (
     MappedAsDataclass,
     mapped_column,
     relationship,
-    Mapper,
 )
 from sqlalchemy.ext.asyncio import AsyncAttrs
-from sqlalchemy.engine import Connection
 from sqlalchemy.dialects.sqlite import DATETIME
 from src.core.config import settings
 from src.core.logger import logger
@@ -90,19 +86,6 @@ class RoleDB(BaseDB, TimestampMixinDB):
     users: Mapped[list[UserDB]] = relationship(default_factory=list, secondary="users_roles_link", back_populates="roles")
 
 
-@event.listens_for(RoleDB, 'before_delete')
-def receive_role_before_delete(mapper: Mapper, connection: Connection, target: RoleDB):
-    """Listener function executed before a RoleDB instance is
-    deleted. Updates 'updated_at' for associated users. Now defined
-    inside the RoleDB class."""
-    state = inspect(target)
-    if state.identity is not None:
-            for user in target.users:
-                user_state = inspect(user)
-                if not user_state.deleted:
-                    user.updated_at = datetime.now(timezone.utc)
-
-
 class UserDB(BaseDB, TimestampMixinDB):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(init=False, primary_key=True)
@@ -142,30 +125,6 @@ class UserDB(BaseDB, TimestampMixinDB):
     @property
     def is_guest(self) -> bool:
         return any(role.name == RoleName.GUEST for role in self.roles)
-
-@event.listens_for(UserDB.roles, 'append')
-def receive_role_append(target: UserDB, value: RoleDB, initiator):
-    state = inspect(target)
-    logger.debug(f"Append listener triggered for User ID: {target.id}, Role: {value.name}")
-    if not state.deleted:
-            now = datetime.now(timezone.utc)
-            logger.debug(f"Updating updated_at for User ID: {target.id} to {now}")
-            target.updated_at = now
-            logger.debug(f"User ID: {target.id} updated_at history after set: {inspect(target).attrs.updated_at.history}")
-    else:
-        logger.debug(f"Append listener skipped for deleted User ID: {target.id}")
-
-@event.listens_for(UserDB.roles, 'remove')
-def receive_role_remove(target: UserDB, value: RoleDB, initiator):
-    state = inspect(target)
-    logger.debug(f"Remove listener triggered for User ID: {target.id}, Role: {value.name}")
-    if not state.deleted:
-            now = datetime.now(timezone.utc)
-            logger.debug(f"Updating updated_at for User ID: {target.id} to {now}")
-            target.updated_at = now
-            logger.debug(f"User ID: {target.id} updated_at history after set: {inspect(target).attrs.updated_at.history}")
-    else:
-        logger.debug(f"Remove listener skipped for deleted User ID: {target.id}")
 
 
 class TicketDB(BaseDB, TimestampMixinDB):
