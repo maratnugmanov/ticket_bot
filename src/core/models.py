@@ -8,9 +8,9 @@ from src.tg.models import SendMessageTG
 
 
 class DeviceJS(BaseModel):
-    type: DeviceTypeName
+    is_defective: bool
+    type: DeviceTypeName | None = None
     serial_number: str | None = None
-    is_defective: bool | None = None
 
 
 class StateJS(BaseModel):
@@ -18,7 +18,7 @@ class StateJS(BaseModel):
     action: Action
     script: Script
     devices_list: list[DeviceJS] = []
-    device_index: int | None = None
+    device_index: int = 0
     ticket_number: int | None = None
     contract_number: int | None = None
     # device_type: DeviceTypeName | None = None

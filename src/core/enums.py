@@ -25,7 +25,7 @@ class CallbackData(enum.StrEnum):
     ROUTER = enum.auto()
 
     INSTALL_DEVICE_BTN = enum.auto()
-    REMOVE_DEVICE_BTN = enum.auto()
+    RETURN_DEVICE_BTN = enum.auto()
     DELETE_DEVICE_BTN = enum.auto()
     # EDIT_DEVICE_SN_BTN = enum.auto()
 
@@ -70,7 +70,8 @@ class String(enum.StrEnum):
     ROUTER = "Роутер"
 
     INSTALL_DEVICE_BTN = "✅ Установить"
-    REMOVE_DEVICE_BTN = "↪️ Забрать"
+    RETURN_DEVICE_BTN = "↪️ Забрать"
+    EDIT = "[ Изменить номер заявки ]"
     # EDIT_DEVICE_SN_BTN = "Ввели неверный номер?"
 
     CLOSE_TICKET_BTN = "⚙ Закрыть заявку"
@@ -121,6 +122,7 @@ class String(enum.StrEnum):
     # SERIAL_NUMBER_RECOGNIZED = (
     #     "Серийный номер опознан: устройство с домашнего склада. Выберите действие."
     # )
+    EDIT_INSTALL_OR_RETURN = "Изменить действие с устройством"
     DEVICE_ACTION_WAS_NOT_PICKED = "Вы не выбрали действие с устройством"
     TICKET_ACTION_WAS_NOT_PICKED = "Вы не выбрали действие с текущей заявкой"
     GOT_UNEXPECTED_DATA = "Ваш выбор не распознан"
@@ -161,8 +163,8 @@ class Action(enum.StrEnum):
     ENTER_SERIAL_NUMBER = enum.auto()
     EDIT_SERIAL_NUMBER = enum.auto()
     PICK_INSTALL_OR_RETURN = enum.auto()
-    EDIT_TICKET = enum.auto()
-    EDIT_DEVICE = enum.auto()
+    PICK_TICKET_ACTION = enum.auto()
+    PICK_DEVICE_ACTION = enum.auto()
     # ENABLE_HIRING = enum.auto()
     # DISABLE_HIRING = enum.auto()
     # INTRODUCTION_MAINMENU_BUTTONS = enum.auto()
