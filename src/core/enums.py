@@ -56,6 +56,11 @@ class CallbackData(enum.StrEnum):
     ADD_DEVICE_BTN = enum.auto()
     CLOSE_TICKET_BTN = enum.auto()
     QUIT_WITHOUT_SAVING_BTN = enum.auto()
+    CONFIRM_QUIT_BTN = enum.auto()
+    DONT_QUIT_BTN = enum.auto()
+
+
+# icons: ✏️
 
 
 class String(enum.StrEnum):
@@ -69,9 +74,9 @@ class String(enum.StrEnum):
     TVE = "TVE"
     ROUTER = "Роутер"
 
-    INSTALL_DEVICE_BTN = "✅ Установить"
-    RETURN_DEVICE_BTN = "↪️ Забрать"
-    EDIT = "[ Изменить номер заявки ]"
+    INSTALL_DEVICE_BTN = "✅ Установка"
+    RETURN_DEVICE_BTN = "↪️ Возврат"
+    EDIT = "[ Ред ]"
     # EDIT_DEVICE_SN_BTN = "Ввели неверный номер?"
 
     CLOSE_TICKET_BTN = "⚙ Закрыть заявку"
@@ -117,22 +122,29 @@ class String(enum.StrEnum):
     )
     EDIT_SERIAL_NUMBER = "✏️ Изменить серийный номер"
     ENTER_NEW_SERIAL_NUMBER = "Введите новый серийный номер"
-    SERIAL_NUMBER_WAS_CHANGED = "✏️ Серийный номер был изменен"
-    PICK_INSTALL_OR_RETURN = "Выберите установку или забор устройства"
+    SERIAL_NUMBER_WAS_CHANGED = "Серийный номер был изменен"
+    PICK_INSTALL_OR_RETURN = "Выберите установку или возврат устройства"
     # SERIAL_NUMBER_RECOGNIZED = (
     #     "Серийный номер опознан: устройство с домашнего склада. Выберите действие."
     # )
-    EDIT_INSTALL_OR_RETURN = "Изменить действие с устройством"
+    EDIT_INSTALL_OR_RETURN = "✏️ Изменить действие с устройством"
     DEVICE_ACTION_WAS_NOT_PICKED = "Вы не выбрали действие с устройством"
     TICKET_ACTION_WAS_NOT_PICKED = "Вы не выбрали действие с текущей заявкой"
     GOT_UNEXPECTED_DATA = "Ваш выбор не распознан"
     DEVICE_ACTION_WAS_CHANGED_FOR = "Тип действия с устройством изменен на"
     PICK_TICKET_ACTION = "Возможные действия: изменение номера текущей заявки/договора, изменение/добавление/удаление устройств, закрытие заявки и выход без сохранения"
     PICK_DEVICE_ACTION = "Возможные действия: изменение серийного номера и типа устройства, смена производимого над ним действия, возврат в предыдущее меню или удаление устройства из данной заявки"
-    TICKET_NUMBER_BTN = "✏️ Заявка №"
-    CONTRACT_NUMBER_BTN = "✏️ Договор №"
+    TICKET_NUMBER_BTN = "Заявка №"
+    TICKET_NUMBER_TIP = "[ Изменить номер заявки ]"
+    CONTRACT_NUMBER_BTN = "Договор №"
+    CONTRACT_NUMBER_TIP = "[ Изменить номер договора ]"
     ADD_DEVICE_BTN = "➕ Добавить устройство"
     QUIT_WITHOUT_SAVING_BTN = "🗑 Выйти без сохранения"
+    ARE_YOU_SURE_YOU_WANT_TO_QUIT_WITHOUT_SAVING = "‼ВНИМАНИЕ‼: Все несохраненные данные будут потеряны, вы уверены что хотите выйти без сохранения?"
+    QUIT_WITHOUT_SAVING_ACTION_WAS_NOT_PICKED = "Вы не выбрали выйти или остаться"
+    CONFIRM_QUIT_BTN = "❌ Да, выйти"
+    DONT_QUIT_BTN = "Я передумал"
+    YOU_QUIT_WITHOUT_SAVING = "Вы вышли без сохранения текущей заявки"
     DELETE_DEVICE_FROM_TICKET = "🗑 Удалить устройство из заявки"
     DEVICE_WAS_DELETED_FROM_TICKET = "🗑 Устройство удалено из заявки"
     PICK_A_FUNCTION = "Выберите функцию"
@@ -163,8 +175,11 @@ class Action(enum.StrEnum):
     ENTER_SERIAL_NUMBER = enum.auto()
     EDIT_SERIAL_NUMBER = enum.auto()
     PICK_INSTALL_OR_RETURN = enum.auto()
+    EDIT_INSTALL_OR_RETURN = enum.auto()
     PICK_TICKET_ACTION = enum.auto()
     PICK_DEVICE_ACTION = enum.auto()
+    CONFIRM_QUIT_WITHOUT_SAVING = enum.auto()
+
     # ENABLE_HIRING = enum.auto()
     # DISABLE_HIRING = enum.auto()
     # INTRODUCTION_MAINMENU_BUTTONS = enum.auto()
