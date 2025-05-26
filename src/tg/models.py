@@ -5,6 +5,13 @@ from pydantic import BaseModel, Field, AwareDatetime, PrivateAttr
 
 class UpdateTG(BaseModel):
     update_id: int
+    _log_cache: str = PrivateAttr(default="")
+
+    @property
+    def _log(self):
+        if not self._log_cache:
+            self._log_cache = f"Update #{self.update_id}: "
+        return self._log_cache
 
 
 class MessageUpdateTG(UpdateTG):

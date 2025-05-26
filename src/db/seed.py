@@ -4,29 +4,46 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import settings
 from src.core.logger import logger
-from src.core.enums import RoleName
+from src.core.enums import RoleName, DeviceTypeName
 from src.db.engine import async_engine_db
-from src.db.models import BaseDB, RoleDB, UserDB
+from src.db.models import BaseDB, RoleDB, UserDB, DeviceTypeDB
 
 
 async def create_db_and_tables():
-    logger.debug("Creating tables for main DB...")
+    logger.info("Initializing database tables...")
     async with async_engine_db.begin() as conn:
         await conn.run_sync(BaseDB.metadata.create_all)
-    logger.debug("Main DB tables created.")
+    logger.info("Successfully initialized database tables.")
+
+
+async def create_device_types(session: AsyncSession):
+    logger.info("Initializing device types...")
+    for type in DeviceTypeName:
+        existing_device_type = await session.scalar(
+            select(DeviceTypeDB.id).where(DeviceTypeDB.name == type)
+        )
+        if not existing_device_type:
+            device_type = DeviceTypeDB(name=type)
+            session.add(device_type)
+            logger.info(f"'{type.name}' device type added to session.")
+    await session.flush()
+    logger.info("Successfully initialized device types.")
 
 
 async def create_user_roles(session: AsyncSession):
+    logger.info("Initializing user roles...")
     for role in RoleName:
         query = select(RoleDB).where(RoleDB.name == role)
         existing_role = await session.scalar(query)
         if not existing_role:
             session.add(RoleDB(name=role))
-            logger.debug(f"Application startup: User role '{role.name}': in Session.")
+            logger.info(f"'{role.name}' user role added to session.")
     await session.flush()
+    logger.info("Successfully initialized user roles.")
 
 
 async def create_main_users(session: AsyncSession):
+    logger.info("Initializing main users...")
     admin_exists = await session.scalar(
         select(UserDB.id).where(UserDB.telegram_uid == settings.admin_telegram_uid)
     )
@@ -43,8 +60,8 @@ async def create_main_users(session: AsyncSession):
         admin_roles = list(admin_roles_result)
         if len(admin_roles) != len(admin_role_enums):
             logger.error(
-                "Admin user creation: Not all expected roles found "
-                f"in DB. Found: {[role.name for role in admin_roles]}"
+                "Not all admin user roles found in the database. "
+                f"Found: {[role.name for role in admin_roles]}."
             )
         admin_user = UserDB(
             telegram_uid=settings.admin_telegram_uid,
@@ -54,8 +71,8 @@ async def create_main_users(session: AsyncSession):
             roles=admin_roles,
         )
         session.add(admin_user)
+        logger.info("Admin user added to session.")
         await session.flush()
-        logger.debug("Application startup: User Admin: in Session.")
     manager_exists = await session.scalar(
         select(UserDB.id).where(UserDB.telegram_uid == settings.manager_telegram_uid)
     )
@@ -71,8 +88,8 @@ async def create_main_users(session: AsyncSession):
         manager_roles = list(manager_roles_result)
         if len(manager_roles) != len(manager_role_enums):
             logger.error(
-                "Manager user creation: Not all expected roles found "
-                f"in DB. Found: {[role.name for role in manager_roles]}"
+                "Not all manager user roles found in the database. "
+                f"Found: {[role.name for role in manager_roles]}."
             )
         manager_user = UserDB(
             telegram_uid=settings.manager_telegram_uid,
@@ -82,5 +99,6 @@ async def create_main_users(session: AsyncSession):
             roles=manager_roles,
         )
         session.add(manager_user)
+        logger.info("Manager user added to session.")
         await session.flush()
-        logger.debug("Application startup: User Manager: in Session.")
+    logger.info("Successfully initialized main users.")

@@ -35,44 +35,48 @@ async def handle_telegram_webhook(
         try:
             update_tg = model.model_validate(request_data)
             validated_model_name = model.__name__
-            logger.debug(
+            logger.info(
                 f"Successful validation against pydantic model {validated_model_name}."
             )
             break
         except ValidationError as e:
-            logger.debug(
+            logger.info(
                 f"Failed validation against pydantic model {model.__name__}: {e.errors()}."
             )
     if update_tg and validated_model_name:
-        logger.debug(
-            f"Received and validated update {update_tg.update_id} as "
-            f"{validated_model_name}.\nRaw JSON: {request_data}"
+        logger.info(
+            f"{update_tg._log}Received and validated the update as {validated_model_name}."
         )
         if isinstance(update_tg, (MessageUpdateTG, CallbackQueryUpdateTG)):
             conversation = await Conversation.create(update_tg, session_db)
             if conversation:
                 success = await conversation.process()
                 if success:
-                    logger.debug(
-                        f"Successfully processed Update #{update_tg.update_id} via Conversation."
+                    logger.info(
+                        f"{update_tg._log}Successfully processed "
+                        "the update via conversation."
                     )
                 else:
                     logger.error(
-                        f"Conversation processing failed for Update #{update_tg.update_id}."
+                        f"{update_tg._log}Failed processing "
+                        "the update via conversation."
                     )
             else:
-                logger.debug(
-                    f"Conversation not initiated for Update #{update_tg.update_id} (type: {validated_model_name}). "
-                    "This is expected for certain conditions (e.g. guest, bot)."
+                logger.info(
+                    f"{update_tg._log}Conversation was not initiated "
+                    f"for the update (type: {validated_model_name}). "
+                    "This is expected for certain conditions "
+                    "(e.g. guest, bot)."
                 )
         elif isinstance(update_tg, UpdateTG):
-            logger.debug(
-                f"Received a generic UpdateTG (Update ID: {update_tg.update_id}), "
-                "which is not a MessageUpdateTG or CallbackQueryUpdateTG. No conversation action taken."
+            logger.info(
+                f"{update_tg._log}Received a generic UpdateTG, which is "
+                "not a MessageUpdateTG or CallbackQueryUpdateTG. "
+                "No conversation action taken."
             )
     else:
         logger.error(
-            "Failed to validate incoming webhook data against any known model. "
-            f"Request data: {request_data}"
+            "Failed to validate incoming webhook data against any known model."
         )
+        logger.debug(f"Raw JSON: {request_data}")
     return None

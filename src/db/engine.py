@@ -35,10 +35,10 @@ AsyncSessionFactoryDB = async_sessionmaker(
 async def get_async_session_db() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionFactoryDB() as async_session_db:
         await async_session_db.execute(text("PRAGMA foreign_keys=ON"))
-        logger.debug("Async Session with 'PRAGMA foreign_keys=ON' initialized.")
+        logger.info("Async session with 'PRAGMA foreign_keys=ON' initialized.")
         yield async_session_db
         await async_session_db.commit()
-        logger.debug("Async Session closed.")
+        logger.info("Async session commit successful.")
 
 
 SessionDepDB = Annotated[AsyncSession, Depends(get_async_session_db)]
@@ -47,9 +47,8 @@ SessionDepDB = Annotated[AsyncSession, Depends(get_async_session_db)]
 async def backup_db(target_file: str = backup_file_name):
     """Backs up the database to a physical file using the raw aiosqlite
     connection's backup method."""
-    logger.debug(
-        f"Attempting to back up database to '{target_file}' using "
-        "aiosqlite backup method..."
+    logger.info(
+        f"Backing up the database to '{target_file}' using aiosqlite backup method..."
     )
     try:
         async with (
@@ -71,7 +70,7 @@ async def backup_db(target_file: str = backup_file_name):
                 target_conn
             )  # Pass the target connection object
             await target_conn.commit()
-        logger.debug(f"Successfully backed up the database to '{target_file}'.")
+        logger.info(f"Successfully backed up the database to '{target_file}'.")
         # Both connections are closed automatically by the combined 'async with'
     except Exception as e:
         logger.error(

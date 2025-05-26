@@ -35,21 +35,6 @@ from src.tg.models import (
 from src.db.engine import SessionDepDB
 from src.db.models import RoleDB, UserDB
 
-EMOJI_DICT = {
-    1: "1⃣",
-    2: "2⃣",
-    3: "3⃣",
-    4: "4⃣",
-    5: "5⃣",
-    6: "6⃣",
-    7: "7⃣",
-    8: "8⃣",
-    9: "9⃣",
-    10: "🔟",
-    "#": "#⃣",
-    "*": "*⃣",
-}
-
 
 class Conversation:
     """Receives Telegram Update (UpdateTG), database session
@@ -63,6 +48,7 @@ class Conversation:
         user_db: UserDB,
     ):
         self.update_tg: MessageUpdateTG | CallbackQueryUpdateTG = update_tg
+        self.log_prefix: str = self.update_tg._log
         self.session_db: SessionDepDB = session_db
         self.user_db: UserDB = user_db
         self.state: StateJS | None = (
@@ -72,9 +58,8 @@ class Conversation:
         )
         self.next_state: StateJS | None = None
         self.response_methods_list: list[MethodTG] = []
-        logger.debug(
-            f"Conversation with {self.user_db.full_name}, "
-            f"Update #{self.update_tg.update_id} initialized."
+        logger.info(
+            f"{self.log_prefix}Conversation with {self.user_db.full_name} initialized."
         )
 
     @classmethod
@@ -89,8 +74,8 @@ class Conversation:
         (e.g., guest with no hiring)."""
         user_tg: UserTG | None = cls.get_user_tg(update_tg)
         if not user_tg:
-            logger.debug(
-                "Ignoring update: Could not extract Telegram User from "
+            logger.error(
+                f"{update_tg._log}CRITICAL: Could not extract Telegram user from "
                 "supported update types (private message/callback)."
             )
             return None
@@ -101,29 +86,29 @@ class Conversation:
         )
         guest_role: RoleDB | None = None
         if user_db is None:
-            logger.debug(f"Guest {user_tg.full_name} is not registered.")
+            logger.info(f"{update_tg._log}Guest {user_tg.full_name} is not registered.")
             hiring = await session_db.scalar(
                 select(exists().where(UserDB.is_hiring == True))  # noqa: E712
             )
             if not hiring:
-                logger.debug(
-                    "User registration is disabled. Telegram User "
-                    f"{user_tg.full_name} will be ignored. "
-                    "Returning None."
+                logger.info(
+                    f"{update_tg._log}User registration is disabled, "
+                    f"Telegram user {user_tg.full_name} will be ignored."
                 )
                 return None
-            logger.debug(
-                "User registration is enabled. Telegram User "
-                f"{user_tg.full_name} will be added to the database "
-                f"with the default '{RoleName.GUEST}' role."
+            logger.info(
+                f"{update_tg._log}User registration is enabled, Telegram "
+                f"user {user_tg.full_name} will be added to the "
+                f"database with the default '{RoleName.GUEST}' role."
             )
             guest_role = await session_db.scalar(
                 select(RoleDB).where(RoleDB.name == RoleName.GUEST)
             )
             if guest_role is None:
                 error_message = (
-                    f"CRITICAL: Default role '{RoleName.GUEST}' not "
-                    "found in the DB. Cannot create new User DB."
+                    f"{update_tg._log}CRITICAL: Default role "
+                    f"'{RoleName.GUEST}' not found in the database. "
+                    "Cannot create new UserDB instance."
                 )
                 logger.error(error_message)
                 raise ValueError(error_message)
@@ -135,12 +120,12 @@ class Conversation:
             user_db.roles.append(guest_role)
             session_db.add(user_db)
             await session_db.flush()
-            logger.debug(
-                f"User DB {user_db.full_name} (ID: {user_db.id}) was "
-                f"created with role '{RoleName.GUEST.name}' in the DB. "
-                "It won't get any visible feedback to prevent "
-                "unnecessary interactions with strangers from "
-                "happening. Conversation returns None."
+            logger.info(
+                f"{update_tg._log}UserDB {user_db.full_name} "
+                f"was created with id='{user_db.id}' and role="
+                f"'{RoleName.GUEST.name}' in the database. It won't "
+                "get any visible feedback to prevent unnecessary "
+                "interactions with strangers from happening."
             )
             return None
         if len(user_db.roles) == 1:
@@ -150,18 +135,21 @@ class Conversation:
                 )
                 if guest_role is None:
                     error_message = (
-                        f"CRITICAL: Default role '{RoleName.GUEST}' not "
-                        "found in the DB. Cannot create new User DB."
+                        f"{update_tg._log}CRITICAL: Default role "
+                        f"'{RoleName.GUEST}' not found in the "
+                        "database. Cannot create new UserDB instance."
                     )
                     logger.error(error_message)
                     raise ValueError(error_message)
             if user_db.roles[0].id == guest_role.id:
-                logger.debug(
-                    f"User DB {user_db.full_name} has only "
+                logger.info(
+                    f"{update_tg._log}UserDB {user_db.full_name} has only "
                     f"'{RoleName.GUEST}' role and won't get any reply."
                 )
                 return None
-        logger.debug(f"Validated User DB {user_db.full_name} as employee.")
+        logger.info(
+            f"{update_tg._log}Validated UserDB {user_db.full_name} as employee."
+        )
         return cls(update_tg, session_db, user_db)
 
     @staticmethod
@@ -177,7 +165,7 @@ class Conversation:
             and update_tg.message.chat.type == "private"
         ):
             user_tg = update_tg.message.from_
-            logger.debug(f"Processing private message update from {user_tg.full_name}.")
+            logger.info(f"{update_tg._log}Private message from {user_tg.full_name}.")
         elif (
             isinstance(update_tg, CallbackQueryUpdateTG)
             and not update_tg.callback_query.from_.is_bot
@@ -187,26 +175,98 @@ class Conversation:
             and update_tg.callback_query.message.chat.type == "private"
         ):
             user_tg = update_tg.callback_query.from_
-            logger.debug(f"Processing callback query update from {user_tg.full_name}.")
+            logger.info(f"{update_tg._log}Callback query from {user_tg.full_name}.")
         return user_tg
 
-    async def process(self) -> bool:
-        success = False
-        if self.state is None:
-            if self.next_state is not None:
-                self.next_state = None
-            logger.debug(f"Starting new conversation with {self.user_db.full_name}.")
-            success = await self.make_delivery(self.get_stateless_conversation)
-        else:
-            logger.debug(
-                f"Continuing existing conversation with {self.user_db.full_name}."
+    async def post_method_tg(self, method_tg: MethodTG) -> SuccessTG | ErrorTG | None:
+        async with httpx.AsyncClient() as client:
+            logger.info(
+                f"{self.log_prefix}Method '{method_tg._url}' is being "
+                f"sent in response to {self.user_db.full_name}."
             )
-            if self.state.script == Script.INITIAL_DATA:
-                logger.debug(
-                    f"Initial device conversation with {self.user_db.full_name}."
+            try:
+                response: httpx.Response = await client.post(
+                    url=settings.get_tg_endpoint(method_tg._url),
+                    json=method_tg.model_dump(exclude_none=True),
                 )
-                success = await self.make_delivery(self.get_device_conversation)
-        return success
+                response.raise_for_status()
+                logger.info(
+                    f"{self.log_prefix}Method '{method_tg._url}' was "
+                    "delivered to Telegram API "
+                    f"(HTTP status {response.status_code})."
+                )
+
+                try:
+                    response_data = response.json()
+                    success_tg = SuccessTG.model_validate(response_data)
+                    logger.info(
+                        f"{self.log_prefix}Method '{method_tg._url}' "
+                        "was accepted by Telegram API."
+                        # f" Response JSON: {response_data}"
+                    )
+                    logger.debug(f"{response_data}")
+                    return success_tg
+                except ValidationError as e:
+                    logger.warning(
+                        f"{self.log_prefix}Unable to validate response "
+                        f"{response_data} as a successful response "
+                        f"for method '{method_tg._url}': {e}"
+                    )
+                    return None
+            except httpx.TimeoutException as e:
+                # If ANY type of timeout occurs, this block is executed
+                logger.error(
+                    f"{self.log_prefix}Request timed out for "
+                    f"method '{method_tg._url}': {e}"
+                )
+                # Handle the timeout (e.g., retry, log, return an error indicator)
+                return None  # Or raise a custom exception
+            except httpx.RequestError as e:
+                # Catch other request errors (like network issues, DNS failures etc.)
+                logger.error(
+                    f"{self.log_prefix}An error occurred while "
+                    f"delivering method '{method_tg._url}': {e}"
+                )
+                return None
+            except httpx.HTTPStatusError as e:
+                # Catch HTTP status errors (4xx, 5xx responses) - these are NOT timeouts
+                logger.error(
+                    f"{self.log_prefix}HTTP status error for "
+                    f"method '{method_tg._url}': {e}"
+                )
+                try:
+                    error_data = e.response.json()
+                    error_tg = ErrorTG.model_validate(error_data)
+                    logger.warning(
+                        "Telegram API Error Details for "
+                        f"method '{method_tg._url}': "
+                        f"error_code='{error_tg.error_code}', "
+                        f"description='{error_tg.description}'"
+                    )
+                    return error_tg  # Return the response even on error status
+                except (ValidationError, Exception) as error_parsing_error:
+                    logger.error(
+                        f"Could not validate/parse Telegram error "
+                        f"response JSON after HTTPStatusError for "
+                        f"Method '{method_tg._url}': {error_parsing_error}"
+                    )
+                    if e.response and hasattr(
+                        e.response, "text"
+                    ):  # Log raw text if available
+                        logger.error(
+                            f"{self.log_prefix}Raw error response "
+                            f"body text: {e.response.text}"
+                        )
+                    # Correct: Return None to indicate that an HTTP status error occurred,
+                    # but the error details couldn't be parsed/validated into an ErrorTG model.
+                    return None
+            except Exception as e:
+                logger.error(
+                    f"{self.log_prefix}An unexpected error occurred "
+                    f"during API call for method '{method_tg._url}': {e}",
+                    exc_info=True,
+                )
+                return None
 
     async def make_delivery(
         self,
@@ -254,83 +314,16 @@ class Conversation:
                         success = True
         return success
 
-    async def post_method_tg(self, method_tg: MethodTG) -> SuccessTG | ErrorTG | None:
-        async with httpx.AsyncClient() as client:
-            logger.debug(
-                f"Attempting sending a response for Update #"
-                f"{self.update_tg.update_id} from user "
-                f"{self.user_db.full_name}. "
-                f"Method '{method_tg._url}'"
-            )
-            try:
-                response: httpx.Response = await client.post(
-                    url=settings.get_tg_endpoint(method_tg._url),
-                    json=method_tg.model_dump(exclude_none=True),
-                )
-                response.raise_for_status()
-                logger.debug(
-                    f"Method '{method_tg._url}' was delivered to "
-                    f"Telegram API (HTTP status {response.status_code})."
-                )
-
-                try:
-                    response_data = response.json()
-                    success_tg = SuccessTG.model_validate(response_data)
-                    logger.debug(
-                        f"Method '{method_tg._url}' was accepted by "
-                        f"Telegram API. Response JSON: {response_data}"
-                    )
-                    return success_tg
-                except ValidationError as e:
-                    logger.warning(
-                        f"Unable to validate response {response_data} "
-                        "as a successful response for Method "
-                        f"'{method_tg._url}': {e}"
-                    )
-                    return None
-            except httpx.TimeoutException as e:
-                # If ANY type of timeout occurs, this block is executed
-                logger.error(f"Request timed out for Method '{method_tg._url}': {e}")
-                # Handle the timeout (e.g., retry, log, return an error indicator)
-                return None  # Or raise a custom exception
-            except httpx.RequestError as e:
-                # Catch other request errors (like network issues, DNS failures etc.)
-                logger.error(
-                    f"An error occurred while delivering Method '{method_tg._url}': {e}"
-                )
-                return None
-            except httpx.HTTPStatusError as e:
-                # Catch HTTP status errors (4xx, 5xx responses) - these are NOT timeouts
-                logger.error(f"HTTP status error for Method '{method_tg._url}': {e}")
-                try:
-                    error_data = e.response.json()
-                    error_tg = ErrorTG.model_validate(error_data)
-                    logger.warning(
-                        f"Telegram API Error Details for Method '{method_tg._url}': "
-                        f"error_code={error_tg.error_code}, "
-                        f"description='{error_tg.description}'"
-                    )
-                    return error_tg  # Return the response even on error status
-                except (ValidationError, Exception) as error_parsing_error:
-                    logger.error(
-                        f"Could not validate/parse Telegram error "
-                        f"response JSON after HTTPStatusError for "
-                        f"Method '{method_tg._url}': {error_parsing_error}"
-                    )
-                    if e.response and hasattr(
-                        e.response, "text"
-                    ):  # Log raw text if available
-                        logger.error(f"Raw error response body text: {e.response.text}")
-                    # Correct: Return None to indicate that an HTTP status error occurred,
-                    # but the error details couldn't be parsed/validated into an ErrorTG model.
-                    return None
-            except Exception as e:
-                logger.error(
-                    f"An unexpected error occurred during API call for "
-                    f"Method '{method_tg._url}': {e}",
-                    exc_info=True,
-                )
-                return None
+    async def process(self) -> bool:
+        success = False
+        if self.state is None:
+            if self.next_state is not None:
+                self.next_state = None
+            success = await self.make_delivery(self.get_stateless_conversation)
+        else:
+            if self.state.script == Script.INITIAL_DATA:
+                success = await self.make_delivery(self.get_device_conversation)
+        return success
 
     def archive_choice_method_tg(self, text: str) -> MethodTG:
         if not isinstance(self.update_tg, CallbackQueryUpdateTG):
@@ -340,7 +333,9 @@ class Conversation:
         chat_id = self.update_tg.callback_query.message.chat.id
         message_id = self.update_tg.callback_query.message.message_id
         # old_text = self.update_tg.callback_query.message.text
-        logger.debug(f"Archiving message #{message_id} by editing it to '{text}'.")
+        logger.info(
+            f"{self.log_prefix}Archiving choice being made by editing message #{message_id} to '{text}'."
+        )
         method_tg = EditMessageTextTG(
             chat_id=chat_id,
             message_id=message_id,
@@ -351,20 +346,21 @@ class Conversation:
         return method_tg
 
     def get_stateless_conversation(self) -> list[MethodTG]:
-        logger.debug(
-            f"Initiating Stateless Conversation with {self.user_db.full_name}."
+        logger.info(
+            f"{self.log_prefix}Starting new conversation with {self.user_db.full_name}."
         )
         if self.state is not None:
             raise ValueError("'self.state' should be None at this point.")
         methods_tg_list: list[MethodTG] = []
-        update_id = self.update_tg.update_id
         if isinstance(self.update_tg, MessageUpdateTG):
             message_id = self.update_tg.message.message_id
-            logger.debug(
-                f"Update #{update_id} is a message #{message_id} from "
+            logger.info(
+                f"{self.log_prefix}A message #{message_id} from "
                 f"{self.user_db.full_name}."
             )
-            logger.debug(f"Preparing Main Menu for {self.user_db.full_name}.")
+            logger.info(
+                f"{self.log_prefix}Preparing main menu for {self.user_db.full_name}."
+            )
             methods_tg_list.append(
                 self.stateless_mainmenu_method_tg(f"{String.PICK_A_FUNCTION}.")
             )
@@ -372,13 +368,14 @@ class Conversation:
             data = self.update_tg.callback_query.data
             message_id = self.update_tg.callback_query.message.message_id
             chat_id = self.update_tg.callback_query.message.chat.id
-            logger.debug(
-                f"Update #{update_id} is a data='{data}' from {self.user_db.full_name}."
+            logger.info(
+                f"{self.log_prefix}data='{data}' from {self.user_db.full_name}."
             )
             if data == CallbackData.ENTER_TICKET_NUMBER:
-                logger.debug(
-                    f"data='{data}' is recognized as a ticket number input. "
-                    f"Preparing the answer for {self.user_db.full_name}."
+                logger.info(
+                    f"{self.log_prefix}data='{data}' is recognized "
+                    "as a ticket number input. Preparing the answer "
+                    f"for {self.user_db.full_name}."
                 )
                 self.next_state = StateJS(
                     action=Action.ENTER_TICKET_NUMBER,
@@ -391,9 +388,10 @@ class Conversation:
                     self.send_text_message_tg(f"{String.ENTER_TICKET_NUMBER}.")
                 )
             elif data == CallbackData.ENABLE_HIRING_BTN:
-                logger.debug(
-                    f"data='{data}' is recognized as enable hiring. "
-                    f"Preparing the answer for {self.user_db.full_name}."
+                logger.info(
+                    f"{self.log_prefix}data='{data}' is recognized "
+                    "as enable hiring. Preparing the answer "
+                    f"for {self.user_db.full_name}."
                 )
                 if not self.user_db.is_hiring:
                     self.user_db.is_hiring = True
@@ -419,9 +417,10 @@ class Conversation:
                         )
                     )
             elif data == CallbackData.DISABLE_HIRING_BTN:
-                logger.debug(
-                    f"data='{data}' is recognized as disable hiring. "
-                    f"Preparing the answer for {self.user_db.full_name}."
+                logger.info(
+                    f"{self.log_prefix}data='{data}' is recognized "
+                    "as disable hiring. Preparing the answer "
+                    f"for {self.user_db.full_name}."
                 )
                 if self.user_db.is_hiring:
                     self.user_db.is_hiring = False
@@ -447,9 +446,10 @@ class Conversation:
                         )
                     )
             else:
-                logger.debug(
-                    f"data='{data}' is not recognized. "
-                    f"Preparing Main Menu for {self.user_db.full_name}."
+                logger.info(
+                    f"{self.log_prefix}data='{data}' is not "
+                    "recognized. Preparing Main Menu "
+                    f"for {self.user_db.full_name}."
                 )
                 methods_tg_list.append(
                     self.stateless_mainmenu_method_tg(
@@ -529,17 +529,22 @@ class Conversation:
         return inline_keyboard_array
 
     def get_device_conversation(self) -> list[MethodTG]:
-        logger.debug(
-            f"Initiating initial data conversation with {self.user_db.full_name}."
+        logger.info(
+            f"{self.log_prefix}Continuing conversation with {self.user_db.full_name}."
         )
         if self.state is None:
             raise ValueError("'self.state' cannot be None at this point.")
         methods_tg_list: list[MethodTG] = []
         if self.state.action == Action.ENTER_TICKET_NUMBER:
+            logger.info(f"{self.log_prefix}Awaiting ticket number.")
             if isinstance(self.update_tg, MessageUpdateTG):
                 if self.update_tg.message.text is not None:
                     message_text = self.update_tg.message.text
                     if re.fullmatch(r"\d+", message_text):
+                        logger.info(
+                            f"{self.log_prefix}Got correct "
+                            f"ticket number: '{message_text}'."
+                        )
                         self.next_state = StateJS(
                             action=Action.ENTER_CONTRACT_NUMBER,
                             script=self.state.script,
@@ -574,6 +579,7 @@ class Conversation:
                     )
                 )
         elif self.state.action == Action.ENTER_CONTRACT_NUMBER:
+            logger.info(f"{self.log_prefix}Awaiting contract number.")
             if self.state.device_index is None:
                 raise ValueError(
                     "'self.state.device_index' cannot be None at this point."
@@ -582,6 +588,10 @@ class Conversation:
                 if self.update_tg.message.text is not None:
                     message_text = self.update_tg.message.text
                     if re.fullmatch(r"\d+", message_text):
+                        logger.info(
+                            f"{self.log_prefix}Got correct "
+                            f"contract number: '{message_text}'."
+                        )
                         self.next_state = StateJS(
                             action=Action.PICK_INSTALL_OR_RETURN,
                             script=self.state.script,
@@ -617,6 +627,9 @@ class Conversation:
                     )
                 )
         elif self.state.action == Action.PICK_INSTALL_OR_RETURN:
+            logger.info(
+                f"{self.log_prefix}Awaiting install or return choice to be made."
+            )
             if self.state.device_index is None:
                 raise ValueError("device_index cannot be None at this point.")
             if isinstance(self.update_tg, CallbackQueryUpdateTG):
@@ -653,7 +666,8 @@ class Conversation:
                             ].is_defective = is_defective
                         else:
                             error_msg = (
-                                f"Error: device_index={device_index} "
+                                f"{self.log_prefix}Error: "
+                                f"device_index={device_index} "
                                 f"> list_length={list_length}. "
                                 f"Expected: device_index <= list_length."
                             )
@@ -670,9 +684,9 @@ class Conversation:
                     else:
                         raise ValueError
                 except ValueError:
-                    logger.debug(
-                        f"Received invalid callback data '{data}' "
-                        "for device action selection."
+                    logger.info(
+                        f"{self.log_prefix}Received invalid callback "
+                        f"data='{data}' for device action selection."
                     )
                     methods_tg_list.append(
                         self.pick_install_or_return(
@@ -681,9 +695,10 @@ class Conversation:
                         )
                     )
             elif isinstance(self.update_tg, MessageUpdateTG):
-                logger.debug(
-                    f"User {self.user_db.full_name} responded with "
-                    "message while callback data was awaited."
+                logger.info(
+                    f"{self.log_prefix}User {self.user_db.full_name} "
+                    "responded with message while callback data "
+                    "was awaited."
                 )
                 methods_tg_list.append(
                     self.pick_install_or_return(
@@ -692,6 +707,7 @@ class Conversation:
                     )
                 )
         elif self.state.action == Action.PICK_DEVICE_TYPE:
+            logger.info(f"{self.log_prefix}Awaiting device type choice to be made.")
             if self.state.device_index is None:
                 raise ValueError("device_index cannot be None at this point.")
             if isinstance(self.update_tg, CallbackQueryUpdateTG):
@@ -723,8 +739,9 @@ class Conversation:
                                 device_index
                             ].type
                             error_msg = (
-                                f"Error: Device with index={device_index} "
-                                f"already has type={existing_type}."
+                                f"{self.log_prefix}Error: Device with "
+                                f"index={device_index} already "
+                                f"has type={existing_type}."
                             )
                             logger.error(error_msg)
                             raise ValueError(error_msg)
@@ -739,9 +756,9 @@ class Conversation:
                     else:
                         raise ValueError
                 except ValueError:
-                    logger.debug(
-                        f"Received invalid callback data '{data}' "
-                        "for device type selection."
+                    logger.info(
+                        f"{self.log_prefix}Received invalid callback "
+                        f"data='{data}' for device type selection."
                     )
                     methods_tg_list.append(
                         self.pick_device_type(
@@ -751,9 +768,10 @@ class Conversation:
                         )
                     )
             elif isinstance(self.update_tg, MessageUpdateTG):
-                logger.debug(
-                    f"User {self.user_db.full_name} responded with "
-                    "message while callback data was awaited."
+                logger.info(
+                    f"{self.log_prefix}User {self.user_db.full_name} "
+                    "responded with message while callback data "
+                    "was awaited."
                 )
                 methods_tg_list.append(
                     self.pick_device_type(
@@ -763,12 +781,17 @@ class Conversation:
                     )
                 )
         elif self.state.action == Action.ENTER_SERIAL_NUMBER:
+            logger.info(f"{self.log_prefix}Awaiting device serial number.")
             if self.state.device_index is None:
                 raise ValueError("device_index cannot be None at this point.")
             if isinstance(self.update_tg, MessageUpdateTG):
                 if self.update_tg.message.text is not None:
                     message_text = self.update_tg.message.text.upper()
                     if re.fullmatch(r"[\dA-Z]+", message_text):
+                        logger.info(
+                            f"{self.log_prefix}Got correct device "
+                            f"serial number: '{message_text}'."
+                        )
                         self.next_state = StateJS(
                             action=Action.PICK_TICKET_ACTION,
                             script=self.state.script,
@@ -790,8 +813,9 @@ class Conversation:
                                 device_index
                             ].serial_number
                             error_msg = (
-                                f"Error: Device with index={device_index} "
-                                f"already has serial_number={existing_serial_number}."
+                                f"{self.log_prefix}Error: Device with "
+                                f"index={device_index} already has "
+                                f"serial_number={existing_serial_number}."
                             )
                             logger.error(error_msg)
                             raise ValueError(error_msg)
@@ -820,6 +844,7 @@ class Conversation:
                     )
                 )
         elif self.state.action == Action.PICK_TICKET_ACTION:
+            logger.info(f"{self.log_prefix}Awaiting ticket menu choice to be made.")
             if isinstance(self.update_tg, CallbackQueryUpdateTG):
                 expected_callback_data = [
                     CallbackData.EDIT_TICKET_NUMBER,
@@ -909,10 +934,10 @@ class Conversation:
                                     )
                                 )
                             except ValueError:
-                                logger.debug(
-                                    f"Last symbol of data='{data}' is "
-                                    "not an integer string. "
-                                    "int(data) failed."
+                                logger.error(
+                                    f"{self.log_prefix}Last symbol "
+                                    f"of data='{data}' is not an "
+                                    "integer string. int(data) failed."
                                 )
                         elif received_callback_data == CallbackData.ADD_DEVICE_BTN:
                             self.next_state = StateJS(
@@ -958,9 +983,9 @@ class Conversation:
                     else:
                         raise ValueError
                 except ValueError:
-                    logger.debug(
-                        f"Received invalid callback data '{data}' "
-                        "for ticket menu selection."
+                    logger.info(
+                        f"{self.log_prefix}Received invalid callback "
+                        f"data='{data}' for ticket menu selection."
                     )
                     methods_tg_list.append(
                         self.pick_ticket_action(
@@ -969,9 +994,10 @@ class Conversation:
                         )
                     )
             elif isinstance(self.update_tg, MessageUpdateTG):
-                logger.debug(
-                    f"User {self.user_db.full_name} responded with "
-                    "message while callback data was awaited."
+                logger.info(
+                    f"{self.log_prefix}User {self.user_db.full_name} "
+                    "responded with message while callback data "
+                    "was awaited."
                 )
                 methods_tg_list.append(
                     self.pick_ticket_action(
@@ -980,10 +1006,15 @@ class Conversation:
                     )
                 )
         elif self.state.action == Action.EDIT_TICKET_NUMBER:
+            logger.info(f"{self.log_prefix}Awaiting new ticket number.")
             if isinstance(self.update_tg, MessageUpdateTG):
                 if self.update_tg.message.text is not None:
                     message_text = self.update_tg.message.text
                     if re.fullmatch(r"\d+", message_text):
+                        logger.info(
+                            f"{self.log_prefix}Got correct "
+                            f"new ticket number: '{message_text}'."
+                        )
                         self.next_state = StateJS(
                             action=Action.PICK_TICKET_ACTION,
                             script=self.state.script,
@@ -1020,10 +1051,15 @@ class Conversation:
                     )
                 )
         elif self.state.action == Action.EDIT_CONTRACT_NUMBER:
+            logger.info(f"{self.log_prefix}Awaiting new contract number.")
             if isinstance(self.update_tg, MessageUpdateTG):
                 if self.update_tg.message.text is not None:
                     message_text = self.update_tg.message.text
                     if re.fullmatch(r"\d+", message_text):
+                        logger.info(
+                            f"{self.log_prefix}Got correct new "
+                            f"contract number: '{message_text}'."
+                        )
                         self.next_state = StateJS(
                             action=Action.PICK_TICKET_ACTION,
                             script=self.state.script,
@@ -1060,6 +1096,7 @@ class Conversation:
                     )
                 )
         elif self.state.action == Action.CONFIRM_QUIT_WITHOUT_SAVING:
+            logger.info(f"{self.log_prefix}Awaiting quit without saving confirmation.")
             if self.state.device_index is None:
                 raise ValueError(
                     "'self.state.device_index' cannot be None at this point."
@@ -1106,10 +1143,10 @@ class Conversation:
                     else:
                         raise ValueError
                 except ValueError:
-                    logger.debug(
-                        f"Received invalid callback data '{data}' "
-                        "for quit without saving confirmation menu "
-                        "selection."
+                    logger.info(
+                        f"{self.log_prefix}Received invalid callback "
+                        f"data='{data}' for quit without saving "
+                        "confirmation menu selection."
                     )
                     methods_tg_list.append(
                         self.pick_confirm_quit(
@@ -1118,9 +1155,10 @@ class Conversation:
                         )
                     )
             elif isinstance(self.update_tg, MessageUpdateTG):
-                logger.debug(
-                    f"User {self.user_db.full_name} responded with "
-                    "message while callback data was awaited."
+                logger.info(
+                    f"{self.log_prefix}User {self.user_db.full_name} "
+                    "responded with message while callback data "
+                    "was awaited."
                 )
                 methods_tg_list.append(
                     self.pick_confirm_quit(
@@ -1129,6 +1167,7 @@ class Conversation:
                     )
                 )
         elif self.state.action == Action.PICK_DEVICE_ACTION:
+            logger.info(f"{self.log_prefix}Awaiting device menu choice to be made.")
             if self.state.device_index is None:
                 raise ValueError(
                     "'self.state.device_index' cannot be None at this point."
@@ -1271,9 +1310,10 @@ class Conversation:
                     else:
                         raise ValueError
                 except ValueError:
-                    logger.debug(
-                        f"Received invalid callback data '{data}' "
-                        "for device menu action selection."
+                    logger.info(
+                        f"{self.log_prefix}Received invalid callback "
+                        f"data='{data}' for device menu action "
+                        "selection."
                     )
                     methods_tg_list.append(
                         self.pick_device_action(
@@ -1281,9 +1321,10 @@ class Conversation:
                         )
                     )
             elif isinstance(self.update_tg, MessageUpdateTG):
-                logger.debug(
-                    f"User {self.user_db.full_name} responded with "
-                    "message while callback data was awaited."
+                logger.info(
+                    f"{self.log_prefix}User {self.user_db.full_name} "
+                    "responded with message while callback data "
+                    "was awaited."
                 )
                 methods_tg_list.append(
                     self.pick_device_action(
@@ -1292,6 +1333,9 @@ class Conversation:
                     )
                 )
         elif self.state.action == Action.EDIT_INSTALL_OR_RETURN:
+            logger.info(
+                f"{self.log_prefix}Awaiting changing install or return choice to be made."
+            )
             if self.state.device_index is None:
                 raise ValueError("device_index cannot be None at this point.")
             if isinstance(self.update_tg, CallbackQueryUpdateTG):
@@ -1328,8 +1372,9 @@ class Conversation:
                             ].is_defective = is_defective
                         else:
                             error_msg = (
-                                f"Error: device_index={device_index} "
-                                f"> list_length={list_length}. "
+                                f"{self.log_prefix}Error: "
+                                f"device_index={device_index} > "
+                                f"list_length={list_length}. "
                                 f"Expected: device_index <= list_length."
                             )
                             logger.error(error_msg)
@@ -1345,9 +1390,9 @@ class Conversation:
                     else:
                         raise ValueError
                 except ValueError:
-                    logger.debug(
-                        f"Received invalid callback data '{data}' "
-                        "for device action selection."
+                    logger.info(
+                        f"{self.log_prefix}Received invalid callback "
+                        f"data='{data}' for device action selection."
                     )
                     methods_tg_list.append(
                         self.pick_install_or_return(
@@ -1356,9 +1401,10 @@ class Conversation:
                         )
                     )
             elif isinstance(self.update_tg, MessageUpdateTG):
-                logger.debug(
-                    f"User {self.user_db.full_name} responded with "
-                    "message while callback data was awaited."
+                logger.info(
+                    f"{self.log_prefix}User {self.user_db.full_name} "
+                    "responded with message while callback data "
+                    "was awaited."
                 )
                 methods_tg_list.append(
                     self.pick_install_or_return(
@@ -1367,6 +1413,9 @@ class Conversation:
                     )
                 )
         elif self.state.action == Action.EDIT_DEVICE_TYPE:
+            logger.info(
+                f"{self.log_prefix}Awaiting changing device type choice to be made."
+            )
             if self.state.device_index is None:
                 raise ValueError("device_index cannot be None at this point.")
             if isinstance(self.update_tg, CallbackQueryUpdateTG):
@@ -1398,8 +1447,9 @@ class Conversation:
                                 device_index
                             ].type
                             error_msg = (
-                                f"Error: Device with index={device_index} "
-                                f"had type=None prior to editing."
+                                f"{self.log_prefix}Error: Device with "
+                                f"index={device_index} had type=None "
+                                "prior to editing."
                             )
                             logger.error(error_msg)
                             raise ValueError(error_msg)
@@ -1414,9 +1464,9 @@ class Conversation:
                     else:
                         raise ValueError
                 except ValueError:
-                    logger.debug(
-                        f"Received invalid callback data '{data}' "
-                        "for device type selection."
+                    logger.info(
+                        f"{self.log_prefix}Received invalid callback "
+                        f"data='{data}' for device type selection."
                     )
                     methods_tg_list.append(
                         self.pick_device_type(
@@ -1426,9 +1476,10 @@ class Conversation:
                         )
                     )
             elif isinstance(self.update_tg, MessageUpdateTG):
-                logger.debug(
-                    f"User {self.user_db.full_name} responded with "
-                    "message while callback data was awaited."
+                logger.info(
+                    f"{self.log_prefix}User {self.user_db.full_name} "
+                    "responded with message while callback data "
+                    "was awaited."
                 )
                 methods_tg_list.append(
                     self.pick_device_type(
@@ -1438,6 +1489,7 @@ class Conversation:
                     )
                 )
         elif self.state.action == Action.EDIT_SERIAL_NUMBER:
+            logger.info(f"{self.log_prefix}Awaiting new device serial number.")
             if self.state.device_index is None:
                 raise ValueError(
                     "'self.state.device_index' cannot be None at this point."
@@ -1448,6 +1500,10 @@ class Conversation:
             ):
                 message_text = self.update_tg.message.text.upper()
                 if re.fullmatch(r"[\dA-Z]+", message_text):
+                    logger.info(
+                        f"{self.log_prefix}Got correct new device "
+                        f"serial number: '{message_text}'."
+                    )
                     self.next_state = StateJS(
                         action=Action.PICK_DEVICE_ACTION,
                         script=self.state.script,
@@ -1466,7 +1522,8 @@ class Conversation:
                         ].serial_number = message_text
                     else:
                         error_msg = (
-                            "Internal logic error: Device has no serial_number to edit."
+                            f"{self.log_prefix}Internal logic error: "
+                            "Device has no serial_number to edit."
                         )
                         logger.error(error_msg)
                         raise ValueError(error_msg)
@@ -1586,7 +1643,9 @@ class Conversation:
             device_number = index + 1
             device_icon = "↪️" if device.is_defective else "✅"
             if not isinstance(device.type, DeviceTypeName):
-                error_msg = "CRITICAL: device.type is not DeviceTypeName."
+                error_msg = (
+                    f"{self.log_prefix}CRITICAL: device.type is not DeviceTypeName."
+                )
                 logger.error(error_msg)
                 raise AssertionError(error_msg)
             device_type = String[device.type.name]
@@ -1663,7 +1722,7 @@ class Conversation:
         inline_keyboard_array: list[list[InlineKeyboardButtonTG]] = []
         device = devices_list[device_index]
         if not isinstance(device.type, DeviceTypeName):
-            error_msg = "CRITICAL: device.type is not DeviceTypeName."
+            error_msg = f"{self.log_prefix}CRITICAL: device.type is not DeviceTypeName."
             logger.error(error_msg)
             raise AssertionError(error_msg)
         device_type = String[device.type.name]
