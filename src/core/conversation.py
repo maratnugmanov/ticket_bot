@@ -34,7 +34,15 @@ from src.tg.models import (
     EditMessageTextTG,
 )
 from src.db.engine import SessionDepDB
-from src.db.models import RoleDB, UserDB
+from src.db.models import (
+    RoleDB,
+    UserDB,
+    TicketDB,
+    ReportDB,
+    WriteoffDB,
+    DeviceDB,
+    DeviceTypeDB,
+)
 
 
 class Conversation:
@@ -1147,7 +1155,7 @@ class Conversation:
                                     f"{String.CONFIRM_CLOSE_TICKET_BTN}."
                                 )
                             )
-                            ticket_closed = False  # await self.close_ticket()
+                            ticket_closed = await self.close_ticket()
                             if ticket_closed:
                                 self.next_state = None
                                 self.user_db.state_json = None
@@ -1903,6 +1911,86 @@ class Conversation:
                 ]
             ),
         )
+
+    async def close_ticket(self) -> bool:
+        if self.state is None:
+            raise ValueError("'self.state' cannot be None at this point.")
+        if not self.state.ticket_number or not self.state.contract_number:
+            logger.error(
+                f"{self.log_prefix}Cannot close ticket: ticket_number or "
+                "contract_number is missing from state."
+            )
+            return False
+        if not self.state.devices_list:
+            error_msg = (
+                f"{self.log_prefix}CRITICAL: Attempting to close "
+                "a ticket with no devices. You shouldn't see this."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        device_js_list: list[DeviceJS] = self.state.devices_list
+        device_type_db_dict: dict[DeviceTypeName, DeviceTypeDB] = {}
+        for type_enum in DeviceTypeName:
+            device_type_db: DeviceTypeDB | None = await self.session_db.scalar(
+                select(DeviceTypeDB).where(DeviceTypeDB.name == type_enum)
+            )
+            if device_type_db is not None:
+                device_type_db_dict[type_enum] = device_type_db
+            else:
+                error_msg = (
+                    f"{self.log_prefix}CRITICAL: Database is missing an entry "
+                    f"for essential device type '{type_enum.name}'. "
+                    "The application cannot proceed with ticket closure."
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+        try:
+            new_ticket_db = TicketDB(
+                ticket_number=self.state.ticket_number,
+                contract_number=self.state.contract_number,
+                user_id=self.user_db.id,  # Or user=self.user_db if MappedAsDataclass handles it
+                user=self.user_db,
+                reports=[],
+            )
+            self.session_db.add(new_ticket_db)
+            for device_js in device_js_list:
+                if device_js.type is None or device_js.serial_number is None:
+                    error_msg = (
+                        f"{self.log_prefix}CRITICAL: DeviceJS object "
+                        "is incomplete (missing type or serial_number) "
+                        f"for ticket {self.state.ticket_number}."
+                    )
+                    logger.error(error_msg)
+                    await self.session_db.rollback()
+                    return False
+                device_type_for_db = device_type_db_dict[device_js.type]
+                new_device_db = DeviceDB(
+                    type_id=device_type_for_db.id,
+                    type=device_type_for_db,
+                    serial_number=device_js.serial_number,
+                    is_defective=device_js.is_defective,
+                )
+                self.session_db.add(new_device_db)
+                new_report_db = ReportDB(
+                    device_id=new_device_db.id,
+                    device=new_device_db,
+                    ticket_id=new_ticket_db.id,
+                    ticket=new_ticket_db,
+                )
+                self.session_db.add(new_report_db)
+            await self.session_db.flush()
+            logger.info(
+                f"{self.log_prefix}Successfully closed and saved ticket "
+                f"{new_ticket_db.ticket_number} with {len(device_js_list)} devices."
+            )
+            return True
+        except Exception as e:
+            logger.error(
+                f"{self.log_prefix}Failed to close ticket due to DB error: {e}",
+                exc_info=True,
+            )
+            await self.session_db.rollback()
+            return False
 
     def pick_confirm_quit(
         self, text: str = f"{String.ARE_YOU_SURE_YOU_WANT_TO_QUIT_WITHOUT_SAVING}"
