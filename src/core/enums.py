@@ -57,7 +57,8 @@ class CallbackData(enum.StrEnum):
     CLOSE_TICKET_BTN = enum.auto()
     QUIT_WITHOUT_SAVING_BTN = enum.auto()
     CONFIRM_QUIT_BTN = enum.auto()
-    DONT_QUIT_BTN = enum.auto()
+    CHANGED_MY_MIND_BTN = enum.auto()
+    CONFIRM_CLOSE_TICKET_BTN = enum.auto()
 
 
 # icons: ✏️
@@ -143,8 +144,14 @@ class String(enum.StrEnum):
     ARE_YOU_SURE_YOU_WANT_TO_QUIT_WITHOUT_SAVING = "‼ВНИМАНИЕ‼: Все несохраненные данные будут потеряны, вы уверены что хотите выйти без сохранения?"
     QUIT_WITHOUT_SAVING_ACTION_WAS_NOT_PICKED = "Вы не выбрали выйти или остаться"
     CONFIRM_QUIT_BTN = "❌ Да, выйти"
-    DONT_QUIT_BTN = "Я передумал"
+    CHANGED_MY_MIND_BTN = "Я передумал"
     YOU_QUIT_WITHOUT_SAVING = "Вы вышли без сохранения текущей заявки"
+    CONFIRM_YOU_WANT_TO_CLOSE_TICKET = "Подтвердите что вы произвели все необходимые действия по заявке и уверены что готовы ее закрыть"
+    CLOSE_TICKET_ACTION_WAS_NOT_PICKED = (
+        "Вы не выбрали закрыть заявку или вернуться к работе с ней"
+    )
+    CONFIRM_CLOSE_TICKET_BTN = "⚙ Да, закрыть заявку"
+    YOU_CLOSED_TICKET = "Вы успешно закрыли заявку"
     DELETE_DEVICE_FROM_TICKET = "🗑 Удалить устройство из заявки"
     DEVICE_WAS_DELETED_FROM_TICKET = "🗑 Устройство удалено из заявки"
     PICK_A_FUNCTION = "Выберите функцию"
@@ -178,6 +185,7 @@ class Action(enum.StrEnum):
     EDIT_INSTALL_OR_RETURN = enum.auto()
     PICK_TICKET_ACTION = enum.auto()
     PICK_DEVICE_ACTION = enum.auto()
+    CONFIRM_CLOSE_TICKET = enum.auto()
     CONFIRM_QUIT_WITHOUT_SAVING = enum.auto()
 
     # ENABLE_HIRING = enum.auto()

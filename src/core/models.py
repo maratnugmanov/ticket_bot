@@ -9,9 +9,9 @@ from src.tg.models import SendMessageTG
 
 class DeviceJS(BaseModel):
     is_defective: bool
-    id: int | None = None
     type: DeviceTypeName | None = None
     serial_number: str | None = None
+    id: int | None = None
 
 
 class StateJS(BaseModel):

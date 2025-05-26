@@ -657,7 +657,10 @@ class Conversation:
                         list_length = len(self.next_state.devices_list)
                         if device_index == list_length:
                             device = DeviceJS(
-                                is_defective=is_defective, type=None, serial_number=None
+                                is_defective=is_defective,
+                                type=None,
+                                serial_number=None,
+                                id=None,
                             )
                             self.next_state.devices_list.append(device)
                         elif device_index < list_length:
@@ -958,6 +961,25 @@ class Conversation:
                                     f"{String.PICK_INSTALL_OR_RETURN}."
                                 )
                             )
+                        elif received_callback_data == CallbackData.CLOSE_TICKET_BTN:
+                            self.next_state = StateJS(
+                                action=Action.CONFIRM_CLOSE_TICKET,
+                                script=self.state.script,
+                                devices_list=self.state.devices_list,
+                                device_index=self.state.device_index,
+                                ticket_number=self.state.ticket_number,
+                                contract_number=self.state.contract_number,
+                            )
+                            methods_tg_list.append(
+                                self.archive_choice_method_tg(
+                                    f"{String.CLOSE_TICKET_BTN}."
+                                )
+                            )
+                            methods_tg_list.append(
+                                self.pick_confirm_close_ticket(
+                                    f"{String.CONFIRM_YOU_WANT_TO_CLOSE_TICKET}."
+                                )
+                            )
                         elif (
                             received_callback_data
                             == CallbackData.QUIT_WITHOUT_SAVING_BTN
@@ -1095,6 +1117,80 @@ class Conversation:
                         f"{String.ENTER_NEW_CONTRACT_NUMBER}."
                     )
                 )
+        elif self.state.action == Action.CONFIRM_CLOSE_TICKET:
+            logger.info(f"{self.log_prefix}Awaiting close ticket confirmation.")
+            if self.state.device_index is None:
+                raise ValueError(
+                    "'self.state.device_index' cannot be None at this point."
+                )
+            if isinstance(self.update_tg, CallbackQueryUpdateTG):
+                expected_callback_data = [
+                    CallbackData.CONFIRM_CLOSE_TICKET_BTN,
+                    CallbackData.CHANGED_MY_MIND_BTN,
+                ]
+                data = self.update_tg.callback_query.data
+                try:
+                    received_callback_data = CallbackData(data)
+                    if received_callback_data in expected_callback_data:
+                        if (
+                            received_callback_data
+                            == CallbackData.CONFIRM_CLOSE_TICKET_BTN
+                        ):
+                            self.next_state = None
+                            self.user_db.state_json = None
+                            methods_tg_list.append(
+                                self.archive_choice_method_tg(
+                                    f"{String.CONFIRM_CLOSE_TICKET_BTN}."
+                                )
+                            )
+                            methods_tg_list.append(
+                                self.stateless_mainmenu_method_tg(
+                                    f"{String.YOU_CLOSED_TICKET}. {String.PICK_A_FUNCTION}."
+                                )
+                            )
+                        elif received_callback_data == CallbackData.CHANGED_MY_MIND_BTN:
+                            self.next_state = StateJS(
+                                action=Action.PICK_TICKET_ACTION,
+                                script=self.state.script,
+                                devices_list=self.state.devices_list,
+                                device_index=self.state.device_index,
+                                ticket_number=self.state.ticket_number,
+                                contract_number=self.state.contract_number,
+                            )
+                            methods_tg_list.append(
+                                self.archive_choice_method_tg(
+                                    f"{String.CHANGED_MY_MIND_BTN}."
+                                )
+                            )
+                            methods_tg_list.append(
+                                self.pick_ticket_action(f"{String.PICK_TICKET_ACTION}.")
+                            )
+                    else:
+                        raise ValueError
+                except ValueError:
+                    logger.info(
+                        f"{self.log_prefix}Received invalid callback "
+                        f"data='{data}' for close ticket "
+                        "confirmation menu selection."
+                    )
+                    methods_tg_list.append(
+                        self.pick_confirm_close_ticket(
+                            f"{String.GOT_UNEXPECTED_DATA}. "
+                            f"{String.CONFIRM_YOU_WANT_TO_CLOSE_TICKET}"
+                        )
+                    )
+            elif isinstance(self.update_tg, MessageUpdateTG):
+                logger.info(
+                    f"{self.log_prefix}User {self.user_db.full_name} "
+                    "responded with message while callback data "
+                    "was awaited."
+                )
+                methods_tg_list.append(
+                    self.pick_confirm_close_ticket(
+                        f"{String.CLOSE_TICKET_ACTION_WAS_NOT_PICKED}. "
+                        f"{String.CONFIRM_YOU_WANT_TO_CLOSE_TICKET}"
+                    )
+                )
         elif self.state.action == Action.CONFIRM_QUIT_WITHOUT_SAVING:
             logger.info(f"{self.log_prefix}Awaiting quit without saving confirmation.")
             if self.state.device_index is None:
@@ -1104,7 +1200,7 @@ class Conversation:
             if isinstance(self.update_tg, CallbackQueryUpdateTG):
                 expected_callback_data = [
                     CallbackData.CONFIRM_QUIT_BTN,
-                    CallbackData.DONT_QUIT_BTN,
+                    CallbackData.CHANGED_MY_MIND_BTN,
                 ]
                 data = self.update_tg.callback_query.data
                 try:
@@ -1123,7 +1219,7 @@ class Conversation:
                                     f"{String.YOU_QUIT_WITHOUT_SAVING}. {String.PICK_A_FUNCTION}."
                                 )
                             )
-                        elif received_callback_data == CallbackData.DONT_QUIT_BTN:
+                        elif received_callback_data == CallbackData.CHANGED_MY_MIND_BTN:
                             self.next_state = StateJS(
                                 action=Action.PICK_TICKET_ACTION,
                                 script=self.state.script,
@@ -1134,7 +1230,7 @@ class Conversation:
                             )
                             methods_tg_list.append(
                                 self.archive_choice_method_tg(
-                                    f"{String.DONT_QUIT_BTN}."
+                                    f"{String.CHANGED_MY_MIND_BTN}."
                                 )
                             )
                             methods_tg_list.append(
@@ -1764,6 +1860,28 @@ class Conversation:
             reply_markup=InlineKeyboardMarkupTG(inline_keyboard=inline_keyboard_array),
         )
 
+    def pick_confirm_close_ticket(
+        self, text: str = f"{String.CONFIRM_YOU_WANT_TO_CLOSE_TICKET}."
+    ):
+        return SendMessageTG(
+            chat_id=self.user_db.telegram_uid,
+            text=text,
+            reply_markup=InlineKeyboardMarkupTG(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButtonTG(
+                            text=String.CONFIRM_CLOSE_TICKET_BTN,
+                            callback_data=CallbackData.CONFIRM_CLOSE_TICKET_BTN,
+                        ),
+                        InlineKeyboardButtonTG(
+                            text=String.CHANGED_MY_MIND_BTN,
+                            callback_data=CallbackData.CHANGED_MY_MIND_BTN,
+                        ),
+                    ],
+                ]
+            ),
+        )
+
     def pick_confirm_quit(
         self, text: str = f"{String.ARE_YOU_SURE_YOU_WANT_TO_QUIT_WITHOUT_SAVING}"
     ):
@@ -1778,8 +1896,8 @@ class Conversation:
                             callback_data=CallbackData.CONFIRM_QUIT_BTN,
                         ),
                         InlineKeyboardButtonTG(
-                            text=String.DONT_QUIT_BTN,
-                            callback_data=CallbackData.DONT_QUIT_BTN,
+                            text=String.CHANGED_MY_MIND_BTN,
+                            callback_data=CallbackData.CHANGED_MY_MIND_BTN,
                         ),
                     ],
                 ]
