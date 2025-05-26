@@ -1,5 +1,6 @@
 from __future__ import annotations
-from typing import Callable, TypedDict
+from typing import Any, Callable, Coroutine
+import inspect
 import re
 import httpx
 from pydantic import ValidationError
@@ -270,11 +271,16 @@ class Conversation:
 
     async def make_delivery(
         self,
-        method_generator: Callable[[], list[MethodTG]],
+        method_generator: Callable[[], list[MethodTG]]
+        | Callable[[], Coroutine[Any, Any, list[MethodTG]]],
         ensure_delivery: bool = True,
     ) -> bool:
         response_tg: SuccessTG | ErrorTG | None
-        method_tg_list = method_generator()
+        method_tg_list: list[MethodTG]
+        if inspect.iscoroutinefunction(method_generator):
+            method_tg_list = await method_generator()
+        else:
+            method_tg_list = method_generator()  # type: ignore
         last_method_tg_index = len(method_tg_list) - 1
         success = False
         for index, method_tg in enumerate(method_tg_list):
@@ -528,7 +534,7 @@ class Conversation:
                 )
         return inline_keyboard_array
 
-    def get_device_conversation(self) -> list[MethodTG]:
+    async def get_device_conversation(self) -> list[MethodTG]:
         logger.info(
             f"{self.log_prefix}Continuing conversation with {self.user_db.full_name}."
         )
@@ -1136,18 +1142,34 @@ class Conversation:
                             received_callback_data
                             == CallbackData.CONFIRM_CLOSE_TICKET_BTN
                         ):
-                            self.next_state = None
-                            self.user_db.state_json = None
                             methods_tg_list.append(
                                 self.archive_choice_method_tg(
                                     f"{String.CONFIRM_CLOSE_TICKET_BTN}."
                                 )
                             )
-                            methods_tg_list.append(
-                                self.stateless_mainmenu_method_tg(
-                                    f"{String.YOU_CLOSED_TICKET}. {String.PICK_A_FUNCTION}."
+                            ticket_closed = False  # await self.close_ticket()
+                            if ticket_closed:
+                                self.next_state = None
+                                self.user_db.state_json = None
+                                methods_tg_list.append(
+                                    self.stateless_mainmenu_method_tg(
+                                        f"{String.YOU_CLOSED_TICKET}. {String.PICK_A_FUNCTION}."
+                                    )
                                 )
-                            )
+                            else:
+                                self.next_state = StateJS(
+                                    action=Action.PICK_TICKET_ACTION,
+                                    script=self.state.script,
+                                    devices_list=self.state.devices_list,
+                                    device_index=self.state.device_index,
+                                    ticket_number=self.state.ticket_number,
+                                    contract_number=self.state.contract_number,
+                                )
+                                methods_tg_list.append(
+                                    self.pick_ticket_action(
+                                        f"{String.TICKET_CLOSE_FAILED}. {String.PICK_TICKET_ACTION}."
+                                    )
+                                )
                         elif received_callback_data == CallbackData.CHANGED_MY_MIND_BTN:
                             self.next_state = StateJS(
                                 action=Action.PICK_TICKET_ACTION,
