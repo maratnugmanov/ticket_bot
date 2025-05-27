@@ -48,6 +48,7 @@ SQLITE_ISO8601_ISO_UTC_FORMAT = (
 
 
 # https://docs.python.org/3/library/datetime.html#datetime.datetime.fromisoformat
+# https://github.com/sqlalchemy/sqlalchemy/discussions/11372
 class TimestampMixinDB:
     created_at: Mapped[datetime] = mapped_column(
         DATETIME(storage_format=SQLITE_ISO8601_ISO_UTC_FORMAT),

@@ -348,7 +348,8 @@ class Conversation:
         message_id = self.update_tg.callback_query.message.message_id
         # old_text = self.update_tg.callback_query.message.text
         logger.info(
-            f"{self.log_prefix}Archiving choice being made by editing message #{message_id} to '{text}'."
+            f"{self.log_prefix}Archiving choice being made "
+            f"by editing message #{message_id} to '{text}'."
         )
         method_tg = EditMessageTextTG(
             chat_id=chat_id,
@@ -1915,12 +1916,6 @@ class Conversation:
     async def close_ticket(self) -> bool:
         if self.state is None:
             raise ValueError("'self.state' cannot be None at this point.")
-        if not self.state.ticket_number or not self.state.contract_number:
-            logger.error(
-                f"{self.log_prefix}Cannot close ticket: ticket_number or "
-                "contract_number is missing from state."
-            )
-            return False
         if not self.state.devices_list:
             error_msg = (
                 f"{self.log_prefix}CRITICAL: Attempting to close "
@@ -1928,18 +1923,24 @@ class Conversation:
             )
             logger.error(error_msg)
             raise ValueError(error_msg)
+        if not self.state.ticket_number or not self.state.contract_number:
+            logger.error(
+                f"{self.log_prefix}Cannot close ticket: ticket_number or "
+                "contract_number is missing from state."
+            )
+            return False
         device_js_list: list[DeviceJS] = self.state.devices_list
         device_type_db_dict: dict[DeviceTypeName, DeviceTypeDB] = {}
-        for type_enum in DeviceTypeName:
+        for type_name_enum in DeviceTypeName:
             device_type_db: DeviceTypeDB | None = await self.session_db.scalar(
-                select(DeviceTypeDB).where(DeviceTypeDB.name == type_enum)
+                select(DeviceTypeDB).where(DeviceTypeDB.name == type_name_enum)
             )
             if device_type_db is not None:
-                device_type_db_dict[type_enum] = device_type_db
+                device_type_db_dict[type_name_enum] = device_type_db
             else:
                 error_msg = (
                     f"{self.log_prefix}CRITICAL: Database is missing an entry "
-                    f"for essential device type '{type_enum.name}'. "
+                    f"for essential device type '{type_name_enum.name}'. "
                     "The application cannot proceed with ticket closure."
                 )
                 logger.error(error_msg)
@@ -1986,7 +1987,7 @@ class Conversation:
             return True
         except Exception as e:
             logger.error(
-                f"{self.log_prefix}Failed to close ticket due to DB error: {e}",
+                f"{self.log_prefix}Failed to close ticket due to database error: {e}",
                 exc_info=True,
             )
             await self.session_db.rollback()
