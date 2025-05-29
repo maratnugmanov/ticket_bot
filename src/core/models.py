@@ -8,10 +8,20 @@ from src.tg.models import SendMessageTG
 
 
 class DeviceJS(BaseModel):
-    is_defective: bool
-    type: DeviceTypeName | None = None
+    type: DeviceTypeJS
+    is_defective: bool | None = None
     serial_number: str | None = None
     id: int | None = None
+
+
+class DeviceTypeJS(BaseModel):
+    id: int
+    name: DeviceTypeName
+    is_returnable: bool
+    has_serial_number: bool
+    is_disabled: bool = False
+
+    model_config = {"from_attributes": True}
 
 
 class StateJS(BaseModel):

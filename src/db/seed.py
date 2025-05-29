@@ -18,14 +18,29 @@ async def create_db_and_tables():
 
 async def create_device_types(session: AsyncSession):
     logger.info("Initializing device types...")
-    for type in DeviceTypeName:
+    router = DeviceTypeDB(
+        name=DeviceTypeName.ROUTER, is_returnable=True, has_serial_number=True
+    )
+    ip_device = DeviceTypeDB(
+        name=DeviceTypeName.IP_DEVICE, is_returnable=True, has_serial_number=True
+    )
+    tve_device = DeviceTypeDB(
+        name=DeviceTypeName.TVE_DEVICE, is_returnable=True, has_serial_number=True
+    )
+    power_unit = DeviceTypeDB(
+        name=DeviceTypeName.POWER_UNIT, is_returnable=False, has_serial_number=False
+    )
+    network_hub = DeviceTypeDB(
+        name=DeviceTypeName.NETWORK_HUB, is_returnable=False, has_serial_number=True
+    )
+    device_types = [router, ip_device, tve_device, power_unit, network_hub]
+    for device_type in device_types:
         existing_device_type = await session.scalar(
-            select(DeviceTypeDB.id).where(DeviceTypeDB.name == type)
+            select(DeviceTypeDB.id).where(DeviceTypeDB.name == device_type.name)
         )
         if not existing_device_type:
-            device_type = DeviceTypeDB(name=type)
             session.add(device_type)
-            logger.info(f"'{type.name}' device type added to session.")
+            logger.info(f"'{device_type.name}' device type added to session.")
     await session.flush()
     logger.info("Successfully initialized device types.")
 

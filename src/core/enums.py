@@ -10,9 +10,11 @@ class RoleName(enum.StrEnum):
 
 
 class DeviceTypeName(enum.StrEnum):
-    IP = enum.auto()
-    TVE = enum.auto()
     ROUTER = enum.auto()
+    IP_DEVICE = enum.auto()
+    TVE_DEVICE = enum.auto()
+    POWER_UNIT = enum.auto()
+    NETWORK_HUB = enum.auto()
 
 
 class CallbackData(enum.StrEnum):
@@ -20,9 +22,12 @@ class CallbackData(enum.StrEnum):
     def _generate_next_value_(name, start, count, last_values):
         return "cb_" + name.lower()
 
-    IP = enum.auto()
-    TVE = enum.auto()
+    # DeviceTypeName
     ROUTER = enum.auto()
+    IP_DEVICE = enum.auto()
+    TVE_DEVICE = enum.auto()
+    POWER_UNIT = enum.auto()
+    NETWORK_HUB = enum.auto()
 
     INSTALL_DEVICE_BTN = enum.auto()
     RETURN_DEVICE_BTN = enum.auto()
@@ -52,6 +57,8 @@ class CallbackData(enum.StrEnum):
     DEVICE_3 = enum.auto()
     DEVICE_4 = enum.auto()
     DEVICE_5 = enum.auto()
+    DEVICE_6 = enum.auto()
+    DEVICE_7 = enum.auto()
 
     ADD_DEVICE_BTN = enum.auto()
     CLOSE_TICKET_BTN = enum.auto()
@@ -71,9 +78,11 @@ class String(enum.StrEnum):
     ENGINEER = "СИ"
     GUEST = "Гость"
     # DeviceTypeName
-    IP = "IP"
-    TVE = "TVE"
     ROUTER = "Роутер"
+    IP_DEVICE = "IP-приставка"
+    TVE_DEVICE = "TVE-приставка"
+    POWER_UNIT = "Блок питания"
+    NETWORK_HUB = "Свитч"
 
     INSTALL_DEVICE_BTN = "✅ Установка"
     RETURN_DEVICE_BTN = "↪️ Возврат"
@@ -116,6 +125,8 @@ class String(enum.StrEnum):
     FROM_OPTIONS_BELOW = "из предложенных ниже вариантов"
     DEVICE_TYPE_WAS_CHANGED_FOR = "Тип устройства изменен на"
     DEVICE_TYPE_WAS_NOT_PICKED = "Вы не выбрали тип устройства"
+    DEVICE_TYPE_IS_DISABLED = "Выбранный тип устройства в данный момент не используется"
+    NO_DEVICE_TYPE_AVAILABLE = "Ни один тип устройства в данный момент не доступен, работа с заявками невозможна. обратитесь к администратору"
     ENTER_SERIAL_NUMBER = "Введите серийный номер"
     INCORRECT_SERIAL_NUMBER = "Серийный номер должен состоять из букв латинского алфавита и/или цифр, попробуйте снова"
     GOT_DATA_NOT_SERIAL_NUMBER = (
@@ -132,6 +143,7 @@ class String(enum.StrEnum):
     DEVICE_ACTION_WAS_NOT_PICKED = "Вы не выбрали действие с устройством"
     TICKET_ACTION_WAS_NOT_PICKED = "Вы не выбрали действие с текущей заявкой"
     GOT_UNEXPECTED_DATA = "Ваш выбор не распознан"
+    MESSAGE_HAS_EXPIRED = "Сообщение устарело"
     DEVICE_ACTION_WAS_CHANGED_FOR = "Тип действия с устройством изменен на"
     PICK_TICKET_ACTION = "Возможные действия: изменение номера текущей заявки/договора, изменение/добавление/удаление устройств, закрытие заявки и выход без сохранения"
     PICK_DEVICE_ACTION = "Возможные действия: изменение серийного номера и типа устройства, смена производимого над ним действия, возврат в предыдущее меню или удаление устройства из данной заявки"
@@ -165,7 +177,6 @@ class String(enum.StrEnum):
     HIRING_DISABLED_TIP = "Если найм закрыт у всех менеджеров, то все незарегистрированные пользователи будут удалены из базы данных."
     HIRING_DISABLED = f"Найм закрыт. {HIRING_DISABLED_TIP}"
     HIRING_ALREADY_DISABLED = f"Найм уже закрыт. {HIRING_DISABLED_TIP}"
-    # MESSAGE_HAS_EXPIRED = "Сообщение устарело"
     # YOU_HAVE_PICKED = "Вы выбрали"
 
 

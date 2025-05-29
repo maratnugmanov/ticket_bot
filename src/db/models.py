@@ -165,8 +165,8 @@ class DeviceDB(BaseDB, TimestampMixinDB):
     id: Mapped[int] = mapped_column(init=False, primary_key=True)
     type_id: Mapped[int] = mapped_column(ForeignKey("device_types.id", ondelete="RESTRICT"), index=True)
     type: Mapped[DeviceTypeDB] = relationship(back_populates="devices")
+    is_defective: Mapped[bool] = mapped_column(Boolean, index=True)
     serial_number: Mapped[str] = mapped_column(String, index=True)
-    is_defective: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     reports: Mapped[list[ReportDB]] = relationship(default_factory=list, back_populates="device", cascade="all, delete-orphan", passive_deletes=True)
     writeoffs: Mapped[list[WriteoffDB]] = relationship(default_factory=list, back_populates="device", cascade="all, delete-orphan", passive_deletes=True)
 
@@ -175,5 +175,7 @@ class DeviceTypeDB(BaseDB, TimestampMixinDB):
     __tablename__ = "device_types"
     id: Mapped[int] = mapped_column(init=False, primary_key=True)
     name: Mapped[DeviceTypeName] = mapped_column(index=True, unique=True)
+    is_returnable: Mapped[bool] = mapped_column(Boolean, index=True)
+    has_serial_number: Mapped[bool] = mapped_column(Boolean, index=True)
     is_disabled: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     devices: Mapped[list[DeviceDB]] = relationship(default_factory=list, back_populates="type")
