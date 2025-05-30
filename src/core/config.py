@@ -17,6 +17,8 @@ class Settings(BaseSettings):
 
     telegram_api_base: str = "https://api.telegram.org/"
 
+    devices_per_ticket: int = Field(alias="DEVICES_PER_TICKET")
+
     user_default_timezone: str = Field(alias="USER_DEFAULT_TIMEZONE")
 
     admin_telegram_uid: int = Field(alias="ADMIN_TELEGRAM_UID")

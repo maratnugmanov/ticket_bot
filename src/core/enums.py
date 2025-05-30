@@ -59,6 +59,14 @@ class CallbackData(enum.StrEnum):
     DEVICE_5 = enum.auto()
     DEVICE_6 = enum.auto()
     DEVICE_7 = enum.auto()
+    DEVICE_8 = enum.auto()
+    DEVICE_9 = enum.auto()
+    DEVICE_10 = enum.auto()
+    DEVICE_11 = enum.auto()
+    DEVICE_12 = enum.auto()
+    DEVICE_13 = enum.auto()
+    DEVICE_14 = enum.auto()
+    DEVICE_15 = enum.auto()
 
     ADD_DEVICE_BTN = enum.auto()
     CLOSE_TICKET_BTN = enum.auto()
@@ -153,7 +161,7 @@ class String(enum.StrEnum):
     CONTRACT_NUMBER_TIP = "[ Изменить номер договора ]"
     ADD_DEVICE_BTN = "➕ Добавить устройство"
     QUIT_WITHOUT_SAVING_BTN = "🗑 Выйти без сохранения"
-    ARE_YOU_SURE_YOU_WANT_TO_QUIT_WITHOUT_SAVING = "‼ВНИМАНИЕ‼: Все несохраненные данные будут потеряны, вы уверены что хотите выйти без сохранения?"
+    ARE_YOU_SURE_YOU_WANT_TO_QUIT_WITHOUT_SAVING = "‼ВНИМАНИЕ‼: Все несохраненные данные будут потеряны, вы уверены что хотите выйти без сохранения"
     QUIT_WITHOUT_SAVING_ACTION_WAS_NOT_PICKED = "Вы не выбрали выйти или остаться"
     CONFIRM_QUIT_BTN = "❌ Да, выйти"
     CHANGED_MY_MIND_BTN = "Я передумал"

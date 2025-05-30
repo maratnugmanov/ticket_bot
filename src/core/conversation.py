@@ -86,6 +86,8 @@ class Conversation:
             Action.ENTER_CONTRACT_NUMBER: self._handle_action_enter_contract_number,
             Action.PICK_DEVICE_TYPE: self._handle_action_pick_device_type,
             Action.PICK_INSTALL_OR_RETURN: self._handle_action_pick_install_or_return,
+            Action.ENTER_SERIAL_NUMBER: self._handle_action_enter_serial_number,
+            Action.PICK_TICKET_ACTION: self._handle_action_pick_ticket_action,
         }
         logger.info(
             f"{self.log_prefix}Conversation with {self.user_db.full_name} initialized."
@@ -451,7 +453,7 @@ class Conversation:
         )
         methods_tg_list: list[MethodTG] = [
             self._build_edit_to_text_message(String.CLOSE_TICKET_BTN),
-            self._build_text_message(f"{String.ENTER_TICKET_NUMBER}."),
+            self._build_new_text_message(f"{String.ENTER_TICKET_NUMBER}."),
         ]
         return methods_tg_list
 
@@ -474,10 +476,12 @@ class Conversation:
             ),
         )
         if not self.user_db.is_hiring:
-            method_tg.text = f"{String.HIRING_ENABLED}"
+            method_tg.text = f"{String.HIRING_ENABLED} {String.PICK_A_FUNCTION}."
             self.user_db.is_hiring = True
         else:
-            method_tg.text = f"{String.HIRING_ALREADY_ENABLED}"
+            method_tg.text = (
+                f"{String.HIRING_ALREADY_ENABLED} {String.PICK_A_FUNCTION}."
+            )
         methods_tg_list: list[MethodTG] = [method_tg]
         return methods_tg_list
 
@@ -500,10 +504,12 @@ class Conversation:
             ),
         )
         if self.user_db.is_hiring:
-            method_tg.text = f"{String.HIRING_DISABLED}"
+            method_tg.text = f"{String.HIRING_DISABLED} {String.PICK_A_FUNCTION}."
             self.user_db.is_hiring = False
         else:
-            method_tg.text = f"{String.HIRING_ALREADY_DISABLED}"
+            method_tg.text = (
+                f"{String.HIRING_ALREADY_DISABLED} {String.PICK_A_FUNCTION}."
+            )
         methods_tg_list: list[MethodTG] = [method_tg]
         return methods_tg_list
 
@@ -513,11 +519,16 @@ class Conversation:
             f"{self.log_prefix}Unrecognized callback data='{raw_data}'. "
             f"Preparing main menu for {self.user_db.full_name}."
         )
-        method_tg = self._build_stateless_mainmenu_message(
-            f"{String.GOT_UNEXPECTED_DATA}. "
-            f"{String.PICK_A_FUNCTION} {String.FROM_OPTIONS_BELOW}."
+        methods_tg_list: list[MethodTG] = []
+        methods_tg_list.append(
+            self._build_edit_to_text_message(f"{String.GOT_UNEXPECTED_DATA}.")
         )
-        methods_tg_list: list[MethodTG] = [method_tg]
+        methods_tg_list.append(
+            self._build_stateless_mainmenu_message(
+                f"{String.GOT_UNEXPECTED_DATA}. "
+                f"{String.PICK_A_FUNCTION} {String.FROM_OPTIONS_BELOW}."
+            )
+        )
         return methods_tg_list
 
     def _handle_action_enter_ticket_number(self, state: StateJS) -> list[MethodTG]:
@@ -534,25 +545,28 @@ class Conversation:
                     self.next_state.action = Action.ENTER_CONTRACT_NUMBER
                     self.next_state.ticket_number = int(message_text)
                     methods_tg_list.append(
-                        self._build_text_message(f"{String.ENTER_CONTRACT_NUMBER}.")
+                        self._build_new_text_message(f"{String.ENTER_CONTRACT_NUMBER}.")
                     )
                 else:
                     methods_tg_list.append(
-                        self._build_text_message(
+                        self._build_new_text_message(
                             f"{String.INCORRECT_TICKET_NUMBER}. "
                             f"{String.ENTER_TICKET_NUMBER}."
                         )
                     )
             else:
                 methods_tg_list.append(
-                    self._build_text_message(
+                    self._build_new_text_message(
                         f"{String.INCORRECT_TICKET_NUMBER}. "
                         f"{String.ENTER_TICKET_NUMBER}."
                     )
                 )
         elif isinstance(self.update_tg, CallbackQueryUpdateTG):
             methods_tg_list.append(
-                self._build_text_message(
+                self._build_edit_to_text_message(f"{String.GOT_UNEXPECTED_DATA}.")
+            )
+            methods_tg_list.append(
+                self._build_new_text_message(
                     f"{String.GOT_DATA_NOT_TICKET_NUMBER}. "
                     f"{String.ENTER_TICKET_NUMBER}."
                 )
@@ -582,21 +596,24 @@ class Conversation:
                     )
                 else:
                     methods_tg_list.append(
-                        self._build_text_message(
+                        self._build_new_text_message(
                             f"{String.INCORRECT_CONTRACT_NUMBER}. "
                             f"{String.ENTER_CONTRACT_NUMBER}."
                         )
                     )
             else:
                 methods_tg_list.append(
-                    self._build_text_message(
+                    self._build_new_text_message(
                         f"{String.INCORRECT_CONTRACT_NUMBER}. "
                         f"{String.ENTER_CONTRACT_NUMBER}."
                     )
                 )
         elif isinstance(self.update_tg, CallbackQueryUpdateTG):
             methods_tg_list.append(
-                self._build_text_message(
+                self._build_edit_to_text_message(f"{String.GOT_UNEXPECTED_DATA}.")
+            )
+            methods_tg_list.append(
+                self._build_new_text_message(
                     f"{String.GOT_DATA_NOT_CONTRACT_NUMBER}. "
                     f"{String.ENTER_CONTRACT_NUMBER}."
                 )
@@ -607,9 +624,9 @@ class Conversation:
         logger.info(f"{self.log_prefix}Awaiting device type choice to be made.")
         methods_tg_list: list[MethodTG] = []
         if isinstance(self.update_tg, CallbackQueryUpdateTG):
-            data = self.update_tg.callback_query.data
+            raw_data = self.update_tg.callback_query.data
             try:
-                received_callback_data = CallbackData(data)
+                received_callback_data = CallbackData(raw_data)
                 logger.info(
                     f"{self.log_prefix}CallbackData is '{received_callback_data}'."
                 )
@@ -657,24 +674,25 @@ class Conversation:
                     device_type_js = DeviceTypeJS.model_validate(device_type_db)
                     devices_list = self.next_state.devices_list
                     device_index = self.next_state.device_index
-                    list_length = len(devices_list)
-                    if device_index == list_length:
+                    devices_list_length = len(devices_list)
+                    if device_index == devices_list_length:
                         device = DeviceJS(
                             type=device_type_js,
                         )
                         devices_list.append(device)
-                    elif device_index < list_length:
+                    elif device_index < devices_list_length:
                         devices_list[device_index].type = device_type_js
                     else:
                         error_msg = (
                             f"{self.log_prefix}Error: "
                             f"device_index='{device_index}' "
-                            f"> list_length='{list_length}'. "
+                            f"> list_length='{devices_list_length}'. "
                             f"Expected: device_index <= list_length."
                         )
                         logger.error(error_msg)
                         raise IndexError(error_msg)
                     if device_type_js.is_returnable:
+                        logger.info(f"Device type '{device_type_js}' is returnable.")
                         self.next_state.action = Action.PICK_INSTALL_OR_RETURN
                         methods_tg_list.append(
                             self._build_pick_install_or_return_message(
@@ -682,21 +700,42 @@ class Conversation:
                             )
                         )
                     else:
+                        logger.info(
+                            f"Device type '{device_type_js}' is not "
+                            "returnable. Install or return step "
+                            "will be skipped."
+                        )
                         devices_list[device_index].is_defective = False
                         if device_type_js.has_serial_number:
+                            logger.info(
+                                f"Device type '{device_type_js}' has serial number parameter."
+                            )
                             self.next_state.action = Action.ENTER_SERIAL_NUMBER
+                            methods_tg_list.append(
+                                self._build_new_text_message(
+                                    f"{String.ENTER_SERIAL_NUMBER}."
+                                )
+                            )
                         else:
+                            logger.info(
+                                f"Device type '{device_type_js}' doesn't have "
+                                "serial number parameter. Serial number "
+                                "step will be skipped."
+                            )
                             self.next_state.action = Action.PICK_TICKET_ACTION
-                            self.next_state.device_index = 0
+                            # self.next_state.device_index = 0
+                            methods_tg_list.append(
+                                self._build_pick_ticket_action_message(
+                                    f"{String.PICK_TICKET_ACTION}."
+                                )
+                            )
             except ValueError:
                 logger.info(
                     f"{self.log_prefix}Received invalid callback "
-                    f"'{data}' for device type selection."
+                    f"'{raw_data}' for device type selection."
                 )
                 methods_tg_list.append(
-                    self._build_edit_to_text_message(
-                        text=f"{String.GOT_UNEXPECTED_DATA}."
-                    )
+                    self._build_edit_to_text_message(f"{String.GOT_UNEXPECTED_DATA}.")
                 )
                 methods_tg_list.append(
                     await self._build_pick_device_type_message(
@@ -729,44 +768,73 @@ class Conversation:
                 CallbackData.INSTALL_DEVICE_BTN,
                 CallbackData.RETURN_DEVICE_BTN,
             ]
-            data = self.update_tg.callback_query.data
+            raw_data = self.update_tg.callback_query.data
             try:
-                received_callback_data = CallbackData(data)
+                received_callback_data = CallbackData(raw_data)
+                logger.info(
+                    f"{self.log_prefix}CallbackData is '{received_callback_data}'."
+                )
                 if received_callback_data in expected_callback_data:
                     if received_callback_data == CallbackData.INSTALL_DEVICE_BTN:
                         is_defective = False
                     elif received_callback_data == CallbackData.RETURN_DEVICE_BTN:
                         is_defective = True
+                    else:
+                        error_msg = (
+                            "Callback is in expected list, "
+                            "but somehow was not identified."
+                        )
+                        logger.error(error_msg)
+                        raise ValueError(error_msg)
+                    methods_tg_list.append(self._build_edit_to_callback_button_text())
                     self.next_state = state.model_copy(deep=True)
-                    self.next_state.action = Action.PICK_DEVICE_TYPE
                     devices_list = self.next_state.devices_list
                     device_index = self.next_state.device_index
-                    list_length = len(devices_list)
-                    if device_index < list_length:
+                    devices_list_length = len(devices_list)
+                    if device_index < devices_list_length:
                         devices_list[device_index].is_defective = is_defective
                     else:
                         error_msg = (
                             f"{self.log_prefix}Error: "
                             f"device_index='{device_index}' "
-                            f">= list_length='{list_length}'. "
+                            f">= list_length='{devices_list_length}'. "
                             f"Expected: device_index < list_length."
                         )
                         logger.error(error_msg)
                         raise IndexError(error_msg)
-                    methods_tg_list.append(
-                        self._build_edit_to_text_message(
-                            String[received_callback_data.name]
+                    device_type = devices_list[device_index].type
+                    if device_type.has_serial_number:
+                        logger.info(
+                            f"Device type '{device_type}' has serial number parameter."
                         )
-                    )
-                    methods_tg_list.append(
-                        self._pick_device_type(f"{String.PICK_DEVICE_TYPE}.")
-                    )
+                        self.next_state.action = Action.ENTER_SERIAL_NUMBER
+                        methods_tg_list.append(
+                            self._build_new_text_message(
+                                f"{String.ENTER_SERIAL_NUMBER}."
+                            )
+                        )
+                    else:
+                        logger.info(
+                            f"Device type '{device_type}' doesn't have "
+                            "serial number parameter. Serial number "
+                            "step will be skipped."
+                        )
+                        self.next_state.action = Action.PICK_TICKET_ACTION
+                        self.next_state.device_index = 0
+                        methods_tg_list.append(
+                            self._build_pick_ticket_action_message(
+                                f"{String.PICK_TICKET_ACTION}."
+                            )
+                        )
                 else:
                     raise ValueError
             except ValueError:
                 logger.info(
                     f"{self.log_prefix}Received invalid callback "
-                    f"data='{data}' for device action selection."
+                    f"'{raw_data}' for device action selection."
+                )
+                methods_tg_list.append(
+                    self._build_edit_to_text_message(f"{String.GOT_UNEXPECTED_DATA}.")
                 )
                 methods_tg_list.append(
                     self._build_pick_install_or_return_message(
@@ -788,1205 +856,199 @@ class Conversation:
             )
         return methods_tg_list
 
-        # elif self.state.action == Action.ENTER_CONTRACT_NUMBER:
-        #     logger.info(f"{self.log_prefix}Awaiting contract number.")
-        #     if self.state.device_index is None:
-        #         raise ValueError(
-        #             "'self.state.device_index' cannot be None at this point."
-        #         )
-        #     if isinstance(self.update_tg, MessageUpdateTG):
-        #         if self.update_tg.message.text is not None:
-        #             message_text = self.update_tg.message.text
-        #             if re.fullmatch(r"\d+", message_text):
-        #                 logger.info(
-        #                     f"{self.log_prefix}Got correct "
-        #                     f"contract number: '{message_text}'."
-        #                 )
-        #                 self.next_state = StateJS(
-        #                     action=Action.PICK_DEVICE_TYPE,
-        #                     script=self.state.script,
-        #                     devices_list=self.state.devices_list,
-        #                     device_index=self.state.device_index,
-        #                     ticket_number=self.state.ticket_number,
-        #                     contract_number=message_text,
-        #                 )
-        #                 methods_tg_list.append(
-        #                     self._pick_device_type(f"{String.PICK_DEVICE_TYPE}.")
-        #                 )
-        #             else:
-        #                 methods_tg_list.append(
-        #                     self._send_text_message_tg(
-        #                         f"{String.INCORRECT_CONTRACT_NUMBER}. "
-        #                         f"{String.ENTER_CONTRACT_NUMBER}."
-        #                     )
-        #                 )
-        #         else:
-        #             methods_tg_list.append(
-        #                 self._send_text_message_tg(
-        #                     f"{String.INCORRECT_CONTRACT_NUMBER}. "
-        #                     f"{String.ENTER_CONTRACT_NUMBER}."
-        #                 )
-        #             )
-        #     elif isinstance(self.update_tg, CallbackQueryUpdateTG):
-        #         methods_tg_list.append(
-        #             self._send_text_message_tg(
-        #                 f"{String.GOT_DATA_NOT_CONTRACT_NUMBER}. "
-        #                 f"{String.ENTER_CONTRACT_NUMBER}."
-        #             )
-        #         )
-        # elif self.state.action == Action.PICK_DEVICE_TYPE:
-        #     logger.info(f"{self.log_prefix}Awaiting device type choice to be made.")
-        #     if self.state.device_index is None:
-        #         raise ValueError("device_index cannot be None at this point.")
-        #     if isinstance(self.update_tg, CallbackQueryUpdateTG):
-        #         data = self.update_tg.callback_query.data
-        #         try:
-        #             received_callback_data = CallbackData(data)
-        #             device_type_db = await self.session_db.scalar(
-        #                 select(DeviceTypeDB).where(
-        #                     DeviceTypeDB.name
-        #                     == DeviceTypeName[received_callback_data.name]
-        #                 )
-        #             )
-        #             if device_type_db is None or device_type_db.is_disabled:
-        #                 raise ValueError
+    def _handle_action_enter_serial_number(self, state: StateJS) -> list[MethodTG]:
+        logger.info(f"{self.log_prefix}Awaiting device serial number.")
+        methods_tg_list: list[MethodTG] = []
+        if isinstance(self.update_tg, MessageUpdateTG):
+            if self.update_tg.message.text is not None:
+                message_text = self.update_tg.message.text.upper()
+                if re.fullmatch(r"[\dA-Z]+", message_text):
+                    logger.info(
+                        f"{self.log_prefix}Got correct device "
+                        f"serial number: '{message_text}'."
+                    )
+                    self.next_state = state.model_copy(deep=True)
+                    self.next_state.action = Action.PICK_TICKET_ACTION
+                    devices_list = self.next_state.devices_list
+                    device_index = self.next_state.device_index
+                    list_length = len(devices_list)
+                    if device_index < list_length:
+                        devices_list[device_index].serial_number = message_text
+                    else:
+                        error_msg = (
+                            f"{self.log_prefix}Error: "
+                            f"device_index='{device_index}' "
+                            f">= list_length='{list_length}'. "
+                            f"Expected: device_index < list_length."
+                        )
+                        logger.error(error_msg)
+                        raise IndexError(error_msg)
+                    methods_tg_list.append(
+                        self._build_pick_ticket_action_message(
+                            f"{String.PICK_TICKET_ACTION}."
+                        )
+                    )
+                else:
+                    methods_tg_list.append(
+                        self._build_new_text_message(
+                            f"{String.INCORRECT_SERIAL_NUMBER}. "
+                            f"{String.ENTER_SERIAL_NUMBER}."
+                        )
+                    )
+            else:
+                methods_tg_list.append(
+                    self._build_new_text_message(
+                        f"{String.INCORRECT_SERIAL_NUMBER}. "
+                        f"{String.ENTER_SERIAL_NUMBER}."
+                    )
+                )
+        elif isinstance(self.update_tg, CallbackQueryUpdateTG):
+            methods_tg_list.append(
+                self._build_edit_to_text_message(f"{String.GOT_UNEXPECTED_DATA}.")
+            )
+            methods_tg_list.append(
+                self._build_new_text_message(
+                    f"{String.GOT_DATA_NOT_SERIAL_NUMBER}. "
+                    f"{String.ENTER_SERIAL_NUMBER}."
+                )
+            )
+        return methods_tg_list
 
-        #         except ValueError:
-        #             logger.info(
-        #                 f"{self.log_prefix}Received invalid callback "
-        #                 f"data='{data}' for device type selection."
-        #             )
-        #             methods_tg_list.append(
-        #                 self._pick_device_type(
-        #                     f"{String.GOT_UNEXPECTED_DATA}. "
-        #                     f"{String.PICK_DEVICE_TYPE} "
-        #                     f"{String.FROM_OPTIONS_BELOW}."
-        #                 )
-        #             )
-
-        #         if received_callback_data.name in DeviceTypeName.__members__:
-        #             pass
-        #         if received_callback_data in expected_callback_data:
-        #             self.next_state = StateJS(
-        #                 action=self.state.action,
-        #                 script=self.state.script,
-        #                 devices_list=self.state.devices_list,
-        #                 device_index=self.state.device_index,
-        #                 ticket_number=self.state.ticket_number,
-        #                 contract_number=message_text,
-        #             )
-        #             devices_list = self.next_state.devices_list
-        #             device_index = self.next_state.device_index
-        #             device_type_db = await self.session_db.scalar(
-        #                 select(DeviceTypeDB).where(
-        #                     DeviceTypeDB.name
-        #                     == DeviceTypeName[received_callback_data.name]
-        #                 )
-        #             )
-        #             if device_type_db is not None:
-        #                 if device_type_db.is_returnable:
-        #                     self.next_state.action = Action.PICK_INSTALL_OR_RETURN
-        #                     methods_tg_list.append(
-        #                         self._pick_install_or_return(
-        #                             f"{String.PICK_INSTALL_OR_RETURN}."
-        #                         )
-        #                     )
-        #                 else:
-        #                     if devices_list[device_index].is_defective is None:
-        #                         devices_list[device_index].is_defective = False
-        #                     else:
-        #                         error_msg = (
-        #                             f"{self.log_prefix}Error: "
-        #                             f"is_defective={device_index} > "
-        #                             f"list_length={list_length}. "
-        #                             f"Expected: device_index <= list_length."
-        #                         )
-        #                         logger.error(error_msg)
-        #                         raise ValueError(error_msg)
-        #                     if device_type_db.has_serial_number:
-        #                         self.next_state.action = Action.ENTER_SERIAL_NUMBER
-        #                         methods_tg_list.append(
-        #                             self._send_text_message_tg(
-        #                                 f"{String.ENTER_SERIAL_NUMBER}."
-        #                             )
-        #                         )
-        #                     else:
-        #                         self.next_state.action = Action.PICK_TICKET_ACTION
-        #                         methods_tg_list.append(
-        #                             self._pick_ticket_action(
-        #                                 f"{String.PICK_TICKET_ACTION}."
-        #                             )
-        #                         )
-
-        #                     # if device_type_db
-        #             device_type = DeviceTypeName[received_callback_data.name]
-        #             # device_type = DeviceTypeName[received_callback_data.name]
-        #             if self.next_state.devices_list[device_index].type is None:
-        #                 self.next_state.devices_list[device_index].type = device_type
-        #             else:
-        #                 existing_type = self.next_state.devices_list[device_index].type
-        #                 error_msg = (
-        #                     f"{self.log_prefix}Error: Device with "
-        #                     f"index={device_index} already "
-        #                     f"has type={existing_type}."
-        #                 )
-        #                 logger.error(error_msg)
-        #                 raise ValueError(error_msg)
-        #             methods_tg_list.append(
-        #                 self._archive_choice_method_tg(
-        #                     String[received_callback_data.name]
-        #                 )
-        #             )
-        #             if received_callback_data in device_group_1:
-        #                 self.next_state.action = Action.PICK_INSTALL_OR_RETURN
-        #                 methods_tg_list.append(
-        #                     self._send_text_message_tg(
-        #                         f"{String.PICK_INSTALL_OR_RETURN}."
-        #                     )
-        #                 )
-        #             if received_callback_data in device_group_2:
-        #                 self.next_state.action = Action.ENTER_SERIAL_NUMBER
-        #                 list_length = len(self.next_state.devices_list)
-        #                 if device_index == list_length:
-        #                     device = DeviceJS(
-        #                         is_defective=False,
-        #                         type=None,
-        #                         serial_number=None,
-        #                         id=None,
-        #                     )
-        #                     self.next_state.devices_list.append(device)
-        #                 elif device_index < list_length:
-        #                     self.next_state.devices_list[
-        #                         device_index
-        #                     ].is_defective = is_defective
-        #                 else:
-        #                     error_msg = (
-        #                         f"{self.log_prefix}Error: "
-        #                         f"device_index={device_index} "
-        #                         f"> list_length={list_length}. "
-        #                         f"Expected: device_index <= list_length."
-        #                     )
-        #                     logger.error(error_msg)
-        #                     raise ValueError(error_msg)
-
-        #                 self.next_state = StateJS(
-        #                     action=Action.ENTER_SERIAL_NUMBER,
-        #                     script=self.state.script,
-        #                     devices_list=self.state.devices_list,
-        #                     device_index=self.state.device_index,
-        #                     ticket_number=self.state.ticket_number,
-        #                     contract_number=self.state.contract_number,
-        #                 )
-        #                 device_index = self.next_state.device_index
-        #                 device_type = DeviceTypeName[received_callback_data.name]
-        #                 if self.next_state.devices_list[device_index].type is None:
-        #                     self.next_state.devices_list[
-        #                         device_index
-        #                     ].type = device_type
-        #                 else:
-        #                     existing_type = self.next_state.devices_list[
-        #                         device_index
-        #                     ].type
-        #                     error_msg = (
-        #                         f"{self.log_prefix}Error: Device with "
-        #                         f"index={device_index} already "
-        #                         f"has type={existing_type}."
-        #                     )
-        #                     logger.error(error_msg)
-        #                     raise ValueError(error_msg)
-        #                 methods_tg_list.append(
-        #                     self._archive_choice_method_tg(
-        #                         String[received_callback_data.name]
-        #                     )
-        #                 )
-        #                 methods_tg_list.append(
-        #                     self._send_text_message_tg(f"{String.ENTER_SERIAL_NUMBER}.")
-        #                 )
-        #         else:
-        #             raise ValueError
-        #     elif isinstance(self.update_tg, MessageUpdateTG):
-        #         logger.info(
-        #             f"{self.log_prefix}User {self.user_db.full_name} "
-        #             "responded with message while callback data "
-        #             "was awaited."
-        #         )
-        #         methods_tg_list.append(
-        #             self._pick_device_type(
-        #                 f"{String.DEVICE_TYPE_WAS_NOT_PICKED}. "
-        #                 f"{String.PICK_DEVICE_TYPE} "
-        #                 f"{String.FROM_OPTIONS_BELOW}."
-        #             )
-        #         )
-        # elif self.state.action == Action.PICK_INSTALL_OR_RETURN:
-        #     logger.info(
-        #         f"{self.log_prefix}Awaiting install or return choice to be made."
-        #     )
-        #     if self.state.device_index is None:
-        #         raise ValueError("device_index cannot be None at this point.")
-        #     if isinstance(self.update_tg, CallbackQueryUpdateTG):
-        #         expected_callback_data = [
-        #             CallbackData.INSTALL_DEVICE_BTN,
-        #             CallbackData.RETURN_DEVICE_BTN,
-        #         ]
-        #         data = self.update_tg.callback_query.data
-        #         try:
-        #             received_callback_data = CallbackData(data)
-        #             if received_callback_data in expected_callback_data:
-        #                 if received_callback_data == CallbackData.INSTALL_DEVICE_BTN:
-        #                     is_defective = False
-        #                 elif received_callback_data == CallbackData.RETURN_DEVICE_BTN:
-        #                     is_defective = True
-        #                 self.next_state = StateJS(
-        #                     action=Action.PICK_DEVICE_TYPE,
-        #                     script=self.state.script,
-        #                     devices_list=self.state.devices_list,
-        #                     device_index=self.state.device_index,
-        #                     ticket_number=self.state.ticket_number,
-        #                     contract_number=self.state.contract_number,
-        #                 )
-        #                 device_index = self.next_state.device_index
-        #                 list_length = len(self.next_state.devices_list)
-        #                 if device_index == list_length:
-        #                     device = DeviceJS(
-        #                         is_defective=is_defective,
-        #                         type=None,
-        #                         serial_number=None,
-        #                         id=None,
-        #                     )
-        #                     self.next_state.devices_list.append(device)
-        #                 elif device_index < list_length:
-        #                     self.next_state.devices_list[
-        #                         device_index
-        #                     ].is_defective = is_defective
-        #                 else:
-        #                     error_msg = (
-        #                         f"{self.log_prefix}Error: "
-        #                         f"device_index={device_index} "
-        #                         f"> list_length={list_length}. "
-        #                         f"Expected: device_index <= list_length."
-        #                     )
-        #                     logger.error(error_msg)
-        #                     raise ValueError(error_msg)
-        #                 methods_tg_list.append(
-        #                     self._archive_choice_method_tg(
-        #                         String[received_callback_data.name]
-        #                     )
-        #                 )
-        #                 methods_tg_list.append(
-        #                     self._pick_device_type(f"{String.PICK_DEVICE_TYPE}.")
-        #                 )
-        #             else:
-        #                 raise ValueError
-        #         except ValueError:
-        #             logger.info(
-        #                 f"{self.log_prefix}Received invalid callback "
-        #                 f"data='{data}' for device action selection."
-        #             )
-        #             methods_tg_list.append(
-        #                 self._pick_install_or_return(
-        #                     f"{String.GOT_UNEXPECTED_DATA}. "
-        #                     f"{String.PICK_INSTALL_OR_RETURN}."
-        #                 )
-        #             )
-        #     elif isinstance(self.update_tg, MessageUpdateTG):
-        #         logger.info(
-        #             f"{self.log_prefix}User {self.user_db.full_name} "
-        #             "responded with message while callback data "
-        #             "was awaited."
-        #         )
-        #         methods_tg_list.append(
-        #             self._pick_install_or_return(
-        #                 f"{String.DEVICE_ACTION_WAS_NOT_PICKED}. "
-        #                 f"{String.PICK_INSTALL_OR_RETURN}."
-        #             )
-        #         )
-        # elif self.state.action == Action.ENTER_SERIAL_NUMBER:
-        #     logger.info(f"{self.log_prefix}Awaiting device serial number.")
-        #     if self.state.device_index is None:
-        #         raise ValueError("device_index cannot be None at this point.")
-        #     if isinstance(self.update_tg, MessageUpdateTG):
-        #         if self.update_tg.message.text is not None:
-        #             message_text = self.update_tg.message.text.upper()
-        #             if re.fullmatch(r"[\dA-Z]+", message_text):
-        #                 logger.info(
-        #                     f"{self.log_prefix}Got correct device "
-        #                     f"serial number: '{message_text}'."
-        #                 )
-        #                 self.next_state = StateJS(
-        #                     action=Action.PICK_TICKET_ACTION,
-        #                     script=self.state.script,
-        #                     devices_list=self.state.devices_list,
-        #                     device_index=0,
-        #                     ticket_number=self.state.ticket_number,
-        #                     contract_number=self.state.contract_number,
-        #                 )
-        #                 device_index = self.state.device_index
-        #                 if (
-        #                     self.next_state.devices_list[device_index].serial_number
-        #                     is None
-        #                 ):
-        #                     self.next_state.devices_list[
-        #                         device_index
-        #                     ].serial_number = message_text
-        #                 else:
-        #                     existing_serial_number = self.next_state.devices_list[
-        #                         device_index
-        #                     ].serial_number
-        #                     error_msg = (
-        #                         f"{self.log_prefix}Error: Device with "
-        #                         f"index={device_index} already has "
-        #                         f"serial_number={existing_serial_number}."
-        #                     )
-        #                     logger.error(error_msg)
-        #                     raise ValueError(error_msg)
-        #                 methods_tg_list.append(
-        #                     self._pick_ticket_action(f"{String.PICK_TICKET_ACTION}.")
-        #                 )
-        #             else:
-        #                 methods_tg_list.append(
-        #                     self._send_text_message_tg(
-        #                         f"{String.INCORRECT_SERIAL_NUMBER}. "
-        #                         f"{String.ENTER_SERIAL_NUMBER}."
-        #                     )
-        #                 )
-        #         else:
-        #             methods_tg_list.append(
-        #                 self._send_text_message_tg(
-        #                     f"{String.INCORRECT_SERIAL_NUMBER}. "
-        #                     f"{String.ENTER_SERIAL_NUMBER}."
-        #                 )
-        #             )
-        #     elif isinstance(self.update_tg, CallbackQueryUpdateTG):
-        #         methods_tg_list.append(
-        #             self._send_text_message_tg(
-        #                 f"{String.GOT_DATA_NOT_SERIAL_NUMBER}. "
-        #                 f"{String.ENTER_SERIAL_NUMBER}."
-        #             )
-        #         )
-        # elif self.state.action == Action.PICK_TICKET_ACTION:
-        #     logger.info(f"{self.log_prefix}Awaiting ticket menu choice to be made.")
-        #     if isinstance(self.update_tg, CallbackQueryUpdateTG):
-        #         expected_callback_data = [
-        #             CallbackData.EDIT_TICKET_NUMBER,
-        #             CallbackData.EDIT_CONTRACT_NUMBER,
-        #             CallbackData.QUIT_WITHOUT_SAVING_BTN,
-        #         ]
-        #         if len(self.state.devices_list) < 6:
-        #             expected_callback_data.append(CallbackData.ADD_DEVICE_BTN)
-        #         if len(self.state.devices_list) > 0:
-        #             expected_callback_data.append(CallbackData.CLOSE_TICKET_BTN)
-        #         all_devices_list = [
-        #             CallbackData.DEVICE_0,
-        #             CallbackData.DEVICE_1,
-        #             CallbackData.DEVICE_2,
-        #             CallbackData.DEVICE_3,
-        #             CallbackData.DEVICE_4,
-        #             CallbackData.DEVICE_5,
-        #         ]
-        #         expected_devices_list = all_devices_list[: len(self.state.devices_list)]
-        #         if self.state.devices_list:
-        #             expected_callback_data.extend(expected_devices_list)
-        #         data = self.update_tg.callback_query.data
-        #         try:
-        #             received_callback_data = CallbackData(data)
-        #             if received_callback_data in expected_callback_data:
-        #                 if received_callback_data == CallbackData.EDIT_TICKET_NUMBER:
-        #                     self.next_state = StateJS(
-        #                         action=Action.EDIT_TICKET_NUMBER,
-        #                         script=self.state.script,
-        #                         devices_list=self.state.devices_list,
-        #                         device_index=self.state.device_index,
-        #                         ticket_number=self.state.ticket_number,
-        #                         contract_number=self.state.contract_number,
-        #                     )
-        #                     methods_tg_list.append(
-        #                         self._archive_choice_method_tg(
-        #                             f"{String.EDIT_TICKET_NUMBER}."
-        #                         )
-        #                     )
-        #                     methods_tg_list.append(
-        #                         self._send_text_message_tg(
-        #                             f"{String.ENTER_NEW_TICKET_NUMBER}."
-        #                         )
-        #                     )
-        #                 elif (
-        #                     received_callback_data == CallbackData.EDIT_CONTRACT_NUMBER
-        #                 ):
-        #                     self.next_state = StateJS(
-        #                         action=Action.EDIT_CONTRACT_NUMBER,
-        #                         script=self.state.script,
-        #                         devices_list=self.state.devices_list,
-        #                         device_index=self.state.device_index,
-        #                         ticket_number=self.state.ticket_number,
-        #                         contract_number=self.state.contract_number,
-        #                     )
-        #                     methods_tg_list.append(
-        #                         self._archive_choice_method_tg(
-        #                             f"{String.EDIT_CONTRACT_NUMBER}."
-        #                         )
-        #                     )
-        #                     methods_tg_list.append(
-        #                         self._send_text_message_tg(
-        #                             f"{String.ENTER_NEW_CONTRACT_NUMBER}."
-        #                         )
-        #                     )
-        #                 elif received_callback_data in all_devices_list:
-        #                     device_index_string = received_callback_data[-1]
-        #                     try:
-        #                         callback_device_index = int(device_index_string)
-        #                         self.next_state = StateJS(
-        #                             action=Action.PICK_DEVICE_ACTION,
-        #                             script=self.state.script,
-        #                             devices_list=self.state.devices_list,
-        #                             device_index=callback_device_index,
-        #                             ticket_number=self.state.ticket_number,
-        #                             contract_number=self.state.contract_number,
-        #                         )
-        #                         methods_tg_list.append(
-        #                             self._archive_choice_method_tg(
-        #                                 f"{String.EDIT_DEVICE} "
-        #                                 f"{callback_device_index + 1}."
-        #                             )
-        #                         )
-        #                         methods_tg_list.append(
-        #                             self.pick_device_action(
-        #                                 f"{String.PICK_DEVICE_ACTION}."
-        #                             )
-        #                         )
-        #                     except ValueError:
-        #                         logger.error(
-        #                             f"{self.log_prefix}Last symbol "
-        #                             f"of data='{data}' is not an "
-        #                             "integer string. int(data) failed."
-        #                         )
-        #                 elif received_callback_data == CallbackData.ADD_DEVICE_BTN:
-        #                     self.next_state = StateJS(
-        #                         action=Action.PICK_INSTALL_OR_RETURN,
-        #                         script=self.state.script,
-        #                         devices_list=self.state.devices_list,
-        #                         device_index=len(self.state.devices_list),
-        #                         ticket_number=self.state.ticket_number,
-        #                         contract_number=self.state.contract_number,
-        #                     )
-        #                     methods_tg_list.append(
-        #                         self._archive_choice_method_tg(
-        #                             f"{String.ADD_DEVICE_BTN}."
-        #                         )
-        #                     )
-        #                     methods_tg_list.append(
-        #                         self._pick_install_or_return(
-        #                             f"{String.PICK_INSTALL_OR_RETURN}."
-        #                         )
-        #                     )
-        #                 elif received_callback_data == CallbackData.CLOSE_TICKET_BTN:
-        #                     self.next_state = StateJS(
-        #                         action=Action.CONFIRM_CLOSE_TICKET,
-        #                         script=self.state.script,
-        #                         devices_list=self.state.devices_list,
-        #                         device_index=self.state.device_index,
-        #                         ticket_number=self.state.ticket_number,
-        #                         contract_number=self.state.contract_number,
-        #                     )
-        #                     methods_tg_list.append(
-        #                         self._archive_choice_method_tg(
-        #                             f"{String.CLOSE_TICKET_BTN}."
-        #                         )
-        #                     )
-        #                     methods_tg_list.append(
-        #                         self.pick_confirm_close_ticket(
-        #                             f"{String.CONFIRM_YOU_WANT_TO_CLOSE_TICKET}."
-        #                         )
-        #                     )
-        #                 elif (
-        #                     received_callback_data
-        #                     == CallbackData.QUIT_WITHOUT_SAVING_BTN
-        #                 ):
-        #                     self.next_state = StateJS(
-        #                         action=Action.CONFIRM_QUIT_WITHOUT_SAVING,
-        #                         script=self.state.script,
-        #                         devices_list=self.state.devices_list,
-        #                         device_index=self.state.device_index,
-        #                         ticket_number=self.state.ticket_number,
-        #                         contract_number=self.state.contract_number,
-        #                     )
-        #                     methods_tg_list.append(
-        #                         self._archive_choice_method_tg(
-        #                             f"{String.QUIT_WITHOUT_SAVING_BTN}."
-        #                         )
-        #                     )
-        #                     methods_tg_list.append(
-        #                         self.pick_confirm_quit(
-        #                             f"{String.ARE_YOU_SURE_YOU_WANT_TO_QUIT_WITHOUT_SAVING}"
-        #                         )
-        #                     )
-        #             else:
-        #                 raise ValueError
-        #         except ValueError:
-        #             logger.info(
-        #                 f"{self.log_prefix}Received invalid callback "
-        #                 f"data='{data}' for ticket menu selection."
-        #             )
-        #             methods_tg_list.append(
-        #                 self._pick_ticket_action(
-        #                     f"{String.GOT_UNEXPECTED_DATA}. "
-        #                     f"{String.PICK_TICKET_ACTION}."
-        #                 )
-        #             )
-        #     elif isinstance(self.update_tg, MessageUpdateTG):
-        #         logger.info(
-        #             f"{self.log_prefix}User {self.user_db.full_name} "
-        #             "responded with message while callback data "
-        #             "was awaited."
-        #         )
-        #         methods_tg_list.append(
-        #             self._pick_ticket_action(
-        #                 f"{String.TICKET_ACTION_WAS_NOT_PICKED}. "
-        #                 f"{String.PICK_TICKET_ACTION}."
-        #             )
-        #         )
-        # elif self.state.action == Action.EDIT_TICKET_NUMBER:
-        #     logger.info(f"{self.log_prefix}Awaiting new ticket number.")
-        #     if isinstance(self.update_tg, MessageUpdateTG):
-        #         if self.update_tg.message.text is not None:
-        #             message_text = self.update_tg.message.text
-        #             if re.fullmatch(r"\d+", message_text):
-        #                 logger.info(
-        #                     f"{self.log_prefix}Got correct "
-        #                     f"new ticket number: '{message_text}'."
-        #                 )
-        #                 self.next_state = StateJS(
-        #                     action=Action.PICK_TICKET_ACTION,
-        #                     script=self.state.script,
-        #                     devices_list=self.state.devices_list,
-        #                     device_index=self.state.device_index,
-        #                     ticket_number=message_text,
-        #                     contract_number=self.state.contract_number,
-        #                 )
-        #                 methods_tg_list.append(
-        #                     self._pick_ticket_action(
-        #                         f"{String.TICKET_NUMBER_WAS_EDITED}. "
-        #                         f"{String.PICK_TICKET_ACTION}."
-        #                     )
-        #                 )
-        #             else:
-        #                 methods_tg_list.append(
-        #                     self._send_text_message_tg(
-        #                         f"{String.INCORRECT_TICKET_NUMBER}. "
-        #                         f"{String.ENTER_NEW_TICKET_NUMBER}."
-        #                     )
-        #                 )
-        #         else:
-        #             methods_tg_list.append(
-        #                 self._send_text_message_tg(
-        #                     f"{String.INCORRECT_TICKET_NUMBER}. "
-        #                     f"{String.ENTER_NEW_TICKET_NUMBER}."
-        #                 )
-        #             )
-        #     elif isinstance(self.update_tg, CallbackQueryUpdateTG):
-        #         methods_tg_list.append(
-        #             self._send_text_message_tg(
-        #                 f"{String.GOT_DATA_NOT_TICKET_NUMBER}. "
-        #                 f"{String.ENTER_NEW_TICKET_NUMBER}."
-        #             )
-        #         )
-        # elif self.state.action == Action.EDIT_CONTRACT_NUMBER:
-        #     logger.info(f"{self.log_prefix}Awaiting new contract number.")
-        #     if isinstance(self.update_tg, MessageUpdateTG):
-        #         if self.update_tg.message.text is not None:
-        #             message_text = self.update_tg.message.text
-        #             if re.fullmatch(r"\d+", message_text):
-        #                 logger.info(
-        #                     f"{self.log_prefix}Got correct new "
-        #                     f"contract number: '{message_text}'."
-        #                 )
-        #                 self.next_state = StateJS(
-        #                     action=Action.PICK_TICKET_ACTION,
-        #                     script=self.state.script,
-        #                     devices_list=self.state.devices_list,
-        #                     device_index=self.state.device_index,
-        #                     ticket_number=self.state.ticket_number,
-        #                     contract_number=message_text,
-        #                 )
-        #                 methods_tg_list.append(
-        #                     self._pick_ticket_action(
-        #                         f"{String.CONTRACT_NUMBER_WAS_EDITED}. "
-        #                         f"{String.PICK_TICKET_ACTION}."
-        #                     )
-        #                 )
-        #             else:
-        #                 methods_tg_list.append(
-        #                     self._send_text_message_tg(
-        #                         f"{String.INCORRECT_CONTRACT_NUMBER}. "
-        #                         f"{String.ENTER_NEW_CONTRACT_NUMBER}."
-        #                     )
-        #                 )
-        #         else:
-        #             methods_tg_list.append(
-        #                 self._send_text_message_tg(
-        #                     f"{String.INCORRECT_CONTRACT_NUMBER}. "
-        #                     f"{String.ENTER_NEW_CONTRACT_NUMBER}."
-        #                 )
-        #             )
-        #     elif isinstance(self.update_tg, CallbackQueryUpdateTG):
-        #         methods_tg_list.append(
-        #             self._send_text_message_tg(
-        #                 f"{String.GOT_DATA_NOT_CONTRACT_NUMBER}. "
-        #                 f"{String.ENTER_NEW_CONTRACT_NUMBER}."
-        #             )
-        #         )
-        # elif self.state.action == Action.CONFIRM_CLOSE_TICKET:
-        #     logger.info(f"{self.log_prefix}Awaiting close ticket confirmation.")
-        #     if self.state.device_index is None:
-        #         raise ValueError(
-        #             "'self.state.device_index' cannot be None at this point."
-        #         )
-        #     if isinstance(self.update_tg, CallbackQueryUpdateTG):
-        #         expected_callback_data = [
-        #             CallbackData.CONFIRM_CLOSE_TICKET_BTN,
-        #             CallbackData.CHANGED_MY_MIND_BTN,
-        #         ]
-        #         data = self.update_tg.callback_query.data
-        #         try:
-        #             received_callback_data = CallbackData(data)
-        #             if received_callback_data in expected_callback_data:
-        #                 if (
-        #                     received_callback_data
-        #                     == CallbackData.CONFIRM_CLOSE_TICKET_BTN
-        #                 ):
-        #                     methods_tg_list.append(
-        #                         self._archive_choice_method_tg(
-        #                             f"{String.CONFIRM_CLOSE_TICKET_BTN}."
-        #                         )
-        #                     )
-        #                     ticket_closed = await self.close_ticket()
-        #                     if ticket_closed:
-        #                         self.next_state = None
-        #                         self.user_db.state_json = None
-        #                         methods_tg_list.append(
-        #                             self._stateless_mainmenu_method_tg(
-        #                                 f"{String.YOU_CLOSED_TICKET}. {String.PICK_A_FUNCTION}."
-        #                             )
-        #                         )
-        #                     else:
-        #                         self.next_state = StateJS(
-        #                             action=Action.PICK_TICKET_ACTION,
-        #                             script=self.state.script,
-        #                             devices_list=self.state.devices_list,
-        #                             device_index=self.state.device_index,
-        #                             ticket_number=self.state.ticket_number,
-        #                             contract_number=self.state.contract_number,
-        #                         )
-        #                         methods_tg_list.append(
-        #                             self._pick_ticket_action(
-        #                                 f"{String.TICKET_CLOSE_FAILED}. {String.PICK_TICKET_ACTION}."
-        #                             )
-        #                         )
-        #                 elif received_callback_data == CallbackData.CHANGED_MY_MIND_BTN:
-        #                     self.next_state = StateJS(
-        #                         action=Action.PICK_TICKET_ACTION,
-        #                         script=self.state.script,
-        #                         devices_list=self.state.devices_list,
-        #                         device_index=self.state.device_index,
-        #                         ticket_number=self.state.ticket_number,
-        #                         contract_number=self.state.contract_number,
-        #                     )
-        #                     methods_tg_list.append(
-        #                         self._archive_choice_method_tg(
-        #                             f"{String.CHANGED_MY_MIND_BTN}."
-        #                         )
-        #                     )
-        #                     methods_tg_list.append(
-        #                         self._pick_ticket_action(
-        #                             f"{String.PICK_TICKET_ACTION}."
-        #                         )
-        #                     )
-        #             else:
-        #                 raise ValueError
-        #         except ValueError:
-        #             logger.info(
-        #                 f"{self.log_prefix}Received invalid callback "
-        #                 f"data='{data}' for close ticket "
-        #                 "confirmation menu selection."
-        #             )
-        #             methods_tg_list.append(
-        #                 self.pick_confirm_close_ticket(
-        #                     f"{String.GOT_UNEXPECTED_DATA}. "
-        #                     f"{String.CONFIRM_YOU_WANT_TO_CLOSE_TICKET}"
-        #                 )
-        #             )
-        #     elif isinstance(self.update_tg, MessageUpdateTG):
-        #         logger.info(
-        #             f"{self.log_prefix}User {self.user_db.full_name} "
-        #             "responded with message while callback data "
-        #             "was awaited."
-        #         )
-        #         methods_tg_list.append(
-        #             self.pick_confirm_close_ticket(
-        #                 f"{String.CLOSE_TICKET_ACTION_WAS_NOT_PICKED}. "
-        #                 f"{String.CONFIRM_YOU_WANT_TO_CLOSE_TICKET}"
-        #             )
-        #         )
-        # elif self.state.action == Action.CONFIRM_QUIT_WITHOUT_SAVING:
-        #     logger.info(f"{self.log_prefix}Awaiting quit without saving confirmation.")
-        #     if self.state.device_index is None:
-        #         raise ValueError(
-        #             "'self.state.device_index' cannot be None at this point."
-        #         )
-        #     if isinstance(self.update_tg, CallbackQueryUpdateTG):
-        #         expected_callback_data = [
-        #             CallbackData.CONFIRM_QUIT_BTN,
-        #             CallbackData.CHANGED_MY_MIND_BTN,
-        #         ]
-        #         data = self.update_tg.callback_query.data
-        #         try:
-        #             received_callback_data = CallbackData(data)
-        #             if received_callback_data in expected_callback_data:
-        #                 if received_callback_data == CallbackData.CONFIRM_QUIT_BTN:
-        #                     self.next_state = None
-        #                     self.user_db.state_json = None
-        #                     methods_tg_list.append(
-        #                         self._archive_choice_method_tg(
-        #                             f"{String.CONFIRM_QUIT_BTN}."
-        #                         )
-        #                     )
-        #                     methods_tg_list.append(
-        #                         self._stateless_mainmenu_method_tg(
-        #                             f"{String.YOU_QUIT_WITHOUT_SAVING}. {String.PICK_A_FUNCTION}."
-        #                         )
-        #                     )
-        #                 elif received_callback_data == CallbackData.CHANGED_MY_MIND_BTN:
-        #                     self.next_state = StateJS(
-        #                         action=Action.PICK_TICKET_ACTION,
-        #                         script=self.state.script,
-        #                         devices_list=self.state.devices_list,
-        #                         device_index=self.state.device_index,
-        #                         ticket_number=self.state.ticket_number,
-        #                         contract_number=self.state.contract_number,
-        #                     )
-        #                     methods_tg_list.append(
-        #                         self._archive_choice_method_tg(
-        #                             f"{String.CHANGED_MY_MIND_BTN}."
-        #                         )
-        #                     )
-        #                     methods_tg_list.append(
-        #                         self._pick_ticket_action(
-        #                             f"{String.PICK_TICKET_ACTION}."
-        #                         )
-        #                     )
-        #             else:
-        #                 raise ValueError
-        #         except ValueError:
-        #             logger.info(
-        #                 f"{self.log_prefix}Received invalid callback "
-        #                 f"data='{data}' for quit without saving "
-        #                 "confirmation menu selection."
-        #             )
-        #             methods_tg_list.append(
-        #                 self.pick_confirm_quit(
-        #                     f"{String.GOT_UNEXPECTED_DATA}. "
-        #                     f"{String.ARE_YOU_SURE_YOU_WANT_TO_QUIT_WITHOUT_SAVING}"
-        #                 )
-        #             )
-        #     elif isinstance(self.update_tg, MessageUpdateTG):
-        #         logger.info(
-        #             f"{self.log_prefix}User {self.user_db.full_name} "
-        #             "responded with message while callback data "
-        #             "was awaited."
-        #         )
-        #         methods_tg_list.append(
-        #             self.pick_confirm_quit(
-        #                 f"{String.QUIT_WITHOUT_SAVING_ACTION_WAS_NOT_PICKED}. "
-        #                 f"{String.ARE_YOU_SURE_YOU_WANT_TO_QUIT_WITHOUT_SAVING}"
-        #             )
-        #         )
-        # elif self.state.action == Action.PICK_DEVICE_ACTION:
-        #     logger.info(f"{self.log_prefix}Awaiting device menu choice to be made.")
-        #     if self.state.device_index is None:
-        #         raise ValueError(
-        #             "'self.state.device_index' cannot be None at this point."
-        #         )
-        #     if isinstance(self.update_tg, CallbackQueryUpdateTG):
-        #         expected_callback_data = [
-        #             CallbackData.EDIT_DEVICE_TYPE,
-        #             CallbackData.EDIT_SERIAL_NUMBER,
-        #             CallbackData.EDIT_TICKET,
-        #             CallbackData.DELETE_DEVICE_BTN,
-        #         ]
-        #         device_index = self.state.device_index
-        #         if self.state.devices_list[device_index].is_defective is True:
-        #             expected_callback_data.append(CallbackData.RETURN_DEVICE_BTN)
-        #         elif self.state.devices_list[device_index].is_defective is False:
-        #             expected_callback_data.append(CallbackData.INSTALL_DEVICE_BTN)
-        #         else:
-        #             raise ValueError("device_index is not True or False.")
-        #         data = self.update_tg.callback_query.data
-        #         try:
-        #             received_callback_data = CallbackData(data)
-        #             if received_callback_data in expected_callback_data:
-        #                 if received_callback_data == CallbackData.RETURN_DEVICE_BTN:
-        #                     self.next_state = StateJS(
-        #                         action=Action.EDIT_INSTALL_OR_RETURN,
-        #                         script=self.state.script,
-        #                         devices_list=self.state.devices_list,
-        #                         device_index=device_index,
-        #                         ticket_number=self.state.ticket_number,
-        #                         contract_number=self.state.contract_number,
-        #                     )
-        #                     methods_tg_list.append(
-        #                         self._archive_choice_method_tg(
-        #                             f"{String.EDIT_INSTALL_OR_RETURN}."
-        #                         )
-        #                     )
-        #                     methods_tg_list.append(
-        #                         self._pick_install_or_return(
-        #                             f"{String.PICK_INSTALL_OR_RETURN}."
-        #                         )
-        #                     )
-        #                 elif received_callback_data == CallbackData.INSTALL_DEVICE_BTN:
-        #                     self.next_state = StateJS(
-        #                         action=Action.EDIT_INSTALL_OR_RETURN,
-        #                         script=self.state.script,
-        #                         devices_list=self.state.devices_list,
-        #                         device_index=self.state.device_index,
-        #                         ticket_number=self.state.ticket_number,
-        #                         contract_number=self.state.contract_number,
-        #                     )
-        #                     methods_tg_list.append(
-        #                         self._archive_choice_method_tg(
-        #                             f"{String.EDIT_INSTALL_OR_RETURN}."
-        #                         )
-        #                     )
-        #                     methods_tg_list.append(
-        #                         self._pick_install_or_return(
-        #                             f"{String.PICK_INSTALL_OR_RETURN}."
-        #                         )
-        #                     )
-        #                 elif received_callback_data == CallbackData.EDIT_SERIAL_NUMBER:
-        #                     self.next_state = StateJS(
-        #                         action=Action.EDIT_SERIAL_NUMBER,
-        #                         script=self.state.script,
-        #                         devices_list=self.state.devices_list,
-        #                         device_index=self.state.device_index,
-        #                         ticket_number=self.state.ticket_number,
-        #                         contract_number=self.state.contract_number,
-        #                     )
-        #                     methods_tg_list.append(
-        #                         self._archive_choice_method_tg(
-        #                             f"{String.EDIT_SERIAL_NUMBER}."
-        #                         )
-        #                     )
-        #                     methods_tg_list.append(
-        #                         self._send_text_message_tg(
-        #                             f"{String.ENTER_NEW_SERIAL_NUMBER}."
-        #                         )
-        #                     )
-        #                 elif received_callback_data == CallbackData.EDIT_DEVICE_TYPE:
-        #                     self.next_state = StateJS(
-        #                         action=Action.EDIT_DEVICE_TYPE,
-        #                         script=self.state.script,
-        #                         device_index=self.state.device_index,
-        #                         devices_list=self.state.devices_list,
-        #                         ticket_number=self.state.ticket_number,
-        #                         contract_number=self.state.contract_number,
-        #                     )
-        #                     methods_tg_list.append(
-        #                         self._archive_choice_method_tg(
-        #                             f"{String.EDIT_DEVICE_TYPE}."
-        #                         )
-        #                     )
-        #                     methods_tg_list.append(
-        #                         self._pick_device_type(f"{String.PICK_DEVICE_TYPE}.")
-        #                     )
-        #                 elif received_callback_data == CallbackData.EDIT_TICKET:
-        #                     self.next_state = StateJS(
-        #                         action=Action.PICK_TICKET_ACTION,
-        #                         script=self.state.script,
-        #                         devices_list=self.state.devices_list,
-        #                         device_index=self.state.device_index,
-        #                         ticket_number=self.state.ticket_number,
-        #                         contract_number=self.state.contract_number,
-        #                     )
-        #                     methods_tg_list.append(
-        #                         self._archive_choice_method_tg(
-        #                             f"{String.RETURNING_TO_TICKET}."
-        #                         )
-        #                     )
-        #                     methods_tg_list.append(
-        #                         self._pick_ticket_action(
-        #                             f"{String.PICK_TICKET_ACTION}."
-        #                         )
-        #                     )
-        #                 elif received_callback_data == CallbackData.DELETE_DEVICE_BTN:
-        #                     self.next_state = StateJS(
-        #                         action=Action.PICK_TICKET_ACTION,
-        #                         script=self.state.script,
-        #                         devices_list=self.state.devices_list,
-        #                         device_index=0,
-        #                         ticket_number=self.state.ticket_number,
-        #                         contract_number=self.state.contract_number,
-        #                     )
-        #                     devices_list = self.state.devices_list.copy()
-        #                     device_index = self.state.device_index
-        #                     if 0 <= device_index < len(devices_list):
-        #                         del devices_list[device_index]
-        #                     else:
-        #                         raise IndexError(
-        #                             f"List index out of range: {device_index}"
-        #                         )
-        #                     self.next_state.devices_list = devices_list
-        #                     methods_tg_list.append(
-        #                         self._archive_choice_method_tg(
-        #                             f"{String.DEVICE_WAS_DELETED_FROM_TICKET}."
-        #                         )
-        #                     )
-        #                     methods_tg_list.append(
-        #                         self._pick_ticket_action(
-        #                             f"{String.PICK_TICKET_ACTION}."
-        #                         )
-        #                     )
-        #             else:
-        #                 raise ValueError
-        #         except ValueError:
-        #             logger.info(
-        #                 f"{self.log_prefix}Received invalid callback "
-        #                 f"data='{data}' for device menu action "
-        #                 "selection."
-        #             )
-        #             methods_tg_list.append(
-        #                 self.pick_device_action(
-        #                     f"{String.GOT_UNEXPECTED_DATA}. {String.PICK_DEVICE_ACTION}."
-        #                 )
-        #             )
-        #     elif isinstance(self.update_tg, MessageUpdateTG):
-        #         logger.info(
-        #             f"{self.log_prefix}User {self.user_db.full_name} "
-        #             "responded with message while callback data "
-        #             "was awaited."
-        #         )
-        #         methods_tg_list.append(
-        #             self.pick_device_action(
-        #                 f"{String.DEVICE_ACTION_WAS_NOT_PICKED}. "
-        #                 f"{String.PICK_DEVICE_ACTION}."
-        #             )
-        #         )
-        # elif self.state.action == Action.EDIT_INSTALL_OR_RETURN:
-        #     logger.info(
-        #         f"{self.log_prefix}Awaiting changing install or return choice to be made."
-        #     )
-        #     if self.state.device_index is None:
-        #         raise ValueError("device_index cannot be None at this point.")
-        #     if isinstance(self.update_tg, CallbackQueryUpdateTG):
-        #         expected_callback_data = [
-        #             CallbackData.INSTALL_DEVICE_BTN,
-        #             CallbackData.RETURN_DEVICE_BTN,
-        #         ]
-        #         data = self.update_tg.callback_query.data
-        #         try:
-        #             received_callback_data = CallbackData(data)
-        #             if received_callback_data in expected_callback_data:
-        #                 if received_callback_data == CallbackData.INSTALL_DEVICE_BTN:
-        #                     is_defective = False
-        #                 elif received_callback_data == CallbackData.RETURN_DEVICE_BTN:
-        #                     is_defective = True
-        #                 self.next_state = StateJS(
-        #                     action=Action.PICK_DEVICE_ACTION,
-        #                     script=self.state.script,
-        #                     devices_list=self.state.devices_list,
-        #                     device_index=self.state.device_index,
-        #                     ticket_number=self.state.ticket_number,
-        #                     contract_number=self.state.contract_number,
-        #                 )
-        #                 device_index = self.next_state.device_index
-        #                 list_length = len(self.next_state.devices_list)
-        #                 if device_index == list_length:
-        #                     device = DeviceJS(
-        #                         is_defective=is_defective, type=None, serial_number=None
-        #                     )
-        #                     self.next_state.devices_list.append(device)
-        #                 elif device_index < list_length:
-        #                     self.next_state.devices_list[
-        #                         device_index
-        #                     ].is_defective = is_defective
-        #                 else:
-        #                     error_msg = (
-        #                         f"{self.log_prefix}Error: "
-        #                         f"device_index={device_index} > "
-        #                         f"list_length={list_length}. "
-        #                         f"Expected: device_index <= list_length."
-        #                     )
-        #                     logger.error(error_msg)
-        #                     raise ValueError(error_msg)
-        #                 methods_tg_list.append(
-        #                     self._archive_choice_method_tg(
-        #                         String[received_callback_data.name]
-        #                     )
-        #                 )
-        #                 methods_tg_list.append(
-        #                     self.pick_device_action(f"{String.PICK_DEVICE_ACTION}.")
-        #                 )
-        #             else:
-        #                 raise ValueError
-        #         except ValueError:
-        #             logger.info(
-        #                 f"{self.log_prefix}Received invalid callback "
-        #                 f"data='{data}' for device action selection."
-        #             )
-        #             methods_tg_list.append(
-        #                 self._pick_install_or_return(
-        #                     f"{String.GOT_UNEXPECTED_DATA}. "
-        #                     f"{String.PICK_INSTALL_OR_RETURN}."
-        #                 )
-        #             )
-        #     elif isinstance(self.update_tg, MessageUpdateTG):
-        #         logger.info(
-        #             f"{self.log_prefix}User {self.user_db.full_name} "
-        #             "responded with message while callback data "
-        #             "was awaited."
-        #         )
-        #         methods_tg_list.append(
-        #             self._pick_install_or_return(
-        #                 f"{String.DEVICE_ACTION_WAS_NOT_PICKED}. "
-        #                 f"{String.PICK_INSTALL_OR_RETURN}."
-        #             )
-        #         )
-        # elif self.state.action == Action.EDIT_DEVICE_TYPE:
-        #     logger.info(
-        #         f"{self.log_prefix}Awaiting changing device type choice to be made."
-        #     )
-        #     if self.state.device_index is None:
-        #         raise ValueError("device_index cannot be None at this point.")
-        #     if isinstance(self.update_tg, CallbackQueryUpdateTG):
-        #         expected_callback_data = [
-        #             CallbackData.IP_DEVICE,
-        #             CallbackData.TVE_DEVICE,
-        #             CallbackData.ROUTER,
-        #         ]
-        #         data = self.update_tg.callback_query.data
-        #         try:
-        #             received_callback_data = CallbackData(data)
-        #             if received_callback_data in expected_callback_data:
-        #                 self.next_state = StateJS(
-        #                     action=Action.PICK_DEVICE_ACTION,
-        #                     script=self.state.script,
-        #                     devices_list=self.state.devices_list,
-        #                     device_index=self.state.device_index,
-        #                     ticket_number=self.state.ticket_number,
-        #                     contract_number=self.state.contract_number,
-        #                 )
-        #                 device_index = self.next_state.device_index
-        #                 device_type = DeviceTypeName[received_callback_data.name]
-        #                 if self.next_state.devices_list[device_index].type is not None:
-        #                     self.next_state.devices_list[
-        #                         device_index
-        #                     ].type = device_type
-        #                 else:
-        #                     existing_type = self.next_state.devices_list[
-        #                         device_index
-        #                     ].type
-        #                     error_msg = (
-        #                         f"{self.log_prefix}Error: Device with "
-        #                         f"index={device_index} had type=None "
-        #                         "prior to editing."
-        #                     )
-        #                     logger.error(error_msg)
-        #                     raise ValueError(error_msg)
-        #                 methods_tg_list.append(
-        #                     self._archive_choice_method_tg(
-        #                         String[received_callback_data.name]
-        #                     )
-        #                 )
-        #                 methods_tg_list.append(
-        #                     self.pick_device_action(f"{String.PICK_DEVICE_ACTION}.")
-        #                 )
-        #             else:
-        #                 raise ValueError
-        #         except ValueError:
-        #             logger.info(
-        #                 f"{self.log_prefix}Received invalid callback "
-        #                 f"data='{data}' for device type selection."
-        #             )
-        #             methods_tg_list.append(
-        #                 self._pick_device_type(
-        #                     f"{String.GOT_UNEXPECTED_DATA}. "
-        #                     f"{String.PICK_DEVICE_TYPE} "
-        #                     f"{String.FROM_OPTIONS_BELOW}."
-        #                 )
-        #             )
-        #     elif isinstance(self.update_tg, MessageUpdateTG):
-        #         logger.info(
-        #             f"{self.log_prefix}User {self.user_db.full_name} "
-        #             "responded with message while callback data "
-        #             "was awaited."
-        #         )
-        #         methods_tg_list.append(
-        #             self._pick_device_type(
-        #                 f"{String.DEVICE_TYPE_WAS_NOT_PICKED}. "
-        #                 f"{String.PICK_DEVICE_TYPE} "
-        #                 f"{String.FROM_OPTIONS_BELOW}."
-        #             )
-        #         )
-        # elif self.state.action == Action.EDIT_SERIAL_NUMBER:
-        #     logger.info(f"{self.log_prefix}Awaiting new device serial number.")
-        #     if self.state.device_index is None:
-        #         raise ValueError(
-        #             "'self.state.device_index' cannot be None at this point."
-        #         )
-        #     if (
-        #         isinstance(self.update_tg, MessageUpdateTG)
-        #         and self.update_tg.message.text
-        #     ):
-        #         message_text = self.update_tg.message.text.upper()
-        #         if re.fullmatch(r"[\dA-Z]+", message_text):
-        #             logger.info(
-        #                 f"{self.log_prefix}Got correct new device "
-        #                 f"serial number: '{message_text}'."
-        #             )
-        #             self.next_state = StateJS(
-        #                 action=Action.PICK_DEVICE_ACTION,
-        #                 script=self.state.script,
-        #                 devices_list=self.state.devices_list,
-        #                 device_index=self.state.device_index,
-        #                 ticket_number=self.state.ticket_number,
-        #                 contract_number=self.state.contract_number,
-        #             )
-        #             device_index = self.state.device_index
-        #             if (
-        #                 self.next_state.devices_list[device_index].serial_number
-        #                 is not None
-        #             ):
-        #                 self.next_state.devices_list[
-        #                     device_index
-        #                 ].serial_number = message_text
-        #             else:
-        #                 error_msg = (
-        #                     f"{self.log_prefix}Internal logic error: "
-        #                     "Device has no serial_number to edit."
-        #                 )
-        #                 logger.error(error_msg)
-        #                 raise ValueError(error_msg)
-        #             methods_tg_list.append(
-        #                 self._send_text_message_tg(
-        #                     f"{String.SERIAL_NUMBER_WAS_CHANGED}."
-        #                 )
-        #             )
-        #             methods_tg_list.append(
-        #                 self.pick_device_action(f"{String.PICK_DEVICE_ACTION}.")
-        #             )
-        #         else:
-        #             methods_tg_list.append(
-        #                 self._send_text_message_tg(
-        #                     f"{String.INCORRECT_SERIAL_NUMBER}. "
-        #                     f"{String.ENTER_NEW_SERIAL_NUMBER}."
-        #                 )
-        #             )
-        #     elif isinstance(self.update_tg, CallbackQueryUpdateTG):
-        #         methods_tg_list.append(
-        #             self._send_text_message_tg(
-        #                 f"{String.GOT_DATA_NOT_SERIAL_NUMBER}. "
-        #                 f"{String.ENTER_NEW_SERIAL_NUMBER}."
-        #             )
-        #         )
-        # return methods_tg_list
+    async def _handle_action_pick_ticket_action(self, state: StateJS) -> list[MethodTG]:
+        logger.info(f"{self.log_prefix}Awaiting ticket menu choice to be made.")
+        methods_tg_list: list[MethodTG] = []
+        if isinstance(self.update_tg, CallbackQueryUpdateTG):
+            expected_callback_data = [
+                CallbackData.EDIT_TICKET_NUMBER,
+                CallbackData.EDIT_CONTRACT_NUMBER,
+                CallbackData.QUIT_WITHOUT_SAVING_BTN,
+            ]
+            devices_list_length = len(state.devices_list)
+            if devices_list_length < settings.devices_per_ticket:
+                expected_callback_data.append(CallbackData.ADD_DEVICE_BTN)
+            if devices_list_length > 0:
+                expected_callback_data.append(CallbackData.CLOSE_TICKET_BTN)
+            all_devices_list = [
+                CallbackData[f"DEVICE_{index}"]
+                for index in range(settings.devices_per_ticket)
+            ]
+            expected_devices_list = all_devices_list[:devices_list_length]
+            expected_callback_data.extend(expected_devices_list)
+            raw_data = self.update_tg.callback_query.data
+            try:
+                received_callback_data = CallbackData(raw_data)
+                logger.info(
+                    f"{self.log_prefix}CallbackData is '{received_callback_data}'."
+                )
+                if received_callback_data in expected_callback_data:
+                    self.next_state = state.model_copy(deep=True)
+                    if received_callback_data == CallbackData.EDIT_TICKET_NUMBER:
+                        methods_tg_list.append(
+                            self._build_edit_to_text_message(
+                                f"{String.EDIT_TICKET_NUMBER}."
+                            )
+                        )
+                        self.next_state.action = Action.EDIT_TICKET_NUMBER
+                        methods_tg_list.append(
+                            self._build_new_text_message(
+                                f"{String.ENTER_NEW_TICKET_NUMBER}."
+                            )
+                        )
+                    elif received_callback_data == CallbackData.EDIT_CONTRACT_NUMBER:
+                        methods_tg_list.append(
+                            self._build_edit_to_text_message(
+                                f"{String.EDIT_CONTRACT_NUMBER}."
+                            )
+                        )
+                        self.next_state.action = Action.EDIT_CONTRACT_NUMBER
+                        methods_tg_list.append(
+                            self._build_new_text_message(
+                                f"{String.ENTER_NEW_CONTRACT_NUMBER}."
+                            )
+                        )
+                    elif received_callback_data in expected_devices_list:
+                        pattern = r"(\d+)$"
+                        match = re.search(pattern, received_callback_data)
+                        if match:
+                            device_index_string = match.group(1)
+                        else:
+                            error_msg = f"{self.log_prefix}StrEnum "
+                            f"'{received_callback_data}' doesn't end "
+                            "with an integer."
+                            logger.error(error_msg)
+                            raise ValueError(error_msg)
+                        callback_device_index = int(device_index_string)
+                        methods_tg_list.append(
+                            self._build_edit_to_text_message(
+                                f"{String.EDIT_DEVICE} {callback_device_index + 1}."
+                            )
+                        )
+                        self.next_state.action = Action.PICK_DEVICE_ACTION
+                        self.next_state.device_index = callback_device_index
+                        methods_tg_list.append(
+                            self._build_pick_device_action_message(
+                                f"{String.PICK_DEVICE_ACTION}."
+                            )
+                        )
+                    elif received_callback_data == CallbackData.ADD_DEVICE_BTN:
+                        methods_tg_list.append(
+                            self._build_edit_to_callback_button_text()
+                        )
+                        self.next_state.action = Action.PICK_DEVICE_TYPE
+                        self.next_state.device_index = devices_list_length
+                        methods_tg_list.append(
+                            await self._build_pick_device_type_message(
+                                f"{String.PICK_DEVICE_TYPE}."
+                            )
+                        )
+                    elif received_callback_data == CallbackData.CLOSE_TICKET_BTN:
+                        methods_tg_list.append(
+                            self._build_edit_to_callback_button_text()
+                        )
+                        self.next_state.action = Action.CONFIRM_CLOSE_TICKET
+                        methods_tg_list.append(
+                            self._build_pick_confirm_close_ticket_message(
+                                f"{String.CONFIRM_YOU_WANT_TO_CLOSE_TICKET}."
+                            )
+                        )
+                    elif received_callback_data == CallbackData.QUIT_WITHOUT_SAVING_BTN:
+                        methods_tg_list.append(
+                            self._build_edit_to_callback_button_text()
+                        )
+                        self.next_state.action = Action.CONFIRM_QUIT_WITHOUT_SAVING
+                        methods_tg_list.append(
+                            self._build_pick_confirm_quit_message(
+                                f"{String.ARE_YOU_SURE_YOU_WANT_TO_QUIT_WITHOUT_SAVING}?"
+                            )
+                        )
+                else:
+                    raise ValueError
+            except ValueError:
+                logger.info(
+                    f"{self.log_prefix}Received invalid callback "
+                    f"'{raw_data}' for ticket menu selection."
+                )
+                methods_tg_list.append(
+                    self._build_edit_to_text_message(f"{String.GOT_UNEXPECTED_DATA}.")
+                )
+                methods_tg_list.append(
+                    self._build_pick_ticket_action_message(
+                        f"{String.GOT_UNEXPECTED_DATA}. {String.PICK_TICKET_ACTION}."
+                    )
+                )
+        elif isinstance(self.update_tg, MessageUpdateTG):
+            logger.info(
+                f"{self.log_prefix}User {self.user_db.full_name} "
+                "responded with message while callback data "
+                "was awaited."
+            )
+            methods_tg_list.append(
+                self._build_pick_ticket_action_message(
+                    f"{String.TICKET_ACTION_WAS_NOT_PICKED}. "
+                    f"{String.PICK_TICKET_ACTION}."
+                )
+            )
+        return methods_tg_list
 
     def _build_stateless_mainmenu_message(self, text: str) -> SendMessageTG:
         mainmenu_keyboard_array = self._helper_mainmenu_keyboard_array()
@@ -2025,11 +1087,11 @@ class Conversation:
         for row in inline_keyboard:
             for button in row:
                 if button.callback_data == callback_data:
+                    button_text = button.text
                     logger.info(
                         f"{self.log_prefix}Button text '{button_text}' found "
                         f"for callback '{callback_data}'."
                     )
-                    button_text = button.text
                     break
             else:
                 continue
@@ -2068,7 +1130,7 @@ class Conversation:
             method_tg.parse_mode = "HTML"
         return method_tg
 
-    def _build_text_message(self, text: str) -> SendMessageTG:
+    def _build_new_text_message(self, text: str) -> SendMessageTG:
         return SendMessageTG(
             chat_id=self.user_db.telegram_uid,
             text=text,
@@ -2151,15 +1213,11 @@ class Conversation:
             self.next_state
             and self.next_state.ticket_number
             and self.next_state.contract_number
-            # and self.next_state.devices_list
         ):
             ticket_number = self.next_state.ticket_number
             contract_number = self.next_state.contract_number
             devices_list = self.next_state.devices_list
-        elif (
-            self.state and self.state.ticket_number and self.state.contract_number
-            # and self.state.devices_list
-        ):
+        elif self.state and self.state.ticket_number and self.state.contract_number:
             ticket_number = self.state.ticket_number
             contract_number = self.state.contract_number
             devices_list = self.state.devices_list
@@ -2167,8 +1225,6 @@ class Conversation:
             raise ValueError(
                 "The ticket menu only works with ticket number and "
                 "contract number already being filled in."
-                # "The ticket menu only works with state/next_state having at "
-                # "least one device being filled in."
             )
         inline_keyboard_array: list[list[InlineKeyboardButtonTG]] = []
         ticket_number_button: list[InlineKeyboardButtonTG] = [
@@ -2187,22 +1243,24 @@ class Conversation:
         for index, device in enumerate(devices_list):
             device_number = index + 1
             device_icon = "↪️" if device.is_defective else "✅"
-            if not isinstance(device.type, DeviceTypeName):
-                error_msg = (
-                    f"{self.log_prefix}CRITICAL: device.type is not DeviceTypeName."
-                )
+            if not isinstance(device.type.name, DeviceTypeName):
+                error_msg = f"{self.log_prefix}CRITICAL: device.type.name is not DeviceTypeName."
                 logger.error(error_msg)
                 raise AssertionError(error_msg)
-            device_type = String[device.type.name]
+            device_type = String[device.type.name.name]
             device_serial_number = device.serial_number
+            if device_serial_number is not None:
+                device_button_text = (
+                    f"{device_number}. "
+                    f"{device_icon} {device_type} "
+                    f"{device_serial_number} >>"
+                )
+            else:
+                device_button_text = f"{device_number}. {device_icon} {device_type} >>"
             device_button_array.append(
                 [
                     InlineKeyboardButtonTG(
-                        text=(
-                            f"{device_number}. "
-                            f"{device_icon} {device_type} "
-                            f"{device_serial_number} >>"
-                        ),
+                        text=device_button_text,
                         callback_data=CallbackData[f"DEVICE_{index}"],
                     )
                 ]
@@ -2228,9 +1286,10 @@ class Conversation:
         inline_keyboard_array.append(ticket_number_button)
         inline_keyboard_array.append(contract_number_button)
         inline_keyboard_array.extend(device_button_array)
-        if len(devices_list) < 6:
+        devices_list_length = len(devices_list)
+        if devices_list_length < settings.devices_per_ticket:
             inline_keyboard_array.append(add_device_button)
-        if len(devices_list) > 0:
+        if devices_list_length > 0:
             inline_keyboard_array.append(close_ticket_button)
         inline_keyboard_array.append(quit_without_saving_button)
         return SendMessageTG(
@@ -2486,3 +1545,650 @@ class Conversation:
                     ],
                 )
         return inline_keyboard_array
+
+    def trash(self):
+        methods_tg_list = []
+        if self.state.action == Action.EDIT_TICKET_NUMBER:
+            logger.info(f"{self.log_prefix}Awaiting new ticket number.")
+            if isinstance(self.update_tg, MessageUpdateTG):
+                if self.update_tg.message.text is not None:
+                    message_text = self.update_tg.message.text
+                    if re.fullmatch(r"\d+", message_text):
+                        logger.info(
+                            f"{self.log_prefix}Got correct "
+                            f"new ticket number: '{message_text}'."
+                        )
+                        self.next_state = StateJS(
+                            action=Action.PICK_TICKET_ACTION,
+                            script=self.state.script,
+                            devices_list=self.state.devices_list,
+                            device_index=self.state.device_index,
+                            ticket_number=message_text,
+                            contract_number=self.state.contract_number,
+                        )
+                        methods_tg_list.append(
+                            self._pick_ticket_action(
+                                f"{String.TICKET_NUMBER_WAS_EDITED}. "
+                                f"{String.PICK_TICKET_ACTION}."
+                            )
+                        )
+                    else:
+                        methods_tg_list.append(
+                            self._send_text_message_tg(
+                                f"{String.INCORRECT_TICKET_NUMBER}. "
+                                f"{String.ENTER_NEW_TICKET_NUMBER}."
+                            )
+                        )
+                else:
+                    methods_tg_list.append(
+                        self._send_text_message_tg(
+                            f"{String.INCORRECT_TICKET_NUMBER}. "
+                            f"{String.ENTER_NEW_TICKET_NUMBER}."
+                        )
+                    )
+            elif isinstance(self.update_tg, CallbackQueryUpdateTG):
+                methods_tg_list.append(
+                    self._send_text_message_tg(
+                        f"{String.GOT_DATA_NOT_TICKET_NUMBER}. "
+                        f"{String.ENTER_NEW_TICKET_NUMBER}."
+                    )
+                )
+        elif self.state.action == Action.EDIT_CONTRACT_NUMBER:
+            logger.info(f"{self.log_prefix}Awaiting new contract number.")
+            if isinstance(self.update_tg, MessageUpdateTG):
+                if self.update_tg.message.text is not None:
+                    message_text = self.update_tg.message.text
+                    if re.fullmatch(r"\d+", message_text):
+                        logger.info(
+                            f"{self.log_prefix}Got correct new "
+                            f"contract number: '{message_text}'."
+                        )
+                        self.next_state = StateJS(
+                            action=Action.PICK_TICKET_ACTION,
+                            script=self.state.script,
+                            devices_list=self.state.devices_list,
+                            device_index=self.state.device_index,
+                            ticket_number=self.state.ticket_number,
+                            contract_number=message_text,
+                        )
+                        methods_tg_list.append(
+                            self._pick_ticket_action(
+                                f"{String.CONTRACT_NUMBER_WAS_EDITED}. "
+                                f"{String.PICK_TICKET_ACTION}."
+                            )
+                        )
+                    else:
+                        methods_tg_list.append(
+                            self._send_text_message_tg(
+                                f"{String.INCORRECT_CONTRACT_NUMBER}. "
+                                f"{String.ENTER_NEW_CONTRACT_NUMBER}."
+                            )
+                        )
+                else:
+                    methods_tg_list.append(
+                        self._send_text_message_tg(
+                            f"{String.INCORRECT_CONTRACT_NUMBER}. "
+                            f"{String.ENTER_NEW_CONTRACT_NUMBER}."
+                        )
+                    )
+            elif isinstance(self.update_tg, CallbackQueryUpdateTG):
+                methods_tg_list.append(
+                    self._send_text_message_tg(
+                        f"{String.GOT_DATA_NOT_CONTRACT_NUMBER}. "
+                        f"{String.ENTER_NEW_CONTRACT_NUMBER}."
+                    )
+                )
+        elif self.state.action == Action.CONFIRM_CLOSE_TICKET:
+            logger.info(f"{self.log_prefix}Awaiting close ticket confirmation.")
+            if self.state.device_index is None:
+                raise ValueError(
+                    "'self.state.device_index' cannot be None at this point."
+                )
+            if isinstance(self.update_tg, CallbackQueryUpdateTG):
+                expected_callback_data = [
+                    CallbackData.CONFIRM_CLOSE_TICKET_BTN,
+                    CallbackData.CHANGED_MY_MIND_BTN,
+                ]
+                data = self.update_tg.callback_query.data
+                try:
+                    received_callback_data = CallbackData(data)
+                    if received_callback_data in expected_callback_data:
+                        if (
+                            received_callback_data
+                            == CallbackData.CONFIRM_CLOSE_TICKET_BTN
+                        ):
+                            methods_tg_list.append(
+                                self._archive_choice_method_tg(
+                                    f"{String.CONFIRM_CLOSE_TICKET_BTN}."
+                                )
+                            )
+                            ticket_closed = await self.close_ticket()
+                            if ticket_closed:
+                                self.next_state = None
+                                self.user_db.state_json = None
+                                methods_tg_list.append(
+                                    self._stateless_mainmenu_method_tg(
+                                        f"{String.YOU_CLOSED_TICKET}. {String.PICK_A_FUNCTION}."
+                                    )
+                                )
+                            else:
+                                self.next_state = StateJS(
+                                    action=Action.PICK_TICKET_ACTION,
+                                    script=self.state.script,
+                                    devices_list=self.state.devices_list,
+                                    device_index=self.state.device_index,
+                                    ticket_number=self.state.ticket_number,
+                                    contract_number=self.state.contract_number,
+                                )
+                                methods_tg_list.append(
+                                    self._pick_ticket_action(
+                                        f"{String.TICKET_CLOSE_FAILED}. "
+                                        f"{String.PICK_TICKET_ACTION}."
+                                    )
+                                )
+                        elif received_callback_data == CallbackData.CHANGED_MY_MIND_BTN:
+                            self.next_state = StateJS(
+                                action=Action.PICK_TICKET_ACTION,
+                                script=self.state.script,
+                                devices_list=self.state.devices_list,
+                                device_index=self.state.device_index,
+                                ticket_number=self.state.ticket_number,
+                                contract_number=self.state.contract_number,
+                            )
+                            methods_tg_list.append(
+                                self._archive_choice_method_tg(
+                                    f"{String.CHANGED_MY_MIND_BTN}."
+                                )
+                            )
+                            methods_tg_list.append(
+                                self._pick_ticket_action(
+                                    f"{String.PICK_TICKET_ACTION}."
+                                )
+                            )
+                    else:
+                        raise ValueError
+                except ValueError:
+                    logger.info(
+                        f"{self.log_prefix}Received invalid callback "
+                        f"data='{data}' for close ticket "
+                        "confirmation menu selection."
+                    )
+                    methods_tg_list.append(
+                        self.pick_confirm_close_ticket(
+                            f"{String.GOT_UNEXPECTED_DATA}. "
+                            f"{String.CONFIRM_YOU_WANT_TO_CLOSE_TICKET}"
+                        )
+                    )
+            elif isinstance(self.update_tg, MessageUpdateTG):
+                logger.info(
+                    f"{self.log_prefix}User {self.user_db.full_name} "
+                    "responded with message while callback data "
+                    "was awaited."
+                )
+                methods_tg_list.append(
+                    self.pick_confirm_close_ticket(
+                        f"{String.CLOSE_TICKET_ACTION_WAS_NOT_PICKED}. "
+                        f"{String.CONFIRM_YOU_WANT_TO_CLOSE_TICKET}"
+                    )
+                )
+        elif self.state.action == Action.CONFIRM_QUIT_WITHOUT_SAVING:
+            logger.info(f"{self.log_prefix}Awaiting quit without saving confirmation.")
+            if self.state.device_index is None:
+                raise ValueError(
+                    "'self.state.device_index' cannot be None at this point."
+                )
+            if isinstance(self.update_tg, CallbackQueryUpdateTG):
+                expected_callback_data = [
+                    CallbackData.CONFIRM_QUIT_BTN,
+                    CallbackData.CHANGED_MY_MIND_BTN,
+                ]
+                data = self.update_tg.callback_query.data
+                try:
+                    received_callback_data = CallbackData(data)
+                    if received_callback_data in expected_callback_data:
+                        if received_callback_data == CallbackData.CONFIRM_QUIT_BTN:
+                            self.next_state = None
+                            self.user_db.state_json = None
+                            methods_tg_list.append(
+                                self._archive_choice_method_tg(
+                                    f"{String.CONFIRM_QUIT_BTN}."
+                                )
+                            )
+                            methods_tg_list.append(
+                                self._stateless_mainmenu_method_tg(
+                                    f"{String.YOU_QUIT_WITHOUT_SAVING}. {String.PICK_A_FUNCTION}."
+                                )
+                            )
+                        elif received_callback_data == CallbackData.CHANGED_MY_MIND_BTN:
+                            self.next_state = StateJS(
+                                action=Action.PICK_TICKET_ACTION,
+                                script=self.state.script,
+                                devices_list=self.state.devices_list,
+                                device_index=self.state.device_index,
+                                ticket_number=self.state.ticket_number,
+                                contract_number=self.state.contract_number,
+                            )
+                            methods_tg_list.append(
+                                self._archive_choice_method_tg(
+                                    f"{String.CHANGED_MY_MIND_BTN}."
+                                )
+                            )
+                            methods_tg_list.append(
+                                self._pick_ticket_action(
+                                    f"{String.PICK_TICKET_ACTION}."
+                                )
+                            )
+                    else:
+                        raise ValueError
+                except ValueError:
+                    logger.info(
+                        f"{self.log_prefix}Received invalid callback "
+                        f"data='{data}' for quit without saving "
+                        "confirmation menu selection."
+                    )
+                    methods_tg_list.append(
+                        self.pick_confirm_quit(
+                            f"{String.GOT_UNEXPECTED_DATA}. "
+                            f"{String.ARE_YOU_SURE_YOU_WANT_TO_QUIT_WITHOUT_SAVING}"
+                        )
+                    )
+            elif isinstance(self.update_tg, MessageUpdateTG):
+                logger.info(
+                    f"{self.log_prefix}User {self.user_db.full_name} "
+                    "responded with message while callback data "
+                    "was awaited."
+                )
+                methods_tg_list.append(
+                    self.pick_confirm_quit(
+                        f"{String.QUIT_WITHOUT_SAVING_ACTION_WAS_NOT_PICKED}. "
+                        f"{String.ARE_YOU_SURE_YOU_WANT_TO_QUIT_WITHOUT_SAVING}"
+                    )
+                )
+        elif self.state.action == Action.PICK_DEVICE_ACTION:
+            logger.info(f"{self.log_prefix}Awaiting device menu choice to be made.")
+            if self.state.device_index is None:
+                raise ValueError(
+                    "'self.state.device_index' cannot be None at this point."
+                )
+            if isinstance(self.update_tg, CallbackQueryUpdateTG):
+                expected_callback_data = [
+                    CallbackData.EDIT_DEVICE_TYPE,
+                    CallbackData.EDIT_SERIAL_NUMBER,
+                    CallbackData.EDIT_TICKET,
+                    CallbackData.DELETE_DEVICE_BTN,
+                ]
+                device_index = self.state.device_index
+                if self.state.devices_list[device_index].is_defective is True:
+                    expected_callback_data.append(CallbackData.RETURN_DEVICE_BTN)
+                elif self.state.devices_list[device_index].is_defective is False:
+                    expected_callback_data.append(CallbackData.INSTALL_DEVICE_BTN)
+                else:
+                    raise ValueError("device_index is not True or False.")
+                data = self.update_tg.callback_query.data
+                try:
+                    received_callback_data = CallbackData(data)
+                    if received_callback_data in expected_callback_data:
+                        if received_callback_data == CallbackData.RETURN_DEVICE_BTN:
+                            self.next_state = StateJS(
+                                action=Action.EDIT_INSTALL_OR_RETURN,
+                                script=self.state.script,
+                                devices_list=self.state.devices_list,
+                                device_index=device_index,
+                                ticket_number=self.state.ticket_number,
+                                contract_number=self.state.contract_number,
+                            )
+                            methods_tg_list.append(
+                                self._archive_choice_method_tg(
+                                    f"{String.EDIT_INSTALL_OR_RETURN}."
+                                )
+                            )
+                            methods_tg_list.append(
+                                self._pick_install_or_return(
+                                    f"{String.PICK_INSTALL_OR_RETURN}."
+                                )
+                            )
+                        elif received_callback_data == CallbackData.INSTALL_DEVICE_BTN:
+                            self.next_state = StateJS(
+                                action=Action.EDIT_INSTALL_OR_RETURN,
+                                script=self.state.script,
+                                devices_list=self.state.devices_list,
+                                device_index=self.state.device_index,
+                                ticket_number=self.state.ticket_number,
+                                contract_number=self.state.contract_number,
+                            )
+                            methods_tg_list.append(
+                                self._archive_choice_method_tg(
+                                    f"{String.EDIT_INSTALL_OR_RETURN}."
+                                )
+                            )
+                            methods_tg_list.append(
+                                self._pick_install_or_return(
+                                    f"{String.PICK_INSTALL_OR_RETURN}."
+                                )
+                            )
+                        elif received_callback_data == CallbackData.EDIT_SERIAL_NUMBER:
+                            self.next_state = StateJS(
+                                action=Action.EDIT_SERIAL_NUMBER,
+                                script=self.state.script,
+                                devices_list=self.state.devices_list,
+                                device_index=self.state.device_index,
+                                ticket_number=self.state.ticket_number,
+                                contract_number=self.state.contract_number,
+                            )
+                            methods_tg_list.append(
+                                self._archive_choice_method_tg(
+                                    f"{String.EDIT_SERIAL_NUMBER}."
+                                )
+                            )
+                            methods_tg_list.append(
+                                self._send_text_message_tg(
+                                    f"{String.ENTER_NEW_SERIAL_NUMBER}."
+                                )
+                            )
+                        elif received_callback_data == CallbackData.EDIT_DEVICE_TYPE:
+                            self.next_state = StateJS(
+                                action=Action.EDIT_DEVICE_TYPE,
+                                script=self.state.script,
+                                device_index=self.state.device_index,
+                                devices_list=self.state.devices_list,
+                                ticket_number=self.state.ticket_number,
+                                contract_number=self.state.contract_number,
+                            )
+                            methods_tg_list.append(
+                                self._archive_choice_method_tg(
+                                    f"{String.EDIT_DEVICE_TYPE}."
+                                )
+                            )
+                            methods_tg_list.append(
+                                self._pick_device_type(f"{String.PICK_DEVICE_TYPE}.")
+                            )
+                        elif received_callback_data == CallbackData.EDIT_TICKET:
+                            self.next_state = StateJS(
+                                action=Action.PICK_TICKET_ACTION,
+                                script=self.state.script,
+                                devices_list=self.state.devices_list,
+                                device_index=self.state.device_index,
+                                ticket_number=self.state.ticket_number,
+                                contract_number=self.state.contract_number,
+                            )
+                            methods_tg_list.append(
+                                self._archive_choice_method_tg(
+                                    f"{String.RETURNING_TO_TICKET}."
+                                )
+                            )
+                            methods_tg_list.append(
+                                self._pick_ticket_action(
+                                    f"{String.PICK_TICKET_ACTION}."
+                                )
+                            )
+                        elif received_callback_data == CallbackData.DELETE_DEVICE_BTN:
+                            self.next_state = StateJS(
+                                action=Action.PICK_TICKET_ACTION,
+                                script=self.state.script,
+                                devices_list=self.state.devices_list,
+                                device_index=0,
+                                ticket_number=self.state.ticket_number,
+                                contract_number=self.state.contract_number,
+                            )
+                            devices_list = self.state.devices_list.copy()
+                            device_index = self.state.device_index
+                            if 0 <= device_index < len(devices_list):
+                                del devices_list[device_index]
+                            else:
+                                raise IndexError(
+                                    f"List index out of range: {device_index}"
+                                )
+                            self.next_state.devices_list = devices_list
+                            methods_tg_list.append(
+                                self._archive_choice_method_tg(
+                                    f"{String.DEVICE_WAS_DELETED_FROM_TICKET}."
+                                )
+                            )
+                            methods_tg_list.append(
+                                self._pick_ticket_action(
+                                    f"{String.PICK_TICKET_ACTION}."
+                                )
+                            )
+                    else:
+                        raise ValueError
+                except ValueError:
+                    logger.info(
+                        f"{self.log_prefix}Received invalid callback "
+                        f"data='{data}' for device menu action "
+                        "selection."
+                    )
+                    methods_tg_list.append(
+                        self.pick_device_action(
+                            f"{String.GOT_UNEXPECTED_DATA}. {String.PICK_DEVICE_ACTION}."
+                        )
+                    )
+            elif isinstance(self.update_tg, MessageUpdateTG):
+                logger.info(
+                    f"{self.log_prefix}User {self.user_db.full_name} "
+                    "responded with message while callback data "
+                    "was awaited."
+                )
+                methods_tg_list.append(
+                    self.pick_device_action(
+                        f"{String.DEVICE_ACTION_WAS_NOT_PICKED}. "
+                        f"{String.PICK_DEVICE_ACTION}."
+                    )
+                )
+        elif self.state.action == Action.EDIT_INSTALL_OR_RETURN:
+            logger.info(
+                f"{self.log_prefix}Awaiting changing install or return choice to be made."
+            )
+            if self.state.device_index is None:
+                raise ValueError("device_index cannot be None at this point.")
+            if isinstance(self.update_tg, CallbackQueryUpdateTG):
+                expected_callback_data = [
+                    CallbackData.INSTALL_DEVICE_BTN,
+                    CallbackData.RETURN_DEVICE_BTN,
+                ]
+                data = self.update_tg.callback_query.data
+                try:
+                    received_callback_data = CallbackData(data)
+                    if received_callback_data in expected_callback_data:
+                        if received_callback_data == CallbackData.INSTALL_DEVICE_BTN:
+                            is_defective = False
+                        elif received_callback_data == CallbackData.RETURN_DEVICE_BTN:
+                            is_defective = True
+                        self.next_state = StateJS(
+                            action=Action.PICK_DEVICE_ACTION,
+                            script=self.state.script,
+                            devices_list=self.state.devices_list,
+                            device_index=self.state.device_index,
+                            ticket_number=self.state.ticket_number,
+                            contract_number=self.state.contract_number,
+                        )
+                        device_index = self.next_state.device_index
+                        list_length = len(self.next_state.devices_list)
+                        if device_index == list_length:
+                            device = DeviceJS(
+                                is_defective=is_defective, type=None, serial_number=None
+                            )
+                            self.next_state.devices_list.append(device)
+                        elif device_index < list_length:
+                            self.next_state.devices_list[
+                                device_index
+                            ].is_defective = is_defective
+                        else:
+                            error_msg = (
+                                f"{self.log_prefix}Error: "
+                                f"device_index={device_index} > "
+                                f"list_length={list_length}. "
+                                f"Expected: device_index <= list_length."
+                            )
+                            logger.error(error_msg)
+                            raise ValueError(error_msg)
+                        methods_tg_list.append(
+                            self._archive_choice_method_tg(
+                                String[received_callback_data.name]
+                            )
+                        )
+                        methods_tg_list.append(
+                            self.pick_device_action(f"{String.PICK_DEVICE_ACTION}.")
+                        )
+                    else:
+                        raise ValueError
+                except ValueError:
+                    logger.info(
+                        f"{self.log_prefix}Received invalid callback "
+                        f"data='{data}' for device action selection."
+                    )
+                    methods_tg_list.append(
+                        self._pick_install_or_return(
+                            f"{String.GOT_UNEXPECTED_DATA}. "
+                            f"{String.PICK_INSTALL_OR_RETURN}."
+                        )
+                    )
+            elif isinstance(self.update_tg, MessageUpdateTG):
+                logger.info(
+                    f"{self.log_prefix}User {self.user_db.full_name} "
+                    "responded with message while callback data "
+                    "was awaited."
+                )
+                methods_tg_list.append(
+                    self._pick_install_or_return(
+                        f"{String.DEVICE_ACTION_WAS_NOT_PICKED}. "
+                        f"{String.PICK_INSTALL_OR_RETURN}."
+                    )
+                )
+        elif self.state.action == Action.EDIT_DEVICE_TYPE:
+            logger.info(
+                f"{self.log_prefix}Awaiting changing device type choice to be made."
+            )
+            if self.state.device_index is None:
+                raise ValueError("device_index cannot be None at this point.")
+            if isinstance(self.update_tg, CallbackQueryUpdateTG):
+                expected_callback_data = [
+                    CallbackData.IP_DEVICE,
+                    CallbackData.TVE_DEVICE,
+                    CallbackData.ROUTER,
+                ]
+                data = self.update_tg.callback_query.data
+                try:
+                    received_callback_data = CallbackData(data)
+                    if received_callback_data in expected_callback_data:
+                        self.next_state = StateJS(
+                            action=Action.PICK_DEVICE_ACTION,
+                            script=self.state.script,
+                            devices_list=self.state.devices_list,
+                            device_index=self.state.device_index,
+                            ticket_number=self.state.ticket_number,
+                            contract_number=self.state.contract_number,
+                        )
+                        device_index = self.next_state.device_index
+                        device_type = DeviceTypeName[received_callback_data.name]
+                        if self.next_state.devices_list[device_index].type is not None:
+                            self.next_state.devices_list[
+                                device_index
+                            ].type = device_type
+                        else:
+                            existing_type = self.next_state.devices_list[
+                                device_index
+                            ].type
+                            error_msg = (
+                                f"{self.log_prefix}Error: Device with "
+                                f"index={device_index} had type=None "
+                                "prior to editing."
+                            )
+                            logger.error(error_msg)
+                            raise ValueError(error_msg)
+                        methods_tg_list.append(
+                            self._archive_choice_method_tg(
+                                String[received_callback_data.name]
+                            )
+                        )
+                        methods_tg_list.append(
+                            self.pick_device_action(f"{String.PICK_DEVICE_ACTION}.")
+                        )
+                    else:
+                        raise ValueError
+                except ValueError:
+                    logger.info(
+                        f"{self.log_prefix}Received invalid callback "
+                        f"data='{data}' for device type selection."
+                    )
+                    methods_tg_list.append(
+                        self._pick_device_type(
+                            f"{String.GOT_UNEXPECTED_DATA}. "
+                            f"{String.PICK_DEVICE_TYPE} "
+                            f"{String.FROM_OPTIONS_BELOW}."
+                        )
+                    )
+            elif isinstance(self.update_tg, MessageUpdateTG):
+                logger.info(
+                    f"{self.log_prefix}User {self.user_db.full_name} "
+                    "responded with message while callback data "
+                    "was awaited."
+                )
+                methods_tg_list.append(
+                    self._pick_device_type(
+                        f"{String.DEVICE_TYPE_WAS_NOT_PICKED}. "
+                        f"{String.PICK_DEVICE_TYPE} "
+                        f"{String.FROM_OPTIONS_BELOW}."
+                    )
+                )
+        elif self.state.action == Action.EDIT_SERIAL_NUMBER:
+            logger.info(f"{self.log_prefix}Awaiting new device serial number.")
+            if self.state.device_index is None:
+                raise ValueError(
+                    "'self.state.device_index' cannot be None at this point."
+                )
+            if (
+                isinstance(self.update_tg, MessageUpdateTG)
+                and self.update_tg.message.text
+            ):
+                message_text = self.update_tg.message.text.upper()
+                if re.fullmatch(r"[\dA-Z]+", message_text):
+                    logger.info(
+                        f"{self.log_prefix}Got correct new device "
+                        f"serial number: '{message_text}'."
+                    )
+                    self.next_state = StateJS(
+                        action=Action.PICK_DEVICE_ACTION,
+                        script=self.state.script,
+                        devices_list=self.state.devices_list,
+                        device_index=self.state.device_index,
+                        ticket_number=self.state.ticket_number,
+                        contract_number=self.state.contract_number,
+                    )
+                    device_index = self.state.device_index
+                    if (
+                        self.next_state.devices_list[device_index].serial_number
+                        is not None
+                    ):
+                        self.next_state.devices_list[
+                            device_index
+                        ].serial_number = message_text
+                    else:
+                        error_msg = (
+                            f"{self.log_prefix}Internal logic error: "
+                            "Device has no serial_number to edit."
+                        )
+                        logger.error(error_msg)
+                        raise ValueError(error_msg)
+                    methods_tg_list.append(
+                        self._send_text_message_tg(
+                            f"{String.SERIAL_NUMBER_WAS_CHANGED}."
+                        )
+                    )
+                    methods_tg_list.append(
+                        self.pick_device_action(f"{String.PICK_DEVICE_ACTION}.")
+                    )
+                else:
+                    methods_tg_list.append(
+                        self._send_text_message_tg(
+                            f"{String.INCORRECT_SERIAL_NUMBER}. "
+                            f"{String.ENTER_NEW_SERIAL_NUMBER}."
+                        )
+                    )
+            elif isinstance(self.update_tg, CallbackQueryUpdateTG):
+                methods_tg_list.append(
+                    self._send_text_message_tg(
+                        f"{String.GOT_DATA_NOT_SERIAL_NUMBER}. "
+                        f"{String.ENTER_NEW_SERIAL_NUMBER}."
+                    )
+                )
+        return methods_tg_list
