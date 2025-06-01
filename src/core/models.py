@@ -7,6 +7,20 @@ from src.db.models import UserDB
 from src.tg.models import SendMessageTG
 
 
+class TicketJS(BaseModel):
+    ticket_number: int | None = None
+    contract_number: int | None = None
+    reports: list[ReportJS] | None = None
+    id: int | None = None
+
+
+class ReportJS(BaseModel):
+    ticket_number: int | None = None
+    contract_number: int | None = None
+    reports: list[ReportJS]
+    id: int | None = None
+
+
 class DeviceJS(BaseModel):
     type: DeviceTypeJS
     is_defective: bool | None = None

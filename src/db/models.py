@@ -166,7 +166,7 @@ class DeviceDB(BaseDB, TimestampMixinDB):
     type_id: Mapped[int] = mapped_column(ForeignKey("device_types.id", ondelete="RESTRICT"), index=True)
     type: Mapped[DeviceTypeDB] = relationship(back_populates="devices")
     is_defective: Mapped[bool] = mapped_column(Boolean, index=True)
-    serial_number: Mapped[str] = mapped_column(String, index=True)
+    serial_number: Mapped[str | None] = mapped_column(String, index=True)
     reports: Mapped[list[ReportDB]] = relationship(default_factory=list, back_populates="device", cascade="all, delete-orphan", passive_deletes=True)
     writeoffs: Mapped[list[WriteoffDB]] = relationship(default_factory=list, back_populates="device", cascade="all, delete-orphan", passive_deletes=True)
 
