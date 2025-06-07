@@ -19,19 +19,19 @@ async def create_db_and_tables():
 async def create_device_types(session: AsyncSession):
     logger.info("Initializing device types...")
     router = DeviceTypeDB(
-        name=DeviceTypeName.ROUTER, is_returnable=True, has_serial_number=True
+        name=DeviceTypeName.ROUTER, is_disposable=False, has_serial_number=True
     )
     ip_device = DeviceTypeDB(
-        name=DeviceTypeName.IP_DEVICE, is_returnable=True, has_serial_number=True
+        name=DeviceTypeName.IP_DEVICE, is_disposable=False, has_serial_number=True
     )
     tve_device = DeviceTypeDB(
-        name=DeviceTypeName.TVE_DEVICE, is_returnable=True, has_serial_number=True
+        name=DeviceTypeName.TVE_DEVICE, is_disposable=False, has_serial_number=True
     )
     power_unit = DeviceTypeDB(
-        name=DeviceTypeName.POWER_UNIT, is_returnable=False, has_serial_number=False
+        name=DeviceTypeName.POWER_UNIT, is_disposable=True, has_serial_number=False
     )
     network_hub = DeviceTypeDB(
-        name=DeviceTypeName.NETWORK_HUB, is_returnable=False, has_serial_number=True
+        name=DeviceTypeName.NETWORK_HUB, is_disposable=True, has_serial_number=True
     )
     device_types = [router, ip_device, tve_device, power_unit, network_hub]
     for device_type in device_types:

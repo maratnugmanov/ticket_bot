@@ -20,8 +20,8 @@ from src.db.models import (
     RoleDB,
     UserDB,
     TicketDB,
-    ReportDB,
-    WriteoffDB,
+    TicketDeviceDB,
+    WriteoffDevicesDB,
     DeviceDB,
     DeviceTypeDB,
 )

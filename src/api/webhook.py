@@ -57,6 +57,7 @@ async def handle_telegram_webhook(
                         "the update via conversation."
                     )
                 else:
+                    await session_db.rollback()
                     logger.error(
                         f"{update_tg._log}Failed processing "
                         "the update via conversation."
