@@ -39,8 +39,7 @@ from src.db.models import (
     UserDB,
     ContractDB,
     TicketDB,
-    TicketDeviceDB,
-    WriteoffDevicesDB,
+    WriteoffDeviceDB,
     DeviceDB,
     DeviceTypeDB,
 )
@@ -92,6 +91,7 @@ class Conversation:
             Action.EDIT_TICKET_NUMBER: self._handle_action_edit_ticket_number,
             Action.EDIT_CONTRACT_NUMBER: self._handle_action_edit_contract_number,
             Action.PICK_DEVICE_ACTION: self._handle_action_pick_device_action,
+            Action.EDIT_DEVICE_TYPE: self._handle_action_edit_device_type,
             Action.CONFIRM_CLOSE_TICKET: self._handle_pick_confirm_close_ticket,
             Action.CONFIRM_QUIT_WITHOUT_SAVING: self._handle_pick_confirm_quit_without_saving,
         }
@@ -125,8 +125,8 @@ class Conversation:
                 .selectinload(TicketDB.contract)
                 .selectinload(ContractDB.tickets),
                 selectinload(UserDB.current_ticket)
-                .selectinload(TicketDB.ticket_devices)
-                .selectinload(TicketDeviceDB.device),
+                .selectinload(TicketDB.devices)
+                .selectinload(DeviceDB.type),
             )
         )
         guest_role: RoleDB | None = None
@@ -549,25 +549,26 @@ class Conversation:
         self, state: StateJS
     ) -> list[MethodTG]:
         logger.info(f"{self.log_prefix}Awaiting ticket number.")
+        current_ticket = self.user_db.current_ticket
+        if current_ticket:
+            error_msg = (
+                f"{self.log_prefix}"
+                f"{self.user_db.full_name} is already "
+                "working on a ticket #"
+                f"{current_ticket.number} "
+                f"with id={current_ticket.id}."
+                " Cannot create a new ticket."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
         methods_tg_list: list[MethodTG] = []
         if isinstance(self.update_tg, MessageUpdateTG):
             if self.update_tg.message.text is not None:
                 message_text = self.update_tg.message.text
-                if re.fullmatch(r"\d+", message_text):
+                if re.fullmatch(r"\d+", message_text) and message_text != "0":
                     logger.info(
                         f"{self.log_prefix}Got correct ticket number: '{message_text}'."
                     )
-                    if self.user_db.current_ticket:
-                        error_msg = (
-                            f"{self.log_prefix}"
-                            f"{self.user_db.full_name} is already "
-                            "working on a ticket #"
-                            f"{self.user_db.current_ticket.number} "
-                            f"with id={self.user_db.current_ticket.id}."
-                            " Cannot create a new ticket."
-                        )
-                        logger.info(error_msg)
-                        raise ValueError(error_msg)
                     ticket_number = int(message_text)
                     self.next_state = state.model_copy(deep=True)
                     self.next_state.action = Action.ENTER_CONTRACT_NUMBER
@@ -576,7 +577,7 @@ class Conversation:
                         user_id=self.user_db.id,
                         locked_by_user_id=self.user_db.id,
                     )
-                    self.session_db.add(new_ticket)
+                    self.user_db.current_ticket = new_ticket
                     methods_tg_list.append(
                         self._build_new_text_message(f"{String.ENTER_CONTRACT_NUMBER}.")
                     )
@@ -610,18 +611,19 @@ class Conversation:
         self, state: StateJS
     ) -> list[MethodTG]:
         logger.info(f"{self.log_prefix}Awaiting contract number.")
-        methods_tg_list: list[MethodTG] = []
-        if self.user_db.current_ticket is None:
+        current_ticket = self.user_db.current_ticket
+        if current_ticket is None:
             error_msg = (
                 f"{self.log_prefix}{self.user_db.full_name} is not "
                 "working on any ticket."
             )
-            logger.info(error_msg)
+            logger.error(error_msg)
             raise ValueError(error_msg)
+        methods_tg_list: list[MethodTG] = []
         if isinstance(self.update_tg, MessageUpdateTG):
             if self.update_tg.message.text is not None:
                 message_text = self.update_tg.message.text
-                if re.fullmatch(r"\d+", message_text):
+                if re.fullmatch(r"\d+", message_text) and message_text != "0":
                     logger.info(
                         f"{self.log_prefix}Got correct "
                         f"contract number: '{message_text}'."
@@ -639,16 +641,14 @@ class Conversation:
                             "database under "
                             f"id={contract_exist.number}."
                         )
-                        self.user_db.current_ticket.contract = contract_exist
+                        current_ticket.contract = contract_exist
                     else:
                         logger.info(
                             f"{self.log_prefix}Contract "
                             f"#{contract_number} was not found in the "
                             "database and will be added."
                         )
-                        self.user_db.current_ticket.contract = ContractDB(
-                            number=contract_number
-                        )
+                        current_ticket.contract = ContractDB(number=contract_number)
                         await self.session_db.flush()
                     methods_tg_list.append(
                         await self._build_pick_device_type_message(
@@ -683,6 +683,14 @@ class Conversation:
 
     async def _handle_action_pick_device_type(self, state: StateJS) -> list[MethodTG]:
         logger.info(f"{self.log_prefix}Awaiting device type choice to be made.")
+        current_ticket = self.user_db.current_ticket
+        if current_ticket is None:
+            error_msg = (
+                f"{self.log_prefix}{self.user_db.full_name} is not "
+                "working on any ticket."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
         methods_tg_list: list[MethodTG] = []
         if isinstance(self.update_tg, CallbackQueryUpdateTG):
             raw_data = self.update_tg.callback_query.data
@@ -697,12 +705,12 @@ class Conversation:
                     )
                     raise ValueError
                 methods_tg_list.append(self._build_edit_to_callback_button_text())
-                device_type_db = await self.session_db.scalar(
+                device_type = await self.session_db.scalar(
                     select(DeviceTypeDB).where(
                         DeviceTypeDB.name == DeviceTypeName[received_callback_data.name]
                     )
                 )
-                if device_type_db is None:
+                if device_type is None:
                     logger.info(
                         f"{self.log_prefix}No DeviceTypeDB found for "
                         f"{received_callback_data.name}."
@@ -714,10 +722,10 @@ class Conversation:
                             f"{String.FROM_OPTIONS_BELOW}."
                         )
                     )
-                elif device_type_db.is_active:
+                elif not device_type.is_active:
                     logger.info(
                         f"{self.log_prefix}DeviceTypeDB "
-                        f"'{device_type_db.name}' is disabled."
+                        f"'{device_type.name.name}' is disabled."
                     )
                     methods_tg_list.append(
                         await self._build_pick_device_type_message(
@@ -729,28 +737,23 @@ class Conversation:
                 else:
                     logger.info(
                         f"{self.log_prefix}Found active DeviceTypeDB: "
-                        f"id={device_type_db.id}, name='{device_type_db.name}'."
+                        f"id={device_type.id}, name='{device_type.name.name}'."
                     )
                     self.next_state = state.model_copy(deep=True)
-                    if self.user_db.current_ticket is None:
-                        raise ValueError
-                    devices_list = self.user_db.current_ticket.ticket_devices
+                    devices_list = current_ticket.devices
                     device_index = self.next_state.device_index
                     device_list_length = len(devices_list)
                     if device_index == device_list_length:
                         device = DeviceDB(
-                            type_id=device_type_db.id,
+                            ticket_id=current_ticket.id,
+                            type_id=device_type.id,
                         )
-                        await self.session_db.flush()
-                        ticket_device = TicketDeviceDB(
-                            device_id=device.id,
-                            ticket_id=self.user_db.current_ticket.id,
-                        )
-                        devices_list.append(ticket_device)
+                        device.type = device_type
+                        devices_list.append(device)
                     elif 0 <= device_index < device_list_length:
-                        self.user_db.current_ticket.ticket_devices[
-                            device_index
-                        ].device.type_id == device_type_db.id
+                        device = devices_list[device_index]
+                        device.type_id = device_type.id
+                        device.type = device_type
                     else:
                         error_msg = (
                             f"{self.log_prefix}Error: "
@@ -760,16 +763,19 @@ class Conversation:
                         )
                         logger.error(error_msg)
                         raise IndexError(error_msg)
-                    if device_type_db.is_disposable:
+                    await self.session_db.flush()
+                    if device_type.is_disposable:
                         logger.info(
-                            f"Device type '{device_type_db}' is "
+                            f"Device type '{device_type.name.name}' is "
                             "disposable. Install or return step "
                             "will be skipped."
                         )
-                        devices_list[device_index].removal = False
-                        if device_type_db.has_serial_number:
+                        device.removal = False
+                        if device_type.has_serial_number:
                             logger.info(
-                                f"Device type '{device_type_db}' has serial number parameter."
+                                f"Device type "
+                                f"'{device_type.name.name}' has "
+                                "serial number parameter."
                             )
                             self.next_state.action = Action.ENTER_SERIAL_NUMBER
                             methods_tg_list.append(
@@ -779,9 +785,10 @@ class Conversation:
                             )
                         else:
                             logger.info(
-                                f"Device type '{device_type_db}' doesn't have "
-                                "serial number parameter. Serial number "
-                                "step will be skipped."
+                                "Device type "
+                                f"'{device_type.name.name}' doesn't "
+                                "have serial number parameter. "
+                                "Serial number step will be skipped."
                             )
                             self.next_state.action = Action.PICK_TICKET_ACTION
                             # self.next_state.device_index = 0
@@ -792,7 +799,7 @@ class Conversation:
                             )
                     else:
                         logger.info(
-                            f"Device type '{device_type_db}' is not disposable."
+                            f"Device type '{device_type.name.name}' is not disposable."
                         )
                         self.next_state.action = Action.PICK_INSTALL_OR_RETURN
                         methods_tg_list.append(
@@ -831,8 +838,18 @@ class Conversation:
         logger.info(f"{self.log_prefix}Methods are ready to be posted.")
         return methods_tg_list
 
-    def _handle_action_pick_install_or_return(self, state: StateJS) -> list[MethodTG]:
+    async def _handle_action_pick_install_or_return(
+        self, state: StateJS
+    ) -> list[MethodTG]:
         logger.info(f"{self.log_prefix}Awaiting install or return choice to be made.")
+        current_ticket = self.user_db.current_ticket
+        if current_ticket is None:
+            error_msg = (
+                f"{self.log_prefix}{self.user_db.full_name} is not "
+                "working on any ticket."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
         methods_tg_list: list[MethodTG] = []
         if isinstance(self.update_tg, CallbackQueryUpdateTG):
             expected_callback_data = [
@@ -847,9 +864,9 @@ class Conversation:
                 )
                 if received_callback_data in expected_callback_data:
                     if received_callback_data == CallbackData.INSTALL_DEVICE_BTN:
-                        is_defective = False
+                        removal = False
                     elif received_callback_data == CallbackData.RETURN_DEVICE_BTN:
-                        is_defective = True
+                        removal = True
                     else:
                         error_msg = (
                             "Callback is in expected list, "
@@ -859,24 +876,27 @@ class Conversation:
                         raise ValueError(error_msg)
                     methods_tg_list.append(self._build_edit_to_callback_button_text())
                     self.next_state = state.model_copy(deep=True)
-                    devices_list = self.next_state.devices_list
+                    devices_list = current_ticket.devices
                     device_index = self.next_state.device_index
                     device_list_length = len(devices_list)
                     if 0 <= device_index < device_list_length:
-                        devices_list[device_index].is_defective = is_defective
+                        device = devices_list[device_index]
+                        device.removal = removal
+                        await self.session_db.flush()
                     else:
                         error_msg = (
                             f"{self.log_prefix}Error: "
-                            f"device_index='{device_index}' "
-                            f"and device_list_length='{device_list_length}'. "
+                            f"device_index='{device_index}' and "
+                            f"device_list_length='{device_list_length}'. "
                             f"Expected: 0 <= device_index < device_list_length."
                         )
                         logger.error(error_msg)
                         raise IndexError(error_msg)
-                    device_type = devices_list[device_index].type
+                    device_type = device.type
                     if device_type.has_serial_number:
                         logger.info(
-                            f"Device type '{device_type}' has serial number parameter."
+                            f"Device type '{device_type.name.name}' "
+                            "has serial number parameter."
                         )
                         self.next_state.action = Action.ENTER_SERIAL_NUMBER
                         methods_tg_list.append(
@@ -886,7 +906,7 @@ class Conversation:
                         )
                     else:
                         logger.info(
-                            f"Device type '{device_type}' doesn't have "
+                            f"Device type '{device_type.name.name}' doesn't have "
                             "serial number parameter. Serial number "
                             "step will be skipped."
                         )
@@ -929,22 +949,31 @@ class Conversation:
 
     def _handle_action_enter_serial_number(self, state: StateJS) -> list[MethodTG]:
         logger.info(f"{self.log_prefix}Awaiting device serial number.")
+        current_ticket = self.user_db.current_ticket
+        if current_ticket is None:
+            error_msg = (
+                f"{self.log_prefix}{self.user_db.full_name} is not "
+                "working on any ticket."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
         methods_tg_list: list[MethodTG] = []
         if isinstance(self.update_tg, MessageUpdateTG):
             if self.update_tg.message.text is not None:
                 message_text = self.update_tg.message.text.upper()
-                if re.fullmatch(r"[\dA-Z]+", message_text):
+                if re.fullmatch(r"[\dA-Z]+", message_text) and message_text != "0":
                     logger.info(
                         f"{self.log_prefix}Got correct device "
                         f"serial number: '{message_text}'."
                     )
                     self.next_state = state.model_copy(deep=True)
                     self.next_state.action = Action.PICK_TICKET_ACTION
-                    devices_list = self.next_state.devices_list
+                    devices_list = current_ticket.devices
                     device_index = self.next_state.device_index
                     device_list_length = len(devices_list)
                     if 0 <= device_index < device_list_length:
-                        devices_list[device_index].serial_number = message_text
+                        device = devices_list[device_index]
+                        device.serial_number = message_text
                     else:
                         error_msg = (
                             f"{self.log_prefix}Error: "
@@ -987,6 +1016,14 @@ class Conversation:
 
     async def _handle_action_pick_ticket_action(self, state: StateJS) -> list[MethodTG]:
         logger.info(f"{self.log_prefix}Awaiting ticket menu choice to be made.")
+        current_ticket = self.user_db.current_ticket
+        if current_ticket is None:
+            error_msg = (
+                f"{self.log_prefix}{self.user_db.full_name} is not "
+                "working on any ticket."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
         methods_tg_list: list[MethodTG] = []
         if isinstance(self.update_tg, CallbackQueryUpdateTG):
             expected_callback_data = [
@@ -994,7 +1031,7 @@ class Conversation:
                 CallbackData.EDIT_CONTRACT_NUMBER,
                 CallbackData.QUIT_WITHOUT_SAVING_BTN,
             ]
-            device_list_length = len(state.devices_list)
+            device_list_length = len(current_ticket.devices)
             if device_list_length < settings.devices_per_ticket:
                 expected_callback_data.append(CallbackData.ADD_DEVICE_BTN)
             if device_list_length > 0:
@@ -1123,24 +1160,53 @@ class Conversation:
 
     def _handle_action_edit_ticket_number(self, state: StateJS) -> list[MethodTG]:
         logger.info(f"{self.log_prefix}Awaiting new ticket number.")
+        current_ticket = self.user_db.current_ticket
+        if current_ticket is None:
+            error_msg = (
+                f"{self.log_prefix}{self.user_db.full_name} is not "
+                "working on any ticket."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
         methods_tg_list: list[MethodTG] = []
         if isinstance(self.update_tg, MessageUpdateTG):
             if self.update_tg.message.text is not None:
                 message_text = self.update_tg.message.text
-                if re.fullmatch(r"\d+", message_text):
+                if re.fullmatch(r"\d+", message_text) and message_text != "0":
                     logger.info(
                         f"{self.log_prefix}Got correct new "
                         f"ticket number: '{message_text}'."
                     )
+                    new_ticket_number = int(message_text)
                     self.next_state = state.model_copy(deep=True)
                     self.next_state.action = Action.PICK_TICKET_ACTION
-                    self.next_state.ticket_number = int(message_text)
-                    methods_tg_list.append(
-                        self._build_pick_ticket_action_message(
-                            f"{String.TICKET_NUMBER_WAS_EDITED}. "
-                            f"{String.PICK_TICKET_ACTION}."
+                    if current_ticket.number != new_ticket_number:
+                        logger.info(
+                            f"{self.log_prefix}New ticket "
+                            f"number={new_ticket_number} "
+                            f"is different from old ticket "
+                            f"number={current_ticket.number}."
                         )
-                    )
+                        current_ticket.number = new_ticket_number
+                        methods_tg_list.append(
+                            self._build_pick_ticket_action_message(
+                                f"{String.TICKET_NUMBER_WAS_EDITED}. "
+                                f"{String.PICK_TICKET_ACTION}."
+                            )
+                        )
+                    else:
+                        logger.info(
+                            f"{self.log_prefix}New ticket "
+                            f"number={new_ticket_number} "
+                            f"is the same as old ticket "
+                            f"number={current_ticket.number}."
+                        )
+                        methods_tg_list.append(
+                            self._build_pick_ticket_action_message(
+                                f"{String.TICKET_NUMBER_REMAINS_THE_SAME}. "
+                                f"{String.PICK_TICKET_ACTION}."
+                            )
+                        )
                 else:
                     methods_tg_list.append(
                         self._build_new_text_message(
@@ -1167,26 +1233,126 @@ class Conversation:
             )
         return methods_tg_list
 
-    def _handle_action_edit_contract_number(self, state: StateJS) -> list[MethodTG]:
+    async def _handle_action_edit_contract_number(
+        self, state: StateJS
+    ) -> list[MethodTG]:
         logger.info(f"{self.log_prefix}Awaiting new contract number.")
+        current_ticket = self.user_db.current_ticket
+        if current_ticket is None:
+            error_msg = (
+                f"{self.log_prefix}{self.user_db.full_name} is not "
+                "working on any ticket."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        if current_ticket.contract is None:
+            error_msg = (
+                f"{self.log_prefix}Ticket id={current_ticket.id} "
+                f"number={current_ticket.number}) is missing a "
+                "contract to work with."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
         methods_tg_list: list[MethodTG] = []
         if isinstance(self.update_tg, MessageUpdateTG):
             if self.update_tg.message.text is not None:
                 message_text = self.update_tg.message.text
-                if re.fullmatch(r"\d+", message_text):
+                if re.fullmatch(r"\d+", message_text) and message_text != "0":
                     logger.info(
                         f"{self.log_prefix}Got correct new "
                         f"contract number: '{message_text}'."
                     )
+                    new_contract_number = int(message_text)
                     self.next_state = state.model_copy(deep=True)
                     self.next_state.action = Action.PICK_TICKET_ACTION
-                    self.next_state.contract_number = int(message_text)
-                    methods_tg_list.append(
-                        self._build_pick_ticket_action_message(
-                            f"{String.CONTRACT_NUMBER_WAS_EDITED}. "
-                            f"{String.PICK_TICKET_ACTION}."
+                    if current_ticket.contract.number != new_contract_number:
+                        logger.info(
+                            f"{self.log_prefix}New contract "
+                            f"number={new_contract_number} "
+                            f"is different from old contract "
+                            f"number={current_ticket.contract.number}."
                         )
-                    )
+                        old_contract_id = current_ticket.contract.id
+                        old_contract_number = current_ticket.contract.number
+                        contract_exist = await self.session_db.scalar(
+                            select(ContractDB).where(
+                                ContractDB.number == new_contract_number
+                            )
+                        )
+                        if contract_exist:
+                            logger.info(
+                                f"{self.log_prefix}New contract "
+                                f"number={new_contract_number} was found "
+                                "in the database under "
+                                f"id={contract_exist.id}."
+                            )
+                            current_ticket.contract = contract_exist
+                        else:
+                            logger.info(
+                                f"{self.log_prefix}New contract "
+                                f"number={new_contract_number} was not "
+                                "found in the database and will be added."
+                            )
+                            new_contract = ContractDB(number=new_contract_number)
+                            self.session_db.add(new_contract)
+                            await self.session_db.flush()
+                            current_ticket.contract_id = new_contract.id
+                        await self.session_db.flush()
+                        await self.session_db.refresh(current_ticket)
+                        old_contract = await self.session_db.scalar(
+                            select(ContractDB)
+                            .where(ContractDB.number == old_contract_number)
+                            .options(selectinload(ContractDB.tickets))
+                        )
+                        if old_contract:
+                            if not old_contract.tickets:
+                                logger.info(
+                                    f"{self.log_prefix}Old contract "
+                                    f"id={old_contract.id} "
+                                    f"number={old_contract.number} "
+                                    f"was associated only with the "
+                                    "current ticket "
+                                    f"id={current_ticket.id} "
+                                    f"number={current_ticket.number}. "
+                                    "Marking old contract for deletion."
+                                )
+                                await self.session_db.delete(old_contract)
+                            else:
+                                logger.info(
+                                    f"{self.log_prefix}Old contract "
+                                    f"id={old_contract.id} "
+                                    f"number={old_contract.number} "
+                                    "is still associated with other "
+                                    "ticket IDs: "
+                                    f"{[ticket.id for ticket in old_contract.tickets]}. "
+                                    "It will NOT be deleted."
+                                )
+                        else:
+                            logger.info(
+                                f"{self.log_prefix}Old contract "
+                                f"id={old_contract_id} "
+                                f"number={old_contract_number} "
+                                "was not found in the database."
+                            )
+                        methods_tg_list.append(
+                            self._build_pick_ticket_action_message(
+                                f"{String.CONTRACT_NUMBER_WAS_EDITED}. "
+                                f"{String.PICK_TICKET_ACTION}."
+                            )
+                        )
+                    else:
+                        logger.info(
+                            f"{self.log_prefix}New contract "
+                            f"number={new_contract_number} "
+                            f"is the same as old contract "
+                            f"number={current_ticket.contract.number}."
+                        )
+                        methods_tg_list.append(
+                            self._build_pick_ticket_action_message(
+                                f"{String.CONTRACT_NUMBER_REMAINS_THE_SAME}. "
+                                f"{String.PICK_TICKET_ACTION}."
+                            )
+                        )
                 else:
                     methods_tg_list.append(
                         self._build_new_text_message(
@@ -1215,17 +1381,25 @@ class Conversation:
 
     async def _handle_action_pick_device_action(self, state: StateJS) -> list[MethodTG]:
         logger.info(f"{self.log_prefix}Awaiting device menu choice to be made.")
+        current_ticket = self.user_db.current_ticket
+        if current_ticket is None:
+            error_msg = (
+                f"{self.log_prefix}{self.user_db.full_name} is not "
+                "working on any ticket."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
         methods_tg_list: list[MethodTG] = []
         if isinstance(self.update_tg, CallbackQueryUpdateTG):
             expected_callback_data = [
                 CallbackData.EDIT_DEVICE_TYPE,
                 CallbackData.DELETE_DEVICE_BTN,
             ]
-            devices_list = state.devices_list
+            devices_list = current_ticket.devices
             device_index = state.device_index
             device_list_length = len(devices_list)
             if 0 <= device_index < device_list_length:
-                device_js = devices_list[device_index]
+                device = devices_list[device_index]
             else:
                 error_msg = (
                     f"{self.log_prefix}Error: "
@@ -1235,20 +1409,27 @@ class Conversation:
                 )
                 logger.error(error_msg)
                 raise IndexError(error_msg)
-            if device_js.type.is_returnable:
-                if device_js.is_defective is True:
+            if not device.type.is_disposable:
+                if device.removal is True:
                     expected_callback_data.append(CallbackData.RETURN_DEVICE_BTN)
-                elif device_js.is_defective is False:
+                elif device.removal is False:
                     expected_callback_data.append(CallbackData.INSTALL_DEVICE_BTN)
                 else:
                     raise ValueError(
-                        "Device is returnable but is_defective "
-                        f" is '{device_js.is_defective}'."
+                        f"Device is not disposable but removal is '{device.removal}'."
                     )
-            if device_js.type.has_serial_number:
+            if device.type.has_serial_number:
                 expected_callback_data.append(CallbackData.EDIT_SERIAL_NUMBER)
-                if device_js.serial_number is not None:
+                if device.serial_number is not None:
                     expected_callback_data.append(CallbackData.EDIT_TICKET)
+            else:
+                if device.serial_number is None:
+                    expected_callback_data.append(CallbackData.EDIT_TICKET)
+                else:
+                    raise ValueError(
+                        "Device type has no serial number but device "
+                        f"has serial_number={device.serial_number}"
+                    )
             raw_data = self.update_tg.callback_query.data
             try:
                 received_callback_data = CallbackData(raw_data)
@@ -1312,9 +1493,9 @@ class Conversation:
                                 f"{String.RETURNING_TO_TICKET}."
                             )
                         )
-                        next_devices_list = self.next_state.devices_list
-                        next_device_index = self.next_state.device_index
-                        del next_devices_list[next_device_index]
+                        await self.session_db.delete(device)
+                        await self.session_db.flush()
+                        await self.session_db.refresh(current_ticket, ["devices"])
                         self.next_state.device_index = 0
                         methods_tg_list.append(
                             self._build_edit_to_text_message(
@@ -1358,6 +1539,14 @@ class Conversation:
 
     async def _handle_pick_confirm_close_ticket(self, state: StateJS) -> list[MethodTG]:
         logger.info(f"{self.log_prefix}Awaiting close ticket confirmation.")
+        current_ticket = self.user_db.current_ticket
+        if current_ticket is None:
+            error_msg = (
+                f"{self.log_prefix}{self.user_db.full_name} is not "
+                "working on any ticket."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
         methods_tg_list: list[MethodTG] = []
         if isinstance(self.update_tg, CallbackQueryUpdateTG):
             expected_callback_data = [
@@ -1375,7 +1564,7 @@ class Conversation:
                         methods_tg_list.append(
                             self._build_edit_to_callback_button_text()
                         )
-                        ticket_closed = self.close_ticket()
+                        ticket_closed = await self.close_ticket()
                         if ticket_closed:
                             self.next_state = None
                             self.user_db.state_json = None
@@ -1439,6 +1628,14 @@ class Conversation:
         self, state: StateJS
     ) -> list[MethodTG]:
         logger.info(f"{self.log_prefix}Awaiting quit without saving confirmation.")
+        current_ticket = self.user_db.current_ticket
+        if current_ticket is None:
+            error_msg = (
+                f"{self.log_prefix}{self.user_db.full_name} is not "
+                "working on any ticket."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
         methods_tg_list: list[MethodTG] = []
         if isinstance(self.update_tg, CallbackQueryUpdateTG):
             expected_callback_data = [
@@ -1595,11 +1792,11 @@ class Conversation:
     async def _build_pick_device_type_message(
         self, text: str = f"{String.PICK_DEVICE_TYPE}."
     ) -> SendMessageTG:
-        device_types_db = await self.session_db.scalars(
-            select(DeviceTypeDB).where(DeviceTypeDB.is_active == False)  # noqa: E712
+        device_types = await self.session_db.scalars(
+            select(DeviceTypeDB).where(DeviceTypeDB.is_active == True)  # noqa: E712
         )
         inline_keyboard: list[list[InlineKeyboardButtonTG]] = []
-        for device_type in device_types_db:
+        for device_type in device_types:
             try:
                 button_text = String[device_type.name.name]
                 button_callback_data = CallbackData[device_type.name.name]
@@ -1668,23 +1865,24 @@ class Conversation:
     def _build_pick_ticket_action_message(
         self, text: str = f"{String.PICK_TICKET_ACTION}."
     ) -> SendMessageTG:
-        if (
-            self.next_state
-            and self.next_state.ticket_number
-            and self.next_state.contract_number
-        ):
-            ticket_number = self.next_state.ticket_number
-            contract_number = self.next_state.contract_number
-            devices_list = self.next_state.devices_list
-        elif self.state and self.state.ticket_number and self.state.contract_number:
-            ticket_number = self.state.ticket_number
-            contract_number = self.state.contract_number
-            devices_list = self.state.devices_list
-        else:
-            raise ValueError(
+        current_ticket = self.user_db.current_ticket
+        if current_ticket is None:
+            error_msg = (
+                f"{self.log_prefix}{self.user_db.full_name} is not "
+                "working on any ticket."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        if not current_ticket.contract:
+            error_msg = (
                 "The ticket menu only works with ticket number and "
                 "contract number already being filled in."
             )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        ticket_number = current_ticket.number
+        contract_number = current_ticket.contract.number
+        devices_list = current_ticket.devices
         inline_keyboard_array: list[list[InlineKeyboardButtonTG]] = []
         ticket_number_button: list[InlineKeyboardButtonTG] = [
             InlineKeyboardButtonTG(
@@ -1701,21 +1899,23 @@ class Conversation:
         device_button_array: list[list[InlineKeyboardButtonTG]] = []
         for index, device in enumerate(devices_list):
             device_number = index + 1
-            device_icon = "↪️" if device.is_defective else "✅"
+            device_icon = "↪️" if device.removal else "✅"
             if not isinstance(device.type.name, DeviceTypeName):
                 error_msg = f"{self.log_prefix}CRITICAL: device.type.name is not DeviceTypeName."
                 logger.error(error_msg)
                 raise AssertionError(error_msg)
-            device_type = String[device.type.name.name]
+            device_type_name = String[device.type.name.name]
             device_serial_number = device.serial_number
             if device_serial_number is not None:
                 device_button_text = (
                     f"{device_number}. "
-                    f"{device_icon} {device_type} "
+                    f"{device_icon} {device_type_name} "
                     f"{device_serial_number} >>"
                 )
             else:
-                device_button_text = f"{device_number}. {device_icon} {device_type} >>"
+                device_button_text = (
+                    f"{device_number}. {device_icon} {device_type_name} >>"
+                )
             device_button_array.append(
                 [
                     InlineKeyboardButtonTG(
@@ -1760,51 +1960,63 @@ class Conversation:
     def _build_pick_device_action_message(
         self, text: str = f"{String.PICK_DEVICE_ACTION}."
     ) -> SendMessageTG:
+        current_ticket = self.user_db.current_ticket
+        if current_ticket is None:
+            error_msg = (
+                f"{self.log_prefix}{self.user_db.full_name} is not "
+                "working on any ticket."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        if current_ticket.contract is None:
+            error_msg = (
+                f"{self.log_prefix}Ticket id={current_ticket.id} "
+                f"number={current_ticket.number}) is missing a "
+                "contract to work with."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        devices_list = current_ticket.devices
+        device_list_length = len(devices_list)
         if (
             self.next_state is not None
-            and self.next_state.ticket_number is not None
-            and self.next_state.contract_number is not None
-            and len(self.next_state.devices_list) > self.next_state.device_index
-            and self.next_state.devices_list[self.next_state.device_index].type
-            is not None
+            and device_list_length > self.next_state.device_index
         ):
-            devices_list = self.next_state.devices_list
             device_index = self.next_state.device_index
-        elif (
-            self.state is not None
-            and self.state.ticket_number is not None
-            and self.state.contract_number is not None
-            and len(self.state.devices_list) > self.state.device_index
-            and self.state.devices_list[self.state.device_index].type is not None
-        ):
-            devices_list = self.state.devices_list
+        elif self.state is not None and device_list_length > self.state.device_index:
             device_index = self.state.device_index
         else:
-            raise ValueError(
-                "The device menu only works with state/next_state having at "
-                "least one device being filled in."
+            error_msg = (
+                "The device menu only works with next_state/state "
+                "having at least one device being filled in."
             )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
         inline_keyboard_array: list[list[InlineKeyboardButtonTG]] = []
         device = devices_list[device_index]
-        if not isinstance(device.type, DeviceTypeName):
-            error_msg = f"{self.log_prefix}CRITICAL: device.type is not DeviceTypeName."
-            logger.error(error_msg)
-            raise AssertionError(error_msg)
-        device_type = String[device.type.name]
+        device_type_name = String[device.type.name.name]
         device_serial_number = device.serial_number
-        if device.is_defective:
-            device_action_text = f"{String.RETURN_DEVICE_BTN} {String.EDIT}"
-            device_action_data = CallbackData.RETURN_DEVICE_BTN
-        else:
+        if device.removal is None:
+            error_msg = (
+                f"{self.log_prefix}device id={device.id} "
+                f"type={device.type.name.name}) is missing a "
+                "removal bool status."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        device_type_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
+            text=f"{device_type_name} {String.EDIT}",
+            callback_data=CallbackData.EDIT_DEVICE_TYPE,
+        )
+        if device.removal:
             device_action_text = f"{String.INSTALL_DEVICE_BTN} {String.EDIT}"
             device_action_data = CallbackData.INSTALL_DEVICE_BTN
+        else:
+            device_action_text = f"{String.RETURN_DEVICE_BTN} {String.EDIT}"
+            device_action_data = CallbackData.RETURN_DEVICE_BTN
         device_action_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
             text=device_action_text,
             callback_data=device_action_data,
-        )
-        device_type_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
-            text=f"{device_type} {String.EDIT}",
-            callback_data=CallbackData.EDIT_DEVICE_TYPE,
         )
         serial_number_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
             text=f"{device_serial_number} {String.EDIT}",
@@ -1818,9 +2030,11 @@ class Conversation:
             text=String.DELETE_DEVICE_FROM_TICKET,
             callback_data=CallbackData.DELETE_DEVICE_BTN,
         )
-        inline_keyboard_array.append([device_action_button])
         inline_keyboard_array.append([device_type_button])
-        inline_keyboard_array.append([serial_number_button])
+        if not device.type.is_disposable:
+            inline_keyboard_array.append([device_action_button])
+        if device.type.has_serial_number:
+            inline_keyboard_array.append([serial_number_button])
         inline_keyboard_array.append([return_button])
         inline_keyboard_array.append([delete_button])
         return SendMessageTG(
@@ -1854,251 +2068,86 @@ class Conversation:
     async def close_ticket(self) -> bool:
         if self.state is None:
             raise ValueError("'self.state' cannot be None at this point.")
-        if not self.state.devices_list:
+        current_ticket = self.user_db.current_ticket
+        if current_ticket is None:
+            error_msg = (
+                f"{self.log_prefix}{self.user_db.full_name} is not "
+                "working on any ticket."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        if current_ticket.contract is None:
+            error_msg = (
+                f"{self.log_prefix}Cannot close ticket "
+                f"id={current_ticket.id} "
+                f"number={current_ticket.number}: contract is missing."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        devices_list = current_ticket.devices
+        if not devices_list:
             error_msg = (
                 f"{self.log_prefix}CRITICAL: Attempting to close "
                 "a ticket with no devices. You shouldn't see this."
             )
             logger.error(error_msg)
             raise ValueError(error_msg)
-        if not self.state.ticket_number or not self.state.contract_number:
-            logger.error(
-                f"{self.log_prefix}Cannot close ticket: ticket_number or "
-                "contract_number is missing from state."
-            )
-            return False
-        device_types_db = await self.session_db.scalars(select(DeviceTypeDB))
-        if not device_types_db:
-            logger.error(
-                f"{self.log_prefix}Cannot fetch device types from the database."
-            )
-            return False
-        device_type_db_map: dict[int, DeviceTypeDB] = {
-            device_type_db.id: device_type_db for device_type_db in device_types_db
-        }
-        device_js_list: list[DeviceJS] = self.state.devices_list
-        for device_js in device_js_list:
+        for device in devices_list:
             try:
-                log_prefix_val = f"{self.log_prefix}Ticket #"
-                f"{self.state.ticket_number}: DeviceJS validation: "
-                if device_js.is_defective is None:
+                log_prefix_val = f"{self.log_prefix}Ticket "
+                f"id={current_ticket.id} "
+                f"number={current_ticket.number}: Device validation: "
+                if device.type.is_active is False:
                     raise ValueError(
-                        f"{log_prefix_val}Missing 'is_defective' flag "
+                        f"{log_prefix_val}Device type "
+                        f"'{device.type.name.name}' is inactive "
+                        "but was assigned to device."
+                    )
+                if device.removal is None:
+                    raise ValueError(
+                        f"{log_prefix_val}Missing 'removal' flag "
                         "used for identifying install from return "
                         "action."
                     )
-                if (
-                    device_js.type.is_returnable is False
-                    and device_js.is_defective is not False
-                ):
+                if device.type.is_disposable and device.removal:
                     raise ValueError(
-                        f"{log_prefix_val}Type "
-                        f"'{device_js.type.name.name}' is not "
-                        "returnable, but 'is_defective' is "
-                        f"{device_js.is_defective} (expected False)."
+                        f"{log_prefix_val}Device type "
+                        f"'{device.type.name.name}' is "
+                        "disposable, but device flag 'removal' is "
+                        f"{device.removal} (expected False)."
                     )
-                if device_js.type.has_serial_number:
-                    if device_js.serial_number is None:
-                        raise ValueError(
-                            f"{log_prefix_val}Type "
-                            f"'{device_js.type.name.name}' requires a "
-                            "serial number, but it's missing."
-                        )
-                else:
-                    if device_js.serial_number is not None:
-                        raise ValueError(
-                            f"{log_prefix_val}Type "
-                            f"'{device_js.type.name.name}' does not "
-                            "use a serial number, but one is provided "
-                            f"('{device_js.serial_number}')."
-                        )
-                matched_db_type = device_type_db_map.get(device_js.type.id)
-                if matched_db_type:
-                    if not (
-                        device_js.type.name == matched_db_type.name
-                        and device_js.type.is_returnable
-                        == matched_db_type.is_disposable
-                        and device_js.type.has_serial_number
-                        == matched_db_type.has_serial_number
-                        and device_js.type.is_disabled == matched_db_type.is_active
-                    ):
-                        raise ValueError(
-                            f"{log_prefix_val}Mismatch between "
-                            f"provided device type "
-                            f"'{device_js.type.name.name}' "
-                            f"(ID: {device_js.type.id}) and database "
-                            "version. "
-                            f"JS: {device_js.type.model_dump(exclude_none=True)} vs "
-                            f"DB: name={matched_db_type.name}, "
-                            f"is_returnable={matched_db_type.is_disposable}, "
-                            f"has_serial_number={matched_db_type.has_serial_number}, "
-                            f"is_disabled={matched_db_type.is_active}"
-                        )
-                    if matched_db_type.is_active:
+                if device.type.has_serial_number:
+                    if device.serial_number is None:
                         raise ValueError(
                             f"{log_prefix_val}Device type "
-                            f"'{matched_db_type.name.name}' "
-                            f"(ID: {matched_db_type.id}) is disabled "
-                            "in the database."
+                            f"'{device.type.name.name}' requires a "
+                            "serial number, but device is missing it."
                         )
                 else:
-                    raise ValueError(
-                        f"{log_prefix_val}Unknown device type ID "
-                        f"'{device_js.type.id}' in local data."
-                    )
-                if device_js.id is not None:
-                    device_db_instance = await self.session_db.scalar(
-                        select(DeviceDB).where(DeviceDB.id == device_js.id)
-                    )
-                    if device_db_instance is None:
+                    if device.serial_number is not None:
                         raise ValueError(
-                            f"{log_prefix_val}Provided device ID "
-                            f"'{device_js.id}' not found in the database."
+                            f"{log_prefix_val}Device type "
+                            f"'{device.type.name.name}' does not "
+                            "use a serial number, but one is provided "
+                            f"('{device.serial_number}')."
                         )
-                else:
-                    device_db_instance = DeviceDB(
-                        type_id=device_js.type.id,
-                        type=device_type_db_map[device_js.type.id],
-                        is_defective=device_js.is_defective,
-                        serial_number=device_js.serial_number,
-                    )
             except ValueError as e:
                 logger.error(str(e))
                 return False
-
-                for device_js in device_js_list:
-                    if device_js.type is None or device_js.serial_number is None:
-                        error_msg = (
-                            f"{self.log_prefix}CRITICAL: Rolling back "
-                            "database changes since DeviceJS object "
-                            f"for ticket #{self.state.ticket_number} "
-                            "is flawed. Ticket closing failed."
-                        )
-                        logger.error(error_msg)
-                        await self.session_db.rollback()
-                        return False
-                    device_type_for_db = device_type_db_dict[device_js.type]
-                    new_device_db = DeviceDB(
-                        type_id=device_type_for_db.id,
-                        type=device_type_for_db,
-                        serial_number=device_js.serial_number,
-                        is_defective=device_js.is_defective,
-                    )
-                    self.session_db.add(new_device_db)
-                    new_report_db = TicketDeviceDB(
-                        device_id=new_device_db.id,
-                        device=new_device_db,
-                        ticket_id=new_ticket_db.id,
-                        ticket=new_ticket_db,
-                    )
-                    self.session_db.add(new_report_db)
-                await self.session_db.flush()
-                logger.info(
-                    f"{self.log_prefix}Successfully closed and saved ticket "
-                    f"{new_ticket_db.ticket_number} with {len(device_js_list)} devices."
-                )
-                return True
-            except Exception as e:
-                logger.error(
-                    f"{self.log_prefix}Failed to close ticket due to database error: {e}",
-                    exc_info=True,
-                )
-        try:
-            new_ticket_db = TicketDB(
-                ticket_number=self.state.ticket_number,
-                contract_number=self.state.contract_number,
-                user_id=self.user_db.id,  # Or user=self.user_db if MappedAsDataclass handles it
-                user=self.user_db,
-                devices=[],
-            )
-            self.session_db.add(new_ticket_db)
-        except Exception as e:
-            logger.error(
-                f"{self.log_prefix}Failed to close ticket due to database error: {e}",
-                exc_info=True,
-            )
-        await self.session_db.rollback()
-        return False
-
-    async def old_close_ticket(self) -> bool:
-        if self.state is None:
-            raise ValueError("'self.state' cannot be None at this point.")
-        if not self.state.devices_list:
-            error_msg = (
-                f"{self.log_prefix}CRITICAL: Attempting to close "
-                "a ticket with no devices. You shouldn't see this."
-            )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        if not self.state.ticket_number or not self.state.contract_number:
-            logger.error(
-                f"{self.log_prefix}Cannot close ticket: ticket_number or "
-                "contract_number is missing from state."
-            )
-            return False
-        device_js_list: list[DeviceJS] = self.state.devices_list
-        device_type_db_dict: dict[DeviceTypeName, DeviceTypeDB] = {}
-        for type_name_enum in DeviceTypeName:
-            device_type_db: DeviceTypeDB | None = await self.session_db.scalar(
-                select(DeviceTypeDB).where(DeviceTypeDB.name == type_name_enum)
-            )
-            if device_type_db is not None:
-                device_type_db_dict[type_name_enum] = device_type_db
-            else:
-                error_msg = (
-                    f"{self.log_prefix}CRITICAL: Database is missing an entry "
-                    f"for essential device type '{type_name_enum.name}'. "
-                    "The application cannot proceed with ticket closure."
-                )
-                logger.error(error_msg)
-                raise ValueError(error_msg)
-        try:
-            new_ticket_db = TicketDB(
-                ticket_number=self.state.ticket_number,
-                contract_number=self.state.contract_number,
-                user_id=self.user_db.id,  # Or user=self.user_db if MappedAsDataclass handles it
-                user=self.user_db,
-                devices=[],
-            )
-            self.session_db.add(new_ticket_db)
-            for device_js in device_js_list:
-                if device_js.type is None or device_js.serial_number is None:
-                    error_msg = (
-                        f"{self.log_prefix}CRITICAL: DeviceJS object "
-                        "is incomplete (missing type or serial_number) "
-                        f"for ticket {self.state.ticket_number}."
-                    )
-                    logger.error(error_msg)
-                    await self.session_db.rollback()
-                    return False
-                device_type_for_db = device_type_db_dict[device_js.type]
-                new_device_db = DeviceDB(
-                    type_id=device_type_for_db.id,
-                    type=device_type_for_db,
-                    serial_number=device_js.serial_number,
-                    is_defective=device_js.is_defective,
-                )
-                self.session_db.add(new_device_db)
-                new_report_db = TicketDeviceDB(
-                    device_id=new_device_db.id,
-                    device=new_device_db,
-                    ticket_id=new_ticket_db.id,
-                    ticket=new_ticket_db,
-                )
-                self.session_db.add(new_report_db)
-            await self.session_db.flush()
-            logger.info(
-                f"{self.log_prefix}Successfully closed and saved ticket "
-                f"{new_ticket_db.ticket_number} with {len(device_js_list)} devices."
-            )
-            return True
-        except Exception as e:
-            logger.error(
-                f"{self.log_prefix}Failed to close ticket due to database error: {e}",
-                exc_info=True,
-            )
-            await self.session_db.rollback()
-            return False
+        for device in devices_list:
+            if device.is_draft is True:
+                device.is_draft = False
+        ticket_id = current_ticket.id
+        ticket_number = current_ticket.number
+        if current_ticket.is_draft is True:
+            current_ticket.is_draft = False
+        self.user_db.current_ticket = None
+        logger.info(
+            f"{self.log_prefix}Successfully closed and saved "
+            f"ticket id={ticket_id} number={ticket_number} "
+            f"with {len(devices_list)} devices."
+        )
+        return True
 
     async def drop_current_ticket(self) -> bool:
         if self.state is None:
@@ -2109,28 +2158,28 @@ class Conversation:
         current_ticket_id = self.user_db.current_ticket.id
         current_ticket_number = self.user_db.current_ticket.number
         current_contract = current_ticket.contract
-        for ticket_device_db in current_ticket.ticket_devices.copy():
-            if ticket_device_db.device.is_draft:
+        for device in current_ticket.devices.copy():
+            if device.is_draft:
                 logger.info(
-                    f"{self.log_prefix}Marking draft DeviceDB "
-                    f"id={ticket_device_db.device.id} "
-                    f"(serial_number={ticket_device_db.device.serial_number}) "
-                    "for deletion. Associated with TicketDB "
-                    f"id={current_ticket_id} via TicketDeviceDB "
-                    f"id={ticket_device_db.id}."
+                    f"{self.log_prefix}Marking draft device "
+                    f"id={device.id} "
+                    f"serial_number={device.serial_number} "
+                    "for deletion. Associated with ticket "
+                    f"id={current_ticket_id}."
                 )
-                await self.session_db.delete(ticket_device_db.device)
+                await self.session_db.delete(device)
         if current_ticket.is_draft:
             logger.info(
-                f"{self.log_prefix}Marking draft TicketDB "
+                f"{self.log_prefix}Marking draft ticket "
                 f"id={current_ticket_id} "
                 f"number={current_ticket_number} for deletion."
             )
             await self.session_db.delete(current_ticket)
         else:
             logger.info(
-                f"{self.log_prefix}Unlocking TicketDB "
-                f"id={current_ticket_id} number={current_ticket_number}. "
+                f"{self.log_prefix}Unlocking ticket "
+                f"id={current_ticket_id} "
+                f"number={current_ticket_number}. "
                 "Reverting draft additions/changes."
             )
             current_ticket.locked_by_user_id = None
@@ -2141,20 +2190,20 @@ class Conversation:
             await self.session_db.refresh(current_contract, ["tickets"])
             if not current_contract.tickets:
                 logger.info(
-                    f"{self.log_prefix}ContractDB "
+                    f"{self.log_prefix}Contract "
                     f"id={current_contract_id} "
-                    f"(number={current_contract_number}) was "
-                    "associated only with the current TicketDB "
+                    f"number={current_contract_number} was associated "
+                    "only with the current ticket "
                     f"id={current_ticket_id} "
                     f"number={current_ticket_number} being deleted. "
-                    "Marking ContractDB for deletion."
+                    "Marking contract for deletion."
                 )
                 await self.session_db.delete(current_contract)
             else:
                 logger.info(
-                    f"{self.log_prefix}ContractDB "
+                    f"{self.log_prefix}Contract "
                     f"id={current_contract_id} "
-                    f"(number={current_contract_number}) is still "
+                    f"number={current_contract_number} is still "
                     "associated with other ticket IDs: "
                     f"{[ticket.id for ticket in current_contract.tickets]}. "
                     "It will NOT be deleted."

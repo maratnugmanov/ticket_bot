@@ -11,6 +11,7 @@
         "ondelete",
         "onupdate",
         "pydantic",
+        "selectin",
         "selectinload",
         "sessionmaker",
         "sqlalchemy",

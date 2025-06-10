@@ -3,9 +3,6 @@ from datetime import datetime, timezone
 import zoneinfo
 from sqlalchemy import (
     Enum as SQLAlchemyEnum,
-    Integer,
-    String,
-    Boolean,
     ForeignKey,
     UniqueConstraint,
 )
@@ -91,7 +88,6 @@ class ContractDB(BaseDB, TimestampMixinDB):
     __tablename__ = "contracts"
     id: Mapped[int] = mapped_column(init=False, primary_key=True)
     number: Mapped[int] = mapped_column(unique=True, index=True)
-    # is_draft: Mapped[bool] = mapped_column(default=True, index=True)
     tickets: Mapped[list[TicketDB]] = relationship(default_factory=list, back_populates="contract", cascade="all, delete-orphan", passive_deletes=True)
 
 
@@ -105,8 +101,8 @@ class TicketDB(BaseDB, TimestampMixinDB):
     contract: Mapped[ContractDB | None] = relationship(back_populates="tickets", init=False)
     locked_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), default=None, index=True)
     locked_by_user: Mapped[UserDB | None] = relationship(back_populates="current_ticket", foreign_keys=[locked_by_user_id], init=False)
+    devices: Mapped[list[DeviceDB]] = relationship(default_factory=list, back_populates="ticket", cascade="all, delete-orphan", passive_deletes=True)
     is_draft: Mapped[bool] = mapped_column(default=True, index=True)
-    ticket_devices: Mapped[list[TicketDeviceDB]] = relationship(default_factory=list, back_populates="ticket", cascade="all, delete-orphan", passive_deletes=True)
 
 
 class UserDB(BaseDB, TimestampMixinDB):
@@ -122,7 +118,7 @@ class UserDB(BaseDB, TimestampMixinDB):
     is_active: Mapped[bool] = mapped_column(default=True, index=True)
     roles: Mapped[list[RoleDB]] = relationship(default_factory=list, secondary="users_roles_link", back_populates="users")
     tickets: Mapped[list[TicketDB]] = relationship(default_factory=list, back_populates="user", foreign_keys=TicketDB.user_id, passive_deletes=True)
-    writeoff_devices: Mapped[list[WriteoffDevicesDB]] = relationship(default_factory=list, back_populates="user", passive_deletes=True)
+    writeoff_devices: Mapped[list[WriteoffDeviceDB]] = relationship(default_factory=list, back_populates="user", passive_deletes=True)
 
     @property
     def full_name(self) -> str:
@@ -151,20 +147,7 @@ class UserDB(BaseDB, TimestampMixinDB):
         return any(role.name == RoleName.GUEST for role in self.roles)
 
 
-class TicketDeviceDB(BaseDB, TimestampMixinDB):
-    __tablename__ = "ticket_devices"
-    id: Mapped[int] = mapped_column(init=False, primary_key=True)
-    device_id: Mapped[int] = mapped_column(ForeignKey("devices.id", ondelete="RESTRICT"), index=True)
-    device: Mapped[DeviceDB] = relationship(back_populates="ticket_devices", init=False)
-    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id", ondelete="CASCADE"), index=True)
-    ticket: Mapped[TicketDB] = relationship(back_populates="ticket_devices", init=False)
-    removal: Mapped[bool | None] = mapped_column(default=None, index=True)
-    is_draft: Mapped[bool] = mapped_column(default=True, index=True)
-
-    # __table_args__ = (UniqueConstraint("device_id", "ticket_id", name="unique_device_ticket_pair"),)
-
-
-class WriteoffDevicesDB(BaseDB, TimestampMixinDB):
+class WriteoffDeviceDB(BaseDB, TimestampMixinDB):
     __tablename__ = "writeoff_devices"
     id: Mapped[int] = mapped_column(init=False, primary_key=True)
     device_id: Mapped[int] = mapped_column(ForeignKey("devices.id", ondelete="RESTRICT"), index=True)
@@ -178,12 +161,14 @@ class WriteoffDevicesDB(BaseDB, TimestampMixinDB):
 class DeviceDB(BaseDB, TimestampMixinDB):
     __tablename__ = "devices"
     id: Mapped[int] = mapped_column(init=False, primary_key=True)
+    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id", ondelete="CASCADE"), index=True)
+    ticket: Mapped[TicketDB] = relationship(back_populates="devices", init=False)
     type_id: Mapped[int] = mapped_column(ForeignKey("device_types.id", ondelete="RESTRICT"), index=True)
     type: Mapped[DeviceTypeDB] = relationship(back_populates="devices", init=False)
     serial_number: Mapped[str | None] = mapped_column(default=None, index=True)
+    removal: Mapped[bool | None] = mapped_column(default=None, index=True)
+    writeoff_devices: Mapped[list[WriteoffDeviceDB]] = relationship(default_factory=list, back_populates="device", cascade="all, delete-orphan", passive_deletes=True)
     is_draft: Mapped[bool] = mapped_column(default=True, index=True)
-    ticket_devices: Mapped[list[TicketDeviceDB]] = relationship(default_factory=list, back_populates="device", cascade="all, delete-orphan", passive_deletes=True)
-    writeoff_devices: Mapped[list[WriteoffDevicesDB]] = relationship(default_factory=list, back_populates="device", cascade="all, delete-orphan", passive_deletes=True)
 
 
 class DeviceTypeDB(BaseDB, TimestampMixinDB):
