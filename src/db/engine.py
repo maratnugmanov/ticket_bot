@@ -15,33 +15,33 @@ from src.core.logger import logger
 
 
 sqlite_file_name = f"src/db/{settings.database_name}"
-sqlite_db_url = f"sqlite+aiosqlite:///{sqlite_file_name}"
+sqlite_url = f"sqlite+aiosqlite:///{sqlite_file_name}"
 backup_file_name = "src/db/backup.db"
 
-async_engine_db = create_async_engine(
-    sqlite_db_url,
+async_engine = create_async_engine(
+    sqlite_url,
     echo=settings.echo_sql,
 )
 
 
-AsyncSessionFactoryDB = async_sessionmaker(
-    bind=async_engine_db,
+AsyncSessionFactory = async_sessionmaker(
+    bind=async_engine,
     class_=AsyncSession,
     autoflush=False,
     expire_on_commit=True,
 )
 
 
-async def get_async_session_db() -> AsyncGenerator[AsyncSession, None]:
-    async with AsyncSessionFactoryDB() as async_session_db:
-        await async_session_db.execute(text("PRAGMA foreign_keys=ON"))
+async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
+    async with AsyncSessionFactory() as async_session:
+        await async_session.execute(text("PRAGMA foreign_keys=ON"))
         logger.info("Async session with 'PRAGMA foreign_keys=ON' initialized.")
-        yield async_session_db
-        await async_session_db.commit()
+        yield async_session
+        await async_session.commit()
         logger.info("Async session commit successful.")
 
 
-SessionDepDB = Annotated[AsyncSession, Depends(get_async_session_db)]
+SessionDep = Annotated[AsyncSession, Depends(get_async_session)]
 
 
 async def backup_db(target_file: str = backup_file_name):
@@ -53,7 +53,7 @@ async def backup_db(target_file: str = backup_file_name):
     try:
         async with (
             aiosqlite.connect(target_file) as target_conn,
-            async_engine_db.connect() as source_sqlalchemy_conn,
+            async_engine.connect() as source_sqlalchemy_conn,
         ):
             # Get the SQLAlchemy async connection wrapper for the source
             sqlalchemy_connection_wrapper: AsyncConnection = source_sqlalchemy_conn

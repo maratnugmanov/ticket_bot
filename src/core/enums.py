@@ -110,7 +110,7 @@ class String(enum.StrEnum):
     EDIT_TICKET_NUMBER = "✏️ Изменить номер заявки"
     ENTER_NEW_TICKET_NUMBER = "Введите новый номер заявки"
     TICKET_NUMBER_WAS_EDITED = "Номер заявки был скорректирован"
-    TICKET_NUMBER_REMAINS_THE_SAME = "Номер заявки остается прежним"
+    TICKET_NUMBER_REMAINS_THE_SAME = "Номер заявки остался прежним"
 
     ENTER_CONTRACT_NUMBER = "Введите номер договора"
     INCORRECT_CONTRACT_NUMBER = "Номер договора должен состоять из цифр и не может быть равен нулю, попробуйте снова"
@@ -120,7 +120,7 @@ class String(enum.StrEnum):
     EDIT_CONTRACT_NUMBER = "✏️ Изменить номер договора"
     ENTER_NEW_CONTRACT_NUMBER = "Введите новый номер договора"
     CONTRACT_NUMBER_WAS_EDITED = "Номер договора был скорректирован"
-    CONTRACT_NUMBER_REMAINS_THE_SAME = "Номер договора остается прежним"
+    CONTRACT_NUMBER_REMAINS_THE_SAME = "Номер договора остался прежним"
 
     EDIT_DEVICE = "✏️ Изменить устройство"
 
@@ -134,6 +134,8 @@ class String(enum.StrEnum):
     DEVICE_TYPE_WAS_CHANGED_FOR = "Тип устройства изменен на"
     DEVICE_TYPE_WAS_NOT_PICKED = "Вы не выбрали тип устройства"
     DEVICE_TYPE_IS_DISABLED = "Выбранный тип устройства в данный момент не используется"
+    DEVICE_TYPE_WAS_EDITED = "Тип устройства был изменен"
+    DEVICE_TYPE_REMAINS_THE_SAME = "Тип устройства остался прежним"
     NO_DEVICE_TYPE_AVAILABLE = "Ни один тип устройства в данный момент не доступен, работа с заявками невозможна. обратитесь к администратору"
     ENTER_SERIAL_NUMBER = "Введите серийный номер"
     INCORRECT_SERIAL_NUMBER = "Серийный номер должен состоять из букв латинского алфавита и/или цифр и не может быть равен нулю, попробуйте снова"
@@ -142,12 +144,15 @@ class String(enum.StrEnum):
     )
     EDIT_SERIAL_NUMBER = "✏️ Изменить серийный номер"
     ENTER_NEW_SERIAL_NUMBER = "Введите новый серийный номер"
-    SERIAL_NUMBER_WAS_CHANGED = "Серийный номер был изменен"
+    SERIAL_NUMBER_WAS_EDITED = "Серийный номер был изменен"
+    SERIAL_NUMBER_REMAINS_THE_SAME = "Серийный номер остался прежним"
     PICK_INSTALL_OR_RETURN = "Выберите установку или возврат устройства"
     # SERIAL_NUMBER_RECOGNIZED = (
     #     "Серийный номер опознан: устройство с домашнего склада. Выберите действие."
     # )
     EDIT_INSTALL_OR_RETURN = "✏️ Изменить действие с устройством"
+    INSTALL_OR_RETURN_WAS_EDITED = "Действие с устройством было изменено"
+    INSTALL_OR_RETURN_REMAINS_THE_SAME = "Действие с устройством осталось прежним"
     DEVICE_ACTION_WAS_NOT_PICKED = "Вы не выбрали действие с устройством"
     TICKET_ACTION_WAS_NOT_PICKED = "Вы не выбрали действие с текущей заявкой"
     GOT_UNEXPECTED_DATA = "Ваш выбор не распознан"

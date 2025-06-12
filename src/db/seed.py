@@ -5,13 +5,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.config import settings
 from src.core.logger import logger
 from src.core.enums import RoleName, DeviceTypeName
-from src.db.engine import async_engine_db
+from src.db.engine import async_engine
 from src.db.models import BaseDB, RoleDB, UserDB, DeviceTypeDB
 
 
 async def create_db_and_tables():
     logger.info("Initializing database tables...")
-    async with async_engine_db.begin() as conn:
+    async with async_engine.begin() as conn:
         await conn.run_sync(BaseDB.metadata.create_all)
     logger.info("Successfully initialized database tables.")
 

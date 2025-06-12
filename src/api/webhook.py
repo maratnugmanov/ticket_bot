@@ -5,7 +5,7 @@ from pydantic import ValidationError
 from src.core.config import settings
 from src.core.logger import logger
 from src.core.conversation import Conversation
-from src.db.engine import SessionDepDB
+from src.db.engine import SessionDep
 from src.tg.models import UpdateTG, MessageUpdateTG, CallbackQueryUpdateTG
 
 router = APIRouter()
@@ -20,7 +20,7 @@ VALIDATION_MODELS: list[type[UpdateTG]] = [
 @router.post("/", status_code=status.HTTP_200_OK)
 async def handle_telegram_webhook(
     request: Request,
-    session_db: SessionDepDB,
+    session_db: SessionDep,
 ):
     try:
         request_data = await request.json()
