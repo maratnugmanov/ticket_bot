@@ -42,10 +42,10 @@ class StateJS(BaseModel):
     #  message_id: int
     action: Action
     script: Script
-    devices_list: list[DeviceJS] = []
+    # devices_list: list[DeviceJS] = []
     device_index: int = 0
-    ticket_number: int | None = None
-    contract_number: int | None = None
+    # ticket_number: int | None = None
+    # contract_number: int | None = None
     # device_type: DeviceTypeName | None = None
     # device_serial_number: str | None = None
-    writeoff_serial_number: int | None = None
+    # writeoff_serial_number: int | None = None

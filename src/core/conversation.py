@@ -67,9 +67,7 @@ class Conversation:
         )
         self.next_state: StateJS | None = None
         self.response_methods_list: list[MethodTG] = []
-        logger.info(
-            f"{self.log_prefix}User {self.user_db.full_name} state: {self.state}"
-        )
+        logger.info(f"{self.log_prefix}User conversation state: {self.state}")
         self._stateless_callback_handlers: dict[
             CallbackData, Callable[[int, int], list[MethodTG]]
         ] = {
@@ -97,9 +95,7 @@ class Conversation:
             Action.CONFIRM_CLOSE_TICKET: self._handle_pick_confirm_close_ticket,
             Action.CONFIRM_QUIT_WITHOUT_SAVING: self._handle_pick_confirm_quit_without_saving,
         }
-        logger.info(
-            f"{self.log_prefix}Conversation with {self.user_db.full_name} initialized."
-        )
+        logger.info(f"{self.log_prefix}Conversation instance initialized.")
 
     @classmethod
     async def create(
@@ -215,7 +211,10 @@ class Conversation:
             and update_tg.message.chat.type == "private"
         ):
             user_tg = update_tg.message.from_
-            logger.info(f"{update_tg._log}Private message from {user_tg.full_name}.")
+            logger.info(
+                f"{update_tg._log}Private message from "
+                f"Telegram user {user_tg.full_name}."
+            )
         elif (
             isinstance(update_tg, CallbackQueryUpdateTG)
             and not update_tg.callback_query.from_.is_bot
@@ -225,7 +224,10 @@ class Conversation:
             and update_tg.callback_query.message.chat.type == "private"
         ):
             user_tg = update_tg.callback_query.from_
-            logger.info(f"{update_tg._log}Callback query from {user_tg.full_name}.")
+            logger.info(
+                f"{update_tg._log}Callback query from "
+                f"Telegram user {user_tg.full_name}."
+            )
         return user_tg
 
     async def _post_method_tg(self, method_tg: MethodTG) -> SuccessTG | ErrorTG | None:
@@ -252,7 +254,6 @@ class Conversation:
                     logger.info(
                         f"{self.log_prefix}Method '{method_tg._url}' "
                         "was accepted by Telegram API."
-                        # f" Response JSON: {response_data}"
                     )
                     logger.debug(f"{response_data}")
                     return success_tg
@@ -411,13 +412,34 @@ class Conversation:
                 f"'{raw_data}' from {self.user_db.full_name}."
             )
             try:
+                logger.info(
+                    f"{self.log_prefix}Validating callback query "
+                    f"'{raw_data}' against {CallbackData.__name__} "
+                    "enum set."
+                )
                 received_callback_enum = CallbackData(raw_data)
                 callback_handler = self._stateless_callback_handlers.get(
                     received_callback_enum
                 )
+                logger.info(
+                    f"{self.log_prefix}Validation of callback query "
+                    f"'{received_callback_enum.value}' against "
+                    f"{CallbackData.__name__} enum set successful."
+                )
                 if callback_handler:
+                    logger.info(
+                        f"{self.log_prefix}Calling sync handler for "
+                        f"{received_callback_enum.__class__.__name__} "
+                        f"'{received_callback_enum.value}'."
+                    )
                     methods_tg_list.extend(callback_handler(chat_id, message_id))
                 else:
+                    logger.info(
+                        f"{self.log_prefix}No handler for "
+                        f"{received_callback_enum.__class__.__name__} "
+                        f"'{received_callback_enum.value}' was found. "
+                        "Calling unrecognized callback sync handler."
+                    )
                     methods_tg_list.extend(
                         self._handle_unrecognized_stateless_callback(raw_data)
                     )
@@ -444,12 +466,16 @@ class Conversation:
         if action_handler:
             if inspect.iscoroutinefunction(action_handler):
                 logger.info(
-                    f"{self.log_prefix}Calling async handler for '{self.state.action}'."
+                    f"{self.log_prefix}Calling async handler for "
+                    f"{self.state.action.__class__.__name__} "
+                    f"'{self.state.action.value}'."
                 )
                 methods_tg_list.extend(await action_handler(self.state))
             else:
                 logger.info(
-                    f"{self.log_prefix}Calling sync handler for '{self.state.action}'."
+                    f"{self.log_prefix}Calling sync handler for "
+                    f"{self.state.action.__class__.__name__} "
+                    f"'{self.state.action.value}'."
                 )
                 methods_tg_list.extend(action_handler(self.state))  # type: ignore
         else:
@@ -469,11 +495,7 @@ class Conversation:
         conversation."""
         # chat_id, message_id are part of the uniform signature but
         # might not be used directly by all handlers.
-        logger.info(
-            f"{self.log_prefix}{CallbackData.__name__} "
-            f"'{CallbackData.ENTER_TICKET_NUMBER}' received. "
-            "Preparing for ticket number input."
-        )
+        logger.info(f"{self.log_prefix}Initiating ticket creation.")
         methods_tg_list: list[MethodTG] = []
         self.next_state = StateJS(
             action=Action.ENTER_TICKET_NUMBER,
@@ -492,11 +514,7 @@ class Conversation:
     ) -> list[MethodTG]:
         """Handles CallbackData.ENABLE_HIRING_BTN in a stateless
         conversation."""
-        logger.info(
-            f"{self.log_prefix}{CallbackData.__name__} "
-            f"'{CallbackData.ENABLE_HIRING_BTN}' received. "
-            "Attempting to enable hiring."
-        )
+        logger.info(f"{self.log_prefix}Attempting to enable hiring.")
         methods_tg_list: list[MethodTG] = []
         method_tg = EditMessageTextTG(
             chat_id=chat_id,
@@ -521,11 +539,7 @@ class Conversation:
     ) -> list[MethodTG]:
         """Handles CallbackData.DISABLE_HIRING_BTN in a stateless
         conversation."""
-        logger.info(
-            f"{self.log_prefix}{CallbackData.__name__} "
-            f"'{CallbackData.DISABLE_HIRING_BTN}' received. "
-            "Attempting to disable hiring."
-        )
+        logger.info(f"{self.log_prefix}Attempting to disable hiring.")
         methods_tg_list: list[MethodTG] = []
         method_tg = EditMessageTextTG(
             chat_id=chat_id,
@@ -1323,8 +1337,7 @@ class Conversation:
                             )
                             new_contract = ContractDB(number=new_contract_number)
                             self.session.add(new_contract)
-                            await self.session.flush()
-                            current_ticket.contract_id = new_contract.id
+                            current_ticket.contract = new_contract
                         await self.session.flush()
                         await self.session.refresh(current_ticket)
                         old_contract = await self.session.scalar(
@@ -2153,7 +2166,7 @@ class Conversation:
                     button_text = button.text
                     logger.info(
                         f"{self.log_prefix}Button text '{button_text}' found "
-                        f"for callback '{callback_data}'."
+                        f"for callback data '{callback_data}'."
                     )
                     break
             else:
