@@ -67,7 +67,7 @@ class Conversation:
         )
         self.next_state: StateJS | None = None
         self.response_methods_list: list[MethodTG] = []
-        logger.info(f"{self.log_prefix}User conversation state: {self.state}")
+        # logger.debug(f"{self.log_prefix}User conversation state: {self.state}")
         self._stateless_callback_handlers: dict[
             CallbackData, Callable[[int, int], list[MethodTG]]
         ] = {
@@ -93,9 +93,9 @@ class Conversation:
             Action.EDIT_INSTALL_OR_RETURN: self._handle_action_edit_install_or_return,
             Action.EDIT_SERIAL_NUMBER: self._handle_action_edit_serial_number,
             Action.CONFIRM_CLOSE_TICKET: self._handle_pick_confirm_close_ticket,
-            Action.CONFIRM_QUIT_WITHOUT_SAVING: self._handle_pick_confirm_quit_without_saving,
+            Action.CONFIRM_QUIT_WITHOUT_SAVING: self._handle_pick_confirm_quit_ticket_without_saving,
         }
-        logger.info(f"{self.log_prefix}Conversation instance initialized.")
+        # logger.debug(f"{self.log_prefix}Conversation instance initialized.")
 
     @classmethod
     async def create(
@@ -232,30 +232,30 @@ class Conversation:
 
     async def _post_method_tg(self, method_tg: MethodTG) -> SuccessTG | ErrorTG | None:
         async with httpx.AsyncClient() as client:
-            logger.info(
-                f"{self.log_prefix}Method '{method_tg._url}' is being "
-                f"sent in response to {self.user_db.full_name}."
-            )
+            # logger.debug(
+            #     f"{self.log_prefix}Method '{method_tg._url}' is being "
+            #     f"sent in response to {self.user_db.full_name}."
+            # )
             try:
                 response: httpx.Response = await client.post(
                     url=settings.get_tg_endpoint(method_tg._url),
                     json=method_tg.model_dump(exclude_none=True),
                 )
                 response.raise_for_status()
-                logger.info(
-                    f"{self.log_prefix}Method '{method_tg._url}' was "
-                    "delivered to Telegram API "
-                    f"(HTTP status {response.status_code})."
-                )
+                # logger.debug(
+                #     f"{self.log_prefix}Method '{method_tg._url}' was "
+                #     "delivered to Telegram API "
+                #     f"(HTTP status {response.status_code})."
+                # )
 
                 try:
                     response_data = response.json()
                     success_tg = SuccessTG.model_validate(response_data)
-                    logger.info(
-                        f"{self.log_prefix}Method '{method_tg._url}' "
-                        "was accepted by Telegram API."
-                    )
-                    logger.debug(f"{response_data}")
+                    # logger.debug(
+                    #     f"{self.log_prefix}Method '{method_tg._url}' "
+                    #     "was accepted by Telegram API."
+                    # )
+                    # logger.debug(f"{response_data}")
                     return success_tg
                 except ValidationError as e:
                     logger.warning(
@@ -378,9 +378,19 @@ class Conversation:
             if self.next_state is not None:
                 self.next_state = None
             success = await self._make_delivery(self._stateless_conversation)
+            logger.info(f"{self.log_prefix}Bot is idle.")
         else:
             if self.state.script == Script.INITIAL_DATA:
                 success = await self._make_delivery(self._state_action_conversation)
+                if success:
+                    if self.next_state is not None:
+                        logger.info(
+                            f"{self.log_prefix}Advancing to Action '{self.next_state.action.name}'."
+                        )
+                    elif self.state is not None:
+                        logger.info(
+                            f"{self.log_prefix}Still on Action '{self.state.action.name}'."
+                        )
         return success
 
     def _stateless_conversation(self) -> list[MethodTG]:
@@ -407,37 +417,27 @@ class Conversation:
             raw_data = self.update_tg.callback_query.data
             message_id = self.update_tg.callback_query.message.message_id
             chat_id = self.update_tg.callback_query.message.chat.id
-            logger.info(
-                f"{self.log_prefix}Received callback query "
-                f"'{raw_data}' from {self.user_db.full_name}."
-            )
             try:
-                logger.info(
-                    f"{self.log_prefix}Validating callback query "
-                    f"'{raw_data}' against {CallbackData.__name__} "
-                    "enum set."
-                )
-                received_callback_enum = CallbackData(raw_data)
+                received_callback_data = CallbackData(raw_data)
                 callback_handler = self._stateless_callback_handlers.get(
-                    received_callback_enum
+                    received_callback_data
                 )
                 logger.info(
-                    f"{self.log_prefix}Validation of callback query "
-                    f"'{received_callback_enum.value}' against "
-                    f"{CallbackData.__name__} enum set successful."
+                    f"{self.log_prefix}Got {CallbackData.__name__} "
+                    f"'{received_callback_data.value}'."
                 )
                 if callback_handler:
                     logger.info(
                         f"{self.log_prefix}Calling sync handler for "
-                        f"{received_callback_enum.__class__.__name__} "
-                        f"'{received_callback_enum.value}'."
+                        f"{received_callback_data.__class__.__name__} "
+                        f"'{received_callback_data.value}'."
                     )
                     methods_tg_list.extend(callback_handler(chat_id, message_id))
                 else:
                     logger.info(
                         f"{self.log_prefix}No handler for "
-                        f"{received_callback_enum.__class__.__name__} "
-                        f"'{received_callback_enum.value}' was found. "
+                        f"{received_callback_data.__class__.__name__} "
+                        f"'{received_callback_data.value}' was found. "
                         "Calling unrecognized callback sync handler."
                     )
                     methods_tg_list.extend(
@@ -562,8 +562,7 @@ class Conversation:
     def _handle_unrecognized_stateless_callback(self, raw_data: str) -> list[MethodTG]:
         """Handles unrecognized callback data in a stateless conversation."""
         logger.info(
-            f"{self.log_prefix}Unrecognized callback data '{raw_data}'. "
-            f"Preparing main menu for {self.user_db.full_name}."
+            f"{self.log_prefix}Preparing main menu for {self.user_db.full_name}."
         )
         methods_tg_list: list[MethodTG] = []
         methods_tg_list.append(
@@ -615,6 +614,10 @@ class Conversation:
                         self._build_new_text_message(f"{String.ENTER_CONTRACT_NUMBER}.")
                     )
                 else:
+                    logger.info(
+                        f"{self.log_prefix}Got incorrect "
+                        f"ticket number: '{message_text}'."
+                    )
                     methods_tg_list.append(
                         self._build_new_text_message(
                             f"{String.INCORRECT_TICKET_NUMBER}. "
@@ -622,6 +625,7 @@ class Conversation:
                         )
                     )
             else:
+                logger.info(f"{self.log_prefix}Didn't get ticket number.")
                 methods_tg_list.append(
                     self._build_new_text_message(
                         f"{String.INCORRECT_TICKET_NUMBER}. "
@@ -629,6 +633,7 @@ class Conversation:
                     )
                 )
         elif isinstance(self.update_tg, CallbackQueryUpdateTG):
+            logger.info(f"{self.log_prefix}Got callback data instead of ticket number.")
             methods_tg_list.append(
                 self._build_edit_to_text_message(f"{String.GOT_UNEXPECTED_DATA}.")
             )
@@ -690,6 +695,10 @@ class Conversation:
                         )
                     )
                 else:
+                    logger.info(
+                        f"{self.log_prefix}Got incorrect "
+                        f"contract number: '{message_text}'."
+                    )
                     methods_tg_list.append(
                         self._build_new_text_message(
                             f"{String.INCORRECT_CONTRACT_NUMBER}. "
@@ -697,6 +706,7 @@ class Conversation:
                         )
                     )
             else:
+                logger.info(f"{self.log_prefix}Didn't get contract number.")
                 methods_tg_list.append(
                     self._build_new_text_message(
                         f"{String.INCORRECT_CONTRACT_NUMBER}. "
@@ -704,6 +714,9 @@ class Conversation:
                     )
                 )
         elif isinstance(self.update_tg, CallbackQueryUpdateTG):
+            logger.info(
+                f"{self.log_prefix}Got callback data instead of contract number."
+            )
             methods_tg_list.append(
                 self._build_edit_to_text_message(f"{String.GOT_UNEXPECTED_DATA}.")
             )
@@ -731,25 +744,32 @@ class Conversation:
             try:
                 received_callback_data = CallbackData(raw_data)
                 logger.info(
-                    f"{self.log_prefix}{CallbackData.__name__} "
-                    f"is '{received_callback_data}'."
+                    f"{self.log_prefix}Got {CallbackData.__name__} "
+                    f"'{received_callback_data.value}'."
                 )
                 if received_callback_data.name not in DeviceTypeName.__members__:
                     logger.info(
                         f"{self.log_prefix}{CallbackData.__name__} "
-                        f"is not a {DeviceTypeName.__name__}."
+                        f"'{received_callback_data.value}' "
+                        "doesn't match any "
+                        f"{DeviceTypeName.__name__}."
                     )
                     raise ValueError
+                device_type_name = DeviceTypeName[received_callback_data.name]
+                logger.info(
+                    f"{self.log_prefix}{CallbackData.__name__} "
+                    f"'{received_callback_data.value}' "
+                    f"matches {DeviceTypeName.__name__} "
+                    f"'{device_type_name.name}'."
+                )
                 methods_tg_list.append(self._build_edit_to_callback_button_text())
                 device_type = await self.session.scalar(
-                    select(DeviceTypeDB).where(
-                        DeviceTypeDB.name == DeviceTypeName[received_callback_data.name]
-                    )
+                    select(DeviceTypeDB).where(DeviceTypeDB.name == device_type_name)
                 )
                 if device_type is None:
                     logger.info(
                         f"{self.log_prefix}No {DeviceTypeDB.__name__} "
-                        f"found for {received_callback_data.name}."
+                        f"found for {device_type_name.name}."
                     )
                     methods_tg_list.append(
                         await self._build_pick_device_type_message(
@@ -782,6 +802,14 @@ class Conversation:
                     device_index = self.next_state.device_index
                     device_list_length = len(devices_list)
                     if device_index == device_list_length:
+                        logger.info(
+                            f"{self.log_prefix}No existing "
+                            f"{DeviceDB.__name__} to work with. "
+                            f"Creating new {DeviceDB.__name__} at "
+                            f"devices[{device_index}] with "
+                            f"{DeviceTypeDB.__name__} "
+                            f"'{device_type_name.name}'."
+                        )
                         device = DeviceDB(
                             ticket_id=current_ticket.id,
                             type_id=device_type.id,
@@ -789,6 +817,13 @@ class Conversation:
                         device.type = device_type
                         devices_list.append(device)
                     elif 0 <= device_index < device_list_length:
+                        logger.info(
+                            f"{self.log_prefix}Working with existing "
+                            f"{DeviceDB.__name__} at "
+                            f"devices[{device_index}]. Changing "
+                            f"{DeviceTypeDB.__name__} to "
+                            f"'{device_type_name.name}'."
+                        )
                         device = devices_list[device_index]
                         device.type_id = device_type.id
                         device.type = device_type
@@ -805,14 +840,15 @@ class Conversation:
                     await self.session.flush()
                     if device_type.is_disposable:
                         logger.info(
-                            f"Device type '{device_type.name.name}' is "
-                            "disposable. Install or return step "
+                            f"{DeviceTypeDB.__name__} "
+                            f"'{device_type.name.name}' "
+                            "is disposable. Install or return step "
                             "will be skipped."
                         )
                         device.removal = False
                         if device_type.has_serial_number:
                             logger.info(
-                                "Device type "
+                                f"{DeviceTypeDB.__name__} "
                                 f"'{device_type.name.name}' "
                                 "has serial number parameter."
                             )
@@ -824,9 +860,9 @@ class Conversation:
                             )
                         else:
                             logger.info(
-                                "Device type "
-                                f"'{device_type.name.name}' doesn't "
-                                "have serial number parameter. "
+                                f"{DeviceTypeDB.__name__} "
+                                f"'{device_type.name.name}' "
+                                "doesn't have serial number parameter. "
                                 "Serial number step will be skipped."
                             )
                             self.next_state.action = Action.PICK_TICKET_ACTION
@@ -837,7 +873,9 @@ class Conversation:
                             )
                     else:
                         logger.info(
-                            f"Device type '{device_type.name.name}' is not disposable."
+                            f"{DeviceTypeDB.__name__} "
+                            f"'{device_type.name.name}' "
+                            "is not disposable."
                         )
                         self.next_state.action = Action.PICK_INSTALL_OR_RETURN
                         methods_tg_list.append(
@@ -847,8 +885,8 @@ class Conversation:
                         )
             except ValueError:
                 logger.info(
-                    f"{self.log_prefix}Received invalid callback "
-                    f"'{raw_data}' for device type selection."
+                    f"{self.log_prefix}Got invalid callback data "
+                    f"'{raw_data}' for current device type selection."
                 )
                 methods_tg_list.append(
                     self._build_edit_to_text_message(f"{String.GOT_UNEXPECTED_DATA}.")
@@ -861,11 +899,7 @@ class Conversation:
                     )
                 )
         elif isinstance(self.update_tg, MessageUpdateTG):
-            logger.info(
-                f"{self.log_prefix}User {self.user_db.full_name} "
-                "responded with message while callback data "
-                "was awaited."
-            )
+            logger.info(f"{self.log_prefix}Got message instead of callback data.")
             methods_tg_list.append(
                 await self._build_pick_device_type_message(
                     f"{String.DEVICE_TYPE_WAS_NOT_PICKED}. "
@@ -896,19 +930,34 @@ class Conversation:
             raw_data = self.update_tg.callback_query.data
             try:
                 received_callback_data = CallbackData(raw_data)
-                logger.info(
-                    f"{self.log_prefix}{CallbackData.__name__} "
-                    f"is '{received_callback_data}'."
-                )
                 if received_callback_data in expected_callback_data:
+                    logger.info(
+                        f"{self.log_prefix}Got expected "
+                        f"{CallbackData.__name__} "
+                        f"'{received_callback_data.value}'."
+                    )
                     if received_callback_data == CallbackData.INSTALL_DEVICE_BTN:
+                        logger.info(
+                            f"{self.log_prefix}{CallbackData.__name__} "
+                            f"'{received_callback_data.value}' "
+                            "matches 'install' option "
+                            "(removal=False)."
+                        )
                         removal = False
                     elif received_callback_data == CallbackData.RETURN_DEVICE_BTN:
+                        logger.info(
+                            f"{self.log_prefix}{CallbackData.__name__} "
+                            f"'{received_callback_data.value}' "
+                            "matches 'return' option "
+                            "(removal=True)."
+                        )
                         removal = True
                     else:
                         error_msg = (
-                            "Callback is in expected list, "
-                            "but somehow was not identified."
+                            f"{CallbackData.__name__} "
+                            f"{received_callback_data.value}"
+                            "is in expected callback list, "
+                            "but somehow doesn't match anything."
                         )
                         logger.error(error_msg)
                         raise ValueError(error_msg)
@@ -918,6 +967,12 @@ class Conversation:
                     device_index = self.next_state.device_index
                     device_list_length = len(devices_list)
                     if 0 <= device_index < device_list_length:
+                        logger.info(
+                            f"{self.log_prefix}Working with "
+                            f"{DeviceDB.__name__} "
+                            f"at devices[{device_index}]. Setting "
+                            f"'removal' flag to '{removal}'."
+                        )
                         device = devices_list[device_index]
                         device.removal = removal
                         await self.session.flush()
@@ -934,7 +989,8 @@ class Conversation:
                     device_type = device.type
                     if device_type.has_serial_number:
                         logger.info(
-                            f"Device type '{device_type.name.name}' "
+                            f"{DeviceTypeDB.__name__} "
+                            f"'{device_type.name.name}' "
                             "has serial number parameter."
                         )
                         self.next_state.action = Action.ENTER_SERIAL_NUMBER
@@ -945,7 +1001,8 @@ class Conversation:
                         )
                     else:
                         logger.info(
-                            f"Device type '{device_type.name.name}' "
+                            f"{DeviceTypeDB.__name__} "
+                            f"'{device_type.name.name}' "
                             "doesn't have serial number parameter. "
                             "Serial number step will be skipped."
                         )
@@ -957,11 +1014,16 @@ class Conversation:
                             )
                         )
                 else:
+                    logger.info(
+                        f"{self.log_prefix}Got unexpected "
+                        f"{CallbackData.__name__} "
+                        f"'{received_callback_data.value}'."
+                    )
                     raise ValueError
             except ValueError:
                 logger.info(
-                    f"{self.log_prefix}Received invalid callback "
-                    f"'{raw_data}' for device action selection."
+                    f"{self.log_prefix}Got invalid callback data "
+                    f"'{raw_data}' for current device action selection."
                 )
                 methods_tg_list.append(
                     self._build_edit_to_text_message(f"{String.GOT_UNEXPECTED_DATA}.")
@@ -973,11 +1035,7 @@ class Conversation:
                     )
                 )
         elif isinstance(self.update_tg, MessageUpdateTG):
-            logger.info(
-                f"{self.log_prefix}User {self.user_db.full_name} "
-                "responded with message while callback data "
-                "was awaited."
-            )
+            logger.info(f"{self.log_prefix}Got message instead of callback data.")
             methods_tg_list.append(
                 self._build_pick_install_or_return_message(
                     f"{String.DEVICE_ACTION_WAS_NOT_PICKED}. "
@@ -1003,7 +1061,8 @@ class Conversation:
                 if re.fullmatch(r"[\dA-Z]+", message_text) and message_text != "0":
                     logger.info(
                         f"{self.log_prefix}Got correct device "
-                        f"serial number: '{message_text}'."
+                        "serial number (forced uppercase): "
+                        f"'{message_text}'."
                     )
                     self.next_state = state.model_copy(deep=True)
                     self.next_state.action = Action.PICK_TICKET_ACTION
@@ -1011,6 +1070,12 @@ class Conversation:
                     device_index = self.next_state.device_index
                     device_list_length = len(devices_list)
                     if 0 <= device_index < device_list_length:
+                        logger.info(
+                            f"{self.log_prefix}Working with "
+                            f"{DeviceDB.__name__} "
+                            f"at devices[{device_index}]. Setting "
+                            f"serial number to '{message_text}'."
+                        )
                         device = devices_list[device_index]
                         device.serial_number = message_text
                     else:
@@ -1029,6 +1094,11 @@ class Conversation:
                         )
                     )
                 else:
+                    logger.info(
+                        f"{self.log_prefix}Got incorrect device "
+                        "serial number (forced uppercase): "
+                        f"'{message_text}'."
+                    )
                     methods_tg_list.append(
                         self._build_new_text_message(
                             f"{String.INCORRECT_SERIAL_NUMBER}. "
@@ -1036,6 +1106,7 @@ class Conversation:
                         )
                     )
             else:
+                logger.info(f"{self.log_prefix}Didn't get device serial number.")
                 methods_tg_list.append(
                     self._build_new_text_message(
                         f"{String.INCORRECT_SERIAL_NUMBER}. "
@@ -1043,6 +1114,9 @@ class Conversation:
                     )
                 )
         elif isinstance(self.update_tg, CallbackQueryUpdateTG):
+            logger.info(
+                f"{self.log_prefix}Got callback data instead of device serial number."
+            )
             methods_tg_list.append(
                 self._build_edit_to_text_message(f"{String.GOT_UNEXPECTED_DATA}.")
             )
@@ -1085,11 +1159,12 @@ class Conversation:
             raw_data = self.update_tg.callback_query.data
             try:
                 received_callback_data = CallbackData(raw_data)
-                logger.info(
-                    f"{self.log_prefix}{CallbackData.__name__} "
-                    f"is '{received_callback_data}'."
-                )
                 if received_callback_data in expected_callback_data:
+                    logger.info(
+                        f"{self.log_prefix}Got expected "
+                        f"{CallbackData.__name__} "
+                        f"'{received_callback_data.value}'."
+                    )
                     self.next_state = state.model_copy(deep=True)
                     if received_callback_data == CallbackData.EDIT_TICKET_NUMBER:
                         methods_tg_list.append(
@@ -1121,9 +1196,12 @@ class Conversation:
                         if match:
                             device_index_string = match.group(1)
                         else:
-                            error_msg = f"{self.log_prefix}StrEnum "
-                            f"'{received_callback_data}' doesn't end "
-                            "with an integer."
+                            error_msg = (
+                                f"{self.log_prefix}"
+                                f"{CallbackData.__name__} "
+                                f"'{received_callback_data.value}' "
+                                "doesn't end with an integer."
+                            )
                             logger.error(error_msg)
                             raise ValueError(error_msg)
                         callback_device_index = int(device_index_string)
@@ -1171,11 +1249,16 @@ class Conversation:
                             )
                         )
                 else:
+                    logger.info(
+                        f"{self.log_prefix}Got unexpected "
+                        f"{CallbackData.__name__} "
+                        f"'{received_callback_data.value}'."
+                    )
                     raise ValueError
             except ValueError:
                 logger.info(
-                    f"{self.log_prefix}Received invalid callback "
-                    f"'{raw_data}' for ticket menu selection."
+                    f"{self.log_prefix}Got invalid callback data "
+                    f"'{raw_data}' for current ticket menu selection."
                 )
                 methods_tg_list.append(
                     self._build_edit_to_text_message(f"{String.GOT_UNEXPECTED_DATA}.")
@@ -1186,11 +1269,7 @@ class Conversation:
                     )
                 )
         elif isinstance(self.update_tg, MessageUpdateTG):
-            logger.info(
-                f"{self.log_prefix}User {self.user_db.full_name} "
-                "responded with message while callback data "
-                "was awaited."
-            )
+            logger.info(f"{self.log_prefix}Got message instead of callback data.")
             methods_tg_list.append(
                 self._build_pick_ticket_action_message(
                     f"{String.TICKET_ACTION_WAS_NOT_PICKED}. "
@@ -1226,7 +1305,8 @@ class Conversation:
                             f"{self.log_prefix}New ticket "
                             f"number={new_ticket_number} "
                             "is different from old ticket "
-                            f"number={current_ticket.number}."
+                            f"number={current_ticket.number}. "
+                            "Applying change."
                         )
                         current_ticket.number = new_ticket_number
                         methods_tg_list.append(
@@ -1240,7 +1320,8 @@ class Conversation:
                             f"{self.log_prefix}New ticket "
                             f"number={new_ticket_number} "
                             "is the same as old ticket "
-                            f"number={current_ticket.number}."
+                            f"number={current_ticket.number}. "
+                            "No change needed."
                         )
                         methods_tg_list.append(
                             self._build_pick_ticket_action_message(
@@ -1249,6 +1330,10 @@ class Conversation:
                             )
                         )
                 else:
+                    logger.info(
+                        f"{self.log_prefix}Got incorrect "
+                        f"new ticket number: '{message_text}'."
+                    )
                     methods_tg_list.append(
                         self._build_new_text_message(
                             f"{String.INCORRECT_TICKET_NUMBER}. "
@@ -1256,6 +1341,7 @@ class Conversation:
                         )
                     )
             else:
+                logger.info(f"{self.log_prefix}Didn't get new ticket number.")
                 methods_tg_list.append(
                     self._build_new_text_message(
                         f"{String.INCORRECT_TICKET_NUMBER}. "
@@ -1263,6 +1349,9 @@ class Conversation:
                     )
                 )
         elif isinstance(self.update_tg, CallbackQueryUpdateTG):
+            logger.info(
+                f"{self.log_prefix}Got callback data instead of new ticket number."
+            )
             methods_tg_list.append(
                 self._build_edit_to_text_message(f"{String.GOT_UNEXPECTED_DATA}.")
             )
@@ -1312,7 +1401,8 @@ class Conversation:
                             f"{self.log_prefix}New contract "
                             f"number={new_contract_number} "
                             "is different from old contract "
-                            f"number={current_ticket.contract.number}."
+                            f"number={current_ticket.contract.number}. "
+                            "Applying change."
                         )
                         old_contract_id = current_ticket.contract.id
                         old_contract_number = current_ticket.contract.number
@@ -1326,7 +1416,7 @@ class Conversation:
                                 f"{self.log_prefix}New contract "
                                 f"number={new_contract_number} was "
                                 "found in the database under "
-                                f"id={contract_exist.id}."
+                                f"id={contract_exist.id}. "
                             )
                             current_ticket.contract = contract_exist
                         else:
@@ -1386,7 +1476,8 @@ class Conversation:
                             f"{self.log_prefix}New contract "
                             f"number={new_contract_number} "
                             "is the same as old contract "
-                            f"number={current_ticket.contract.number}."
+                            f"number={current_ticket.contract.number}. "
+                            "No change needed."
                         )
                         methods_tg_list.append(
                             self._build_pick_ticket_action_message(
@@ -1395,6 +1486,10 @@ class Conversation:
                             )
                         )
                 else:
+                    logger.info(
+                        f"{self.log_prefix}Got incorrect new "
+                        f"contract number: '{message_text}'."
+                    )
                     methods_tg_list.append(
                         self._build_new_text_message(
                             f"{String.INCORRECT_CONTRACT_NUMBER}. "
@@ -1402,6 +1497,7 @@ class Conversation:
                         )
                     )
             else:
+                logger.info(f"{self.log_prefix}Didn't get new contract number.")
                 methods_tg_list.append(
                     self._build_new_text_message(
                         f"{String.INCORRECT_CONTRACT_NUMBER}. "
@@ -1409,6 +1505,9 @@ class Conversation:
                     )
                 )
         elif isinstance(self.update_tg, CallbackQueryUpdateTG):
+            logger.info(
+                f"{self.log_prefix}Got callback data instead of new contract number."
+            )
             methods_tg_list.append(
                 self._build_edit_to_text_message(f"{String.GOT_UNEXPECTED_DATA}.")
             )
@@ -1440,6 +1539,11 @@ class Conversation:
             device_index = state.device_index
             device_list_length = len(devices_list)
             if 0 <= device_index < device_list_length:
+                logger.info(
+                    f"{self.log_prefix}Working with "
+                    f"{DeviceDB.__name__} "
+                    f"at devices[{device_index}]."
+                )
                 device = devices_list[device_index]
             else:
                 error_msg = (
@@ -1457,7 +1561,8 @@ class Conversation:
                     expected_callback_data.append(CallbackData.INSTALL_DEVICE_BTN)
                 else:
                     raise ValueError(
-                        f"Device is not disposable but removal is '{device.removal}'."
+                        f"{DeviceDB.__name__} is not disposable "
+                        f"but 'removal' is '{device.removal}'."
                     )
             if device.type.has_serial_number:
                 expected_callback_data.append(CallbackData.EDIT_SERIAL_NUMBER)
@@ -1468,17 +1573,19 @@ class Conversation:
                     expected_callback_data.append(CallbackData.EDIT_TICKET)
                 else:
                     raise ValueError(
-                        "Device type has no serial number but device "
-                        f"has serial_number={device.serial_number}"
+                        f"{DeviceTypeDB.__name__} has no serial number "
+                        f"but {DeviceDB.__name__} has "
+                        f"serial_number={device.serial_number}"
                     )
             raw_data = self.update_tg.callback_query.data
             try:
                 received_callback_data = CallbackData(raw_data)
-                logger.info(
-                    f"{self.log_prefix}{CallbackData.__name__} "
-                    f"is '{received_callback_data}'."
-                )
                 if received_callback_data in expected_callback_data:
+                    logger.info(
+                        f"{self.log_prefix}Got expected "
+                        f"{CallbackData.__name__} "
+                        f"'{received_callback_data.value}'."
+                    )
                     self.next_state = state.model_copy(deep=True)
                     if received_callback_data == CallbackData.EDIT_DEVICE_TYPE:
                         methods_tg_list.append(
@@ -1551,11 +1658,16 @@ class Conversation:
                             )
                         )
                 else:
+                    logger.info(
+                        f"{self.log_prefix}Got unexpected "
+                        f"{CallbackData.__name__} "
+                        f"'{received_callback_data.value}'."
+                    )
                     raise ValueError
             except ValueError:
                 logger.info(
-                    f"{self.log_prefix}Received invalid callback "
-                    f"'{raw_data}' for device menu selection."
+                    f"{self.log_prefix}Got invalid callback data "
+                    f"'{raw_data}' for current device menu selection."
                 )
                 methods_tg_list.append(
                     self._build_edit_to_text_message(f"{String.GOT_UNEXPECTED_DATA}.")
@@ -1566,11 +1678,7 @@ class Conversation:
                     )
                 )
         elif isinstance(self.update_tg, MessageUpdateTG):
-            logger.info(
-                f"{self.log_prefix}User {self.user_db.full_name} "
-                "responded with message while callback data "
-                "was awaited."
-            )
+            logger.info(f"{self.log_prefix}Got message instead of callback data.")
             methods_tg_list.append(
                 self._build_pick_device_action_message(
                     f"{String.DEVICE_ACTION_WAS_NOT_PICKED}. "
@@ -1595,20 +1703,27 @@ class Conversation:
             try:
                 received_callback_data = CallbackData(raw_data)
                 logger.info(
-                    f"{self.log_prefix}{CallbackData.__name__} "
-                    f"is '{received_callback_data}'."
+                    f"{self.log_prefix}Got {CallbackData.__name__} "
+                    f"'{received_callback_data.value}'."
                 )
                 if received_callback_data.name not in DeviceTypeName.__members__:
                     logger.info(
                         f"{self.log_prefix}{CallbackData.__name__} "
-                        f"is not a {DeviceTypeName.__name__}."
+                        f"'{received_callback_data.value}' "
+                        "doesn't match any "
+                        f"{DeviceTypeName.__name__}."
                     )
                     raise ValueError
+                device_type_name = DeviceTypeName[received_callback_data.name]
+                logger.info(
+                    f"{self.log_prefix}{CallbackData.__name__} "
+                    f"'{received_callback_data.value}' "
+                    f"matches {DeviceTypeName.__name__} "
+                    f"'{device_type_name.name}'."
+                )
                 methods_tg_list.append(self._build_edit_to_callback_button_text())
                 device_type = await self.session.scalar(
-                    select(DeviceTypeDB).where(
-                        DeviceTypeDB.name == DeviceTypeName[received_callback_data.name]
-                    )
+                    select(DeviceTypeDB).where(DeviceTypeDB.name == device_type_name)
                 )
                 if device_type is None:
                     logger.info(
@@ -1647,6 +1762,11 @@ class Conversation:
                     device_index = self.next_state.device_index
                     device_list_length = len(devices_list)
                     if 0 <= device_index < device_list_length:
+                        logger.info(
+                            f"{self.log_prefix}Working with "
+                            f"{DeviceDB.__name__} at "
+                            f"devices[{device_index}]."
+                        )
                         device = devices_list[device_index]
                     else:
                         error_msg = (
@@ -1660,37 +1780,42 @@ class Conversation:
                         raise IndexError(error_msg)
                     if device.type.name.name != device_type.name.name:
                         logger.info(
-                            f"{self.log_prefix}New device type "
+                            f"{self.log_prefix}New "
+                            f"{DeviceTypeDB.__name__} "
                             f"'{device_type.name.name}' "
-                            "is different from old device type "
-                            f"'{device.type.name.name}'."
+                            "is different from old "
+                            f"{DeviceTypeDB.__name__} "
+                            f"'{device.type.name.name}'. "
+                            "Applying change."
                         )
                         device.type_id = device_type.id
                         device.type = device_type
                         if device_type.is_disposable:
                             logger.info(
-                                f"Device type '{device_type.name.name}' is "
+                                f"{DeviceTypeDB.__name__} "
+                                f"'{device_type.name.name}' is "
                                 "disposable. Install action set."
                             )
                             device.removal = False
                         else:
                             logger.info(
-                                f"Device type '{device_type.name.name}' is "
-                                "not disposable. Keeping install or return "
-                                "as is."
+                                f"{DeviceTypeDB.__name__} "
+                                f"'{device_type.name.name}' "
+                                "is not disposable. "
+                                "Keeping install or return as is."
                             )
                         if device_type.has_serial_number:
                             logger.info(
-                                "Device type "
-                                f"'{device_type.name.name}' has "
-                                "serial number parameter. Keeping "
-                                "serial number intact."
+                                f"{DeviceTypeDB.__name__} "
+                                f"'{device_type.name.name}' "
+                                "has serial number parameter. "
+                                "Keeping serial number intact."
                             )
                         else:
                             logger.info(
-                                "Device type "
-                                f"'{device_type.name.name}' doesn't "
-                                "have serial number parameter. "
+                                f"{DeviceTypeDB.__name__} "
+                                f"'{device_type.name.name}' "
+                                "doesn't have serial number parameter. "
                                 "Setting serial number to None."
                             )
                             device.serial_number = None
@@ -1702,10 +1827,13 @@ class Conversation:
                         )
                     else:
                         logger.info(
-                            f"{self.log_prefix}New device type "
+                            f"{self.log_prefix}New "
+                            f"{DeviceTypeDB.__name__} "
                             f"'{device_type.name.name}' "
-                            "is the same as old device type "
-                            f"'{device.type.name.name}'."
+                            "is the same as old "
+                            f"{DeviceTypeDB.__name__} "
+                            f"'{device.type.name.name}'. "
+                            "No change needed."
                         )
                         methods_tg_list.append(
                             self._build_pick_device_action_message(
@@ -1715,8 +1843,8 @@ class Conversation:
                         )
             except ValueError:
                 logger.info(
-                    f"{self.log_prefix}Received invalid callback "
-                    f"'{raw_data}' for device type selection."
+                    f"{self.log_prefix}Got invalid callback data "
+                    f"'{raw_data}' for current device new type selection."
                 )
                 methods_tg_list.append(
                     self._build_edit_to_text_message(f"{String.GOT_UNEXPECTED_DATA}.")
@@ -1729,11 +1857,7 @@ class Conversation:
                     )
                 )
         elif isinstance(self.update_tg, MessageUpdateTG):
-            logger.info(
-                f"{self.log_prefix}User {self.user_db.full_name} "
-                "responded with message while callback data "
-                "was awaited."
-            )
+            logger.info(f"{self.log_prefix}Got message instead of callback data.")
             methods_tg_list.append(
                 await self._build_pick_device_type_message(
                     f"{String.DEVICE_TYPE_WAS_NOT_PICKED}. "
@@ -1741,7 +1865,6 @@ class Conversation:
                     f"{String.FROM_OPTIONS_BELOW}."
                 )
             )
-        logger.info(f"{self.log_prefix}Methods are ready to be posted.")
         return methods_tg_list
 
     async def _handle_action_edit_install_or_return(
@@ -1767,19 +1890,34 @@ class Conversation:
             raw_data = self.update_tg.callback_query.data
             try:
                 received_callback_data = CallbackData(raw_data)
-                logger.info(
-                    f"{self.log_prefix}{CallbackData.__name__} "
-                    f"is '{received_callback_data}'."
-                )
                 if received_callback_data in expected_callback_data:
+                    logger.info(
+                        f"{self.log_prefix}Got expected "
+                        f"{CallbackData.__name__} "
+                        f"'{received_callback_data.value}'."
+                    )
                     if received_callback_data == CallbackData.INSTALL_DEVICE_BTN:
+                        logger.info(
+                            f"{self.log_prefix}{CallbackData.__name__} "
+                            f"'{received_callback_data.value}' "
+                            "matches 'install' option "
+                            "(removal=False)."
+                        )
                         removal = False
                     elif received_callback_data == CallbackData.RETURN_DEVICE_BTN:
+                        logger.info(
+                            f"{self.log_prefix}{CallbackData.__name__} "
+                            f"'{received_callback_data.value}' "
+                            "matches 'return' option "
+                            "(removal=True)."
+                        )
                         removal = True
                     else:
                         error_msg = (
-                            "Callback is in expected list, "
-                            "but somehow was not identified."
+                            f"{CallbackData.__name__} "
+                            f"{received_callback_data.value}"
+                            "is in expected callback list, "
+                            "but somehow doesn't match anything."
                         )
                         logger.error(error_msg)
                         raise ValueError(error_msg)
@@ -1790,6 +1928,11 @@ class Conversation:
                     device_index = self.next_state.device_index
                     device_list_length = len(devices_list)
                     if 0 <= device_index < device_list_length:
+                        logger.info(
+                            f"{self.log_prefix}Working with "
+                            f"{DeviceDB.__name__} "
+                            f"at devices[{device_index}]."
+                        )
                         device = devices_list[device_index]
                     else:
                         error_msg = (
@@ -1803,18 +1946,20 @@ class Conversation:
                         raise IndexError(error_msg)
                     if device.removal != removal:
                         logger.info(
-                            f"{self.log_prefix}Device new removal flag "
-                            f"'{removal}' is different from device old "
-                            f"removal flag '{device.removal}'."
+                            f"{self.log_prefix}{DeviceDB.__name__} "
+                            f"new removal flag '{removal}' "
+                            "is different from device "
+                            f"old removal flag '{device.removal}'. "
+                            "Applying change."
                         )
                         device.removal = removal
-                        # await self.session.flush()
                         device_type = device.type
                         if device_type.is_disposable:
                             error_msg = (
-                                f"Device type '{device_type.name.name}' is "
-                                "disposable, install or return selection "
-                                "not available."
+                                f"{DeviceTypeDB.__name__} "
+                                f"'{device_type.name.name}' "
+                                "is disposable, install or return "
+                                "selection not available."
                             )
                             logger.error(error_msg)
                             raise ValueError(error_msg)
@@ -1826,9 +1971,11 @@ class Conversation:
                         )
                     else:
                         logger.info(
-                            f"{self.log_prefix}Device new removal flag "
-                            f"'{removal}' is the same as device old "
-                            f"removal flag '{device.removal}'."
+                            f"{self.log_prefix}{DeviceDB.__name__} "
+                            f"new removal flag '{removal}' "
+                            "is the same as device "
+                            f"old removal flag '{device.removal}'. "
+                            "No change needed."
                         )
                         methods_tg_list.append(
                             self._build_pick_device_action_message(
@@ -1837,11 +1984,16 @@ class Conversation:
                             )
                         )
                 else:
+                    logger.info(
+                        f"{self.log_prefix}Got unexpected "
+                        f"{CallbackData.__name__} "
+                        f"'{received_callback_data.value}'."
+                    )
                     raise ValueError
             except ValueError:
                 logger.info(
-                    f"{self.log_prefix}Received invalid callback "
-                    f"'{raw_data}' for device action selection."
+                    f"{self.log_prefix}Got invalid callback data "
+                    f"'{raw_data}' for current device new action selection."
                 )
                 methods_tg_list.append(
                     self._build_edit_to_text_message(f"{String.GOT_UNEXPECTED_DATA}.")
@@ -1853,11 +2005,7 @@ class Conversation:
                     )
                 )
         elif isinstance(self.update_tg, MessageUpdateTG):
-            logger.info(
-                f"{self.log_prefix}User {self.user_db.full_name} "
-                "responded with message while callback data "
-                "was awaited."
-            )
+            logger.info(f"{self.log_prefix}Got message instead of callback data.")
             methods_tg_list.append(
                 self._build_pick_install_or_return_message(
                     f"{String.DEVICE_ACTION_WAS_NOT_PICKED}. "
@@ -1883,7 +2031,8 @@ class Conversation:
                 if re.fullmatch(r"[\dA-Z]+", message_text) and message_text != "0":
                     logger.info(
                         f"{self.log_prefix}Got correct new device "
-                        f"serial number: '{message_text}'."
+                        "serial number (forced uppercase): "
+                        f"'{message_text}'."
                     )
                     self.next_state = state.model_copy(deep=True)
                     self.next_state.action = Action.PICK_TICKET_ACTION
@@ -1891,6 +2040,11 @@ class Conversation:
                     device_index = self.next_state.device_index
                     device_list_length = len(devices_list)
                     if 0 <= device_index < device_list_length:
+                        logger.info(
+                            f"{self.log_prefix}Working with "
+                            f"{DeviceDB.__name__} "
+                            f"at devices[{device_index}]."
+                        )
                         device = devices_list[device_index]
                     else:
                         error_msg = (
@@ -1907,7 +2061,8 @@ class Conversation:
                             f"{self.log_prefix}Device new "
                             f"serial_number={message_text} "
                             "is different from device old "
-                            f"serial_number={device.serial_number}."
+                            f"serial_number={device.serial_number}. "
+                            "Applying change."
                         )
                         device.serial_number = message_text
                         methods_tg_list.append(
@@ -1921,7 +2076,8 @@ class Conversation:
                             f"{self.log_prefix}Device new "
                             f"serial_number={message_text} "
                             "is the same as device old "
-                            f"serial_number={device.serial_number}."
+                            f"serial_number={device.serial_number}. "
+                            "No change needed."
                         )
                         methods_tg_list.append(
                             self._build_pick_device_action_message(
@@ -1930,6 +2086,11 @@ class Conversation:
                             )
                         )
                 else:
+                    logger.info(
+                        f"{self.log_prefix}Got incorrect new device "
+                        "serial number (forced uppercase): "
+                        f"'{message_text}'."
+                    )
                     methods_tg_list.append(
                         self._build_new_text_message(
                             f"{String.INCORRECT_SERIAL_NUMBER}. "
@@ -1937,6 +2098,7 @@ class Conversation:
                         )
                     )
             else:
+                logger.info(f"{self.log_prefix}Didn't get new device serial number.")
                 methods_tg_list.append(
                     self._build_new_text_message(
                         f"{String.INCORRECT_SERIAL_NUMBER}. "
@@ -1944,6 +2106,9 @@ class Conversation:
                     )
                 )
         elif isinstance(self.update_tg, CallbackQueryUpdateTG):
+            logger.info(
+                f"{self.log_prefix}Got callback data instead of new device serial number."
+            )
             methods_tg_list.append(
                 self._build_edit_to_text_message(f"{String.GOT_UNEXPECTED_DATA}.")
             )
@@ -1974,22 +2139,35 @@ class Conversation:
             raw_data = self.update_tg.callback_query.data
             try:
                 received_callback_data = CallbackData(raw_data)
-                logger.info(
-                    f"{self.log_prefix}{CallbackData.__name__} "
-                    f"is '{received_callback_data}'."
-                )
                 if received_callback_data in expected_callback_data:
+                    logger.info(
+                        f"{self.log_prefix}Got expected "
+                        f"{CallbackData.__name__} "
+                        f"'{received_callback_data.value}'."
+                    )
                     if received_callback_data == CallbackData.CONFIRM_CLOSE_TICKET_BTN:
                         methods_tg_list.append(
                             self._build_edit_to_callback_button_text()
                         )
+                        ticket_number = current_ticket.number
+                        total_devices = len(current_ticket.devices)
+                        if total_devices == 1:
+                            device_string = String.X_DEVICE
+                        else:
+                            device_string = String.X_DEVICES
                         ticket_closed = await self.close_ticket()
                         if ticket_closed:
                             self.next_state = None
                             self.user_db.state_json = None
                             methods_tg_list.append(
                                 self._build_stateless_mainmenu_message(
-                                    f"{String.YOU_CLOSED_TICKET}. {String.PICK_A_FUNCTION}."
+                                    f"{String.YOU_CLOSED_TICKET} "
+                                    f"{String.NUMBER_SYMBOL}"
+                                    f"{ticket_number} "
+                                    f"{String.WITH_X} "
+                                    f"{total_devices} "
+                                    f"{device_string}. "
+                                    f"{String.PICK_A_FUNCTION}."
                                 )
                             )
                         else:
@@ -2013,12 +2191,17 @@ class Conversation:
                             )
                         )
                 else:
+                    logger.info(
+                        f"{self.log_prefix}Got unexpected "
+                        f"{CallbackData.__name__} "
+                        f"'{received_callback_data.value}'."
+                    )
                     raise ValueError
             except ValueError:
                 logger.info(
-                    f"{self.log_prefix}Received invalid callback "
-                    f"'{raw_data}' for close ticket confirmation "
-                    "menu selection."
+                    f"{self.log_prefix}Got invalid callback data "
+                    f"'{raw_data}' for current ticket close "
+                    "confirmation menu selection."
                 )
                 methods_tg_list.append(
                     self._build_edit_to_text_message(f"{String.GOT_UNEXPECTED_DATA}.")
@@ -2030,11 +2213,7 @@ class Conversation:
                     )
                 )
         elif isinstance(self.update_tg, MessageUpdateTG):
-            logger.info(
-                f"{self.log_prefix}User {self.user_db.full_name} "
-                "responded with message while callback data "
-                "was awaited."
-            )
+            logger.info(f"{self.log_prefix}Got message instead of callback data.")
             methods_tg_list.append(
                 self._build_pick_confirm_close_ticket_message(
                     f"{String.CLOSE_TICKET_ACTION_WAS_NOT_PICKED}. "
@@ -2043,10 +2222,12 @@ class Conversation:
             )
         return methods_tg_list
 
-    async def _handle_pick_confirm_quit_without_saving(
+    async def _handle_pick_confirm_quit_ticket_without_saving(
         self, state: StateJS
     ) -> list[MethodTG]:
-        logger.info(f"{self.log_prefix}Awaiting quit without saving confirmation.")
+        logger.info(
+            f"{self.log_prefix}Awaiting quit ticket without saving confirmation."
+        )
         current_ticket = self.user_db.current_ticket
         if current_ticket is None:
             error_msg = (
@@ -2064,11 +2245,12 @@ class Conversation:
             raw_data = self.update_tg.callback_query.data
             try:
                 received_callback_data = CallbackData(raw_data)
-                logger.info(
-                    f"{self.log_prefix}{CallbackData.__name__} "
-                    f"is '{received_callback_data}'."
-                )
                 if received_callback_data in expected_callback_data:
+                    logger.info(
+                        f"{self.log_prefix}Got expected "
+                        f"{CallbackData.__name__} "
+                        f"'{received_callback_data.value}'."
+                    )
                     if received_callback_data == CallbackData.CONFIRM_QUIT_BTN:
                         methods_tg_list.append(
                             self._build_edit_to_callback_button_text()
@@ -2093,11 +2275,16 @@ class Conversation:
                             )
                         )
                 else:
+                    logger.info(
+                        f"{self.log_prefix}Got unexpected "
+                        f"{CallbackData.__name__} "
+                        f"'{received_callback_data.value}'."
+                    )
                     raise ValueError
             except ValueError:
                 logger.info(
-                    f"{self.log_prefix}Received invalid callback "
-                    f"'{raw_data}' for quit without saving "
+                    f"{self.log_prefix}Got invalid callback data "
+                    f"'{raw_data}' for quit ticket without saving "
                     "confirmation menu selection."
                 )
                 methods_tg_list.append(
@@ -2110,11 +2297,7 @@ class Conversation:
                     )
                 )
         elif isinstance(self.update_tg, MessageUpdateTG):
-            logger.info(
-                f"{self.log_prefix}User {self.user_db.full_name} "
-                "responded with message while callback data "
-                "was awaited."
-            )
+            logger.info(f"{self.log_prefix}Got message instead of callback data.")
             methods_tg_list.append(
                 self._build_pick_confirm_quit_without_saving(
                     f"{String.QUIT_WITHOUT_SAVING_ACTION_WAS_NOT_PICKED}. "
@@ -2245,9 +2428,10 @@ class Conversation:
                 raise ValueError(error_msg) from e
         if not inline_keyboard:
             warning_msg = (
-                f"{self.log_prefix}Warning: No eligible (active) "
-                "device types were found in the database. "
-                "Cannot build device type selection keyboard."
+                f"{self.log_prefix}Warning: Not a single eligible "
+                f"(active) {DeviceTypeDB.__name__} was found in the "
+                f"database. Cannot build {DeviceTypeDB.__name__} "
+                "selection keyboard."
             )
             logger.warning(warning_msg)
             await self.drop_current_ticket()
@@ -2430,10 +2614,10 @@ class Conversation:
         )
         if device.removal is None:
             error_msg = (
-                f"{self.log_prefix}Device "
+                f"{self.log_prefix}{DeviceDB.__name__} "
                 f"type='{device.type.name.name}' "
                 f"id={device.id} is missing "
-                "a removal bool status."
+                "'removal' bool status."
             )
             logger.error(error_msg)
             raise ValueError(error_msg)
@@ -2539,7 +2723,7 @@ class Conversation:
                 f"id={current_ticket.id}: Device validation: "
                 if device.type.is_active is False:
                     raise ValueError(
-                        f"{log_prefix_val}Device type "
+                        f"{log_prefix_val}{DeviceTypeDB.__name__} "
                         f"'{device.type.name.name}' is inactive "
                         "but was assigned to device."
                     )
@@ -2551,7 +2735,7 @@ class Conversation:
                     )
                 if device.type.is_disposable and device.removal:
                     raise ValueError(
-                        f"{log_prefix_val}Device type "
+                        f"{log_prefix_val}{DeviceTypeDB.__name__} "
                         f"'{device.type.name.name}' is "
                         "disposable, but device flag 'removal' is "
                         f"{device.removal} (expected False)."
@@ -2559,14 +2743,14 @@ class Conversation:
                 if device.type.has_serial_number:
                     if device.serial_number is None:
                         raise ValueError(
-                            f"{log_prefix_val}Device type "
+                            f"{log_prefix_val}{DeviceTypeDB.__name__} "
                             f"'{device.type.name.name}' requires a "
                             "serial number, but device is missing it."
                         )
                 else:
                     if device.serial_number is not None:
                         raise ValueError(
-                            f"{log_prefix_val}Device type "
+                            f"{log_prefix_val}{DeviceTypeDB.__name__} "
                             f"'{device.type.name.name}' does not "
                             "use a serial number, but one is provided "
                             f"('{device.serial_number}')."
