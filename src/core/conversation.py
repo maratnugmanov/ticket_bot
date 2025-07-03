@@ -69,17 +69,21 @@ class Conversation:
         self.response_methods_list: list[MethodTG] = []
         # logger.debug(f"{self.log_prefix}User conversation state: {self.state}")
         self._stateless_callback_handlers: dict[
-            CallbackData, Callable[[int, int], list[MethodTG]]
+            CallbackData,
+            Callable[[int, int], Coroutine[Any, Any, list[MethodTG]]]
+            | Callable[[int, int], list[MethodTG]],
         ] = {
             CallbackData.ENTER_TICKET_NUMBER: self._handle_stateless_cb_enter_ticket_number,
             CallbackData.ENABLE_HIRING_BTN: self._handle_stateless_cb_enable_hiring,
             CallbackData.DISABLE_HIRING_BTN: self._handle_stateless_cb_disable_hiring,
+            CallbackData.WRITEOFF_DEVICES_BTN: self._handle_stateless_cb_writeoff_devices,
         }
         self._state_handlers: dict[
             Action,
             Callable[[StateJS], Coroutine[Any, Any, list[MethodTG]]]
             | Callable[[StateJS], list[MethodTG]],
         ] = {
+            # New Ticket Scenario
             Action.ENTER_TICKET_NUMBER: self._handle_action_enter_ticket_number,
             Action.ENTER_CONTRACT_NUMBER: self._handle_action_enter_contract_number,
             Action.PICK_DEVICE_TYPE: self._handle_action_pick_device_type,
@@ -94,6 +98,8 @@ class Conversation:
             Action.EDIT_SERIAL_NUMBER: self._handle_action_edit_serial_number,
             Action.CONFIRM_CLOSE_TICKET: self._handle_pick_confirm_close_ticket,
             Action.CONFIRM_QUIT_WITHOUT_SAVING: self._handle_pick_confirm_quit_ticket_without_saving,
+            # Writeoff Scenario
+            # Action.PICK_WRITEOFF_DEVICE: self._handle_pick_writeoff_device,
         }
         # logger.debug(f"{self.log_prefix}Conversation instance initialized.")
 
@@ -393,7 +399,7 @@ class Conversation:
                         )
         return success
 
-    def _stateless_conversation(self) -> list[MethodTG]:
+    async def _stateless_conversation(self) -> list[MethodTG]:
         logger.info(
             f"{self.log_prefix}Starting new conversation with {self.user_db.full_name}."
         )
@@ -427,12 +433,22 @@ class Conversation:
                     f"'{received_callback_data.value}'."
                 )
                 if callback_handler:
-                    logger.info(
-                        f"{self.log_prefix}Calling sync handler for "
-                        f"{received_callback_data.__class__.__name__} "
-                        f"'{received_callback_data.value}'."
-                    )
-                    methods_tg_list.extend(callback_handler(chat_id, message_id))
+                    if inspect.iscoroutinefunction(callback_handler):
+                        logger.info(
+                            f"{self.log_prefix}Calling async handler for "
+                            f"{received_callback_data.__class__.__name__} "
+                            f"'{received_callback_data.value}'."
+                        )
+                        methods_tg_list.extend(
+                            await callback_handler(chat_id, message_id)
+                        )
+                    else:
+                        logger.info(
+                            f"{self.log_prefix}Calling sync handler for "
+                            f"{received_callback_data.__class__.__name__} "
+                            f"'{received_callback_data.value}'."
+                        )
+                        methods_tg_list.extend(callback_handler(chat_id, message_id))  # type: ignore
                 else:
                     logger.info(
                         f"{self.log_prefix}No handler for "
@@ -509,6 +525,29 @@ class Conversation:
         )
         return methods_tg_list
 
+    async def _handle_stateless_cb_writeoff_devices(
+        self, chat_id: int, message_id: int
+    ) -> list[MethodTG]:
+        """Handles CallbackData.WRITEOFF_DEVICES in a stateless
+        conversation."""
+        # chat_id, message_id are part of the uniform signature but
+        # might not be used directly by all handlers.
+        logger.info(f"{self.log_prefix}Initiating writeoff scenario.")
+        methods_tg_list: list[MethodTG] = []
+        self.next_state = StateJS(
+            action=Action.WRITEOFF_DEVICES,
+            script=Script.INITIAL_DATA,
+        )
+        methods_tg_list.append(
+            self._build_edit_to_callback_button_text(),
+        )
+        methods_tg_list.append(
+            await self._build_stateless_writeoffs_devices(
+                f"{String.PICK_WRITEOFFS_ACTION}."
+            ),
+        )
+        return methods_tg_list
+
     def _handle_stateless_cb_enable_hiring(
         self, chat_id: int, message_id: int
     ) -> list[MethodTG]:
@@ -529,7 +568,7 @@ class Conversation:
                 f"{String.HIRING_ALREADY_ENABLED} {String.PICK_A_FUNCTION}."
             )
         method_tg.reply_markup = InlineKeyboardMarkupTG(
-            inline_keyboard=self._helper_mainmenu_keyboard_array()
+            inline_keyboard=self._helper_mainmenu_keyboard_rows()
         )
         methods_tg_list.append(method_tg)
         return methods_tg_list
@@ -554,7 +593,7 @@ class Conversation:
                 f"{String.HIRING_ALREADY_DISABLED} {String.PICK_A_FUNCTION}."
             )
         method_tg.reply_markup = InlineKeyboardMarkupTG(
-            inline_keyboard=self._helper_mainmenu_keyboard_array()
+            inline_keyboard=self._helper_mainmenu_keyboard_rows()
         )
         methods_tg_list.append(method_tg)
         return methods_tg_list
@@ -2160,13 +2199,17 @@ class Conversation:
                             self.next_state = None
                             self.user_db.state_json = None
                             methods_tg_list.append(
-                                self._build_stateless_mainmenu_message(
-                                    f"{String.YOU_CLOSED_TICKET} "
-                                    f"{String.NUMBER_SYMBOL}"
+                                self._build_new_text_message(
+                                    f"{String.TICKET_NUMBER_BTN} "
                                     f"{ticket_number} "
                                     f"{String.WITH_X} "
                                     f"{total_devices} "
-                                    f"{device_string}. "
+                                    f"{device_string}."
+                                )
+                            )
+                            methods_tg_list.append(
+                                self._build_stateless_mainmenu_message(
+                                    f"{String.YOU_CLOSED_TICKET}. "
                                     f"{String.PICK_A_FUNCTION}."
                                 )
                             )
@@ -2307,11 +2350,11 @@ class Conversation:
         return methods_tg_list
 
     def _build_stateless_mainmenu_message(self, text: str) -> SendMessageTG:
-        mainmenu_keyboard_array = self._helper_mainmenu_keyboard_array()
-        if mainmenu_keyboard_array:
+        mainmenu_keyboard_rows = self._helper_mainmenu_keyboard_rows()
+        if mainmenu_keyboard_rows:
             text = text
             reply_markup = InlineKeyboardMarkupTG(
-                inline_keyboard=mainmenu_keyboard_array
+                inline_keyboard=mainmenu_keyboard_rows
             )
         else:
             text = f"{String.NO_FUNCTIONS_ARE_AVAILABLE}."
@@ -2322,6 +2365,117 @@ class Conversation:
             reply_markup=reply_markup,
         )
         return method_tg
+
+    async def _build_stateless_writeoffs_devices(
+        self, text: str = f"{String.PICK_WRITEOFFS_ACTION}.", page_index: int = 0
+    ) -> SendMessageTG:
+        await self.session.refresh(self.user_db, attribute_names=["writeoff_devices"])
+        # user_db: UserDB | None = await self.session.scalar(
+        #     select(UserDB)
+        #     .where(UserDB.telegram_uid == self.user_db.telegram_uid)
+        #     .options(selectinload(UserDB.roles), selectinload(UserDB.writeoff_devices))
+        # )
+        # if user_db is None:
+        #     error_msg = (
+        #         f"{self.log_prefix}CRITICAL: {self.user_db.full_name} "
+        #         "was not found in the database. You shouldn't see this."
+        #     )
+        #     logger.error(error_msg)
+        #     raise ValueError(error_msg)
+        # self.user_db = user_db
+        inline_keyboard_rows: list[list[InlineKeyboardButtonTG]] = []
+        add_new_writeoff_device_button: list[InlineKeyboardButtonTG] = [
+            InlineKeyboardButtonTG(
+                text=f"{String.ADD_WRITEOFF_BTN}",
+                callback_data=CallbackData.ADD_WRITEOFF_BTN,
+            ),
+        ]
+        inline_keyboard_rows.append(add_new_writeoff_device_button)
+        writeoff_devices = sorted(
+            self.user_db.writeoff_devices, key=lambda device: device.id, reverse=True
+        )
+        total_writeoff_devices = len(writeoff_devices)
+        if total_writeoff_devices % settings.writeoffs_per_page == 0:
+            total_pages = total_writeoff_devices // settings.writeoffs_per_page
+        else:
+            total_pages = total_writeoff_devices // settings.writeoffs_per_page + 1
+        if total_pages > 0:
+            last_page_index = total_pages - 1
+        elif total_pages == 0:
+            last_page_index = 0
+        else:
+            error_msg = (
+                f"{self.log_prefix}CRITICAL: Current total number "
+                "of pages cannot be negative."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        existing_writeoff_devices_button_rows: list[list[InlineKeyboardButtonTG]] = []
+        writeoff_device_index_offset = page_index * settings.writeoffs_per_page
+        current_page_writeoff_devices = writeoff_devices[
+            writeoff_device_index_offset : writeoff_device_index_offset
+            + settings.writeoffs_per_page
+        ]
+        current_page_writeoff_devices_count = len(current_page_writeoff_devices)
+        writeoff_devices_dict: dict[int, int] = {}
+        for index, writeoff_device in enumerate(current_page_writeoff_devices):
+            writeoff_device_number = (
+                total_writeoff_devices - writeoff_device_index_offset - index
+            )
+            if writeoff_device.device.serial_number is not None:
+                writeoff_device_serial_number_string = (
+                    f" {writeoff_device.device.serial_number}"
+                )
+            else:
+                writeoff_device_serial_number_string = ""
+            device_type_name = String[writeoff_device.device.type.name.name]
+            writeoff_device_button = [
+                InlineKeyboardButtonTG(
+                    text=(
+                        f"{writeoff_device_number}. "
+                        f"{device_type_name.value}"
+                        f"{writeoff_device_serial_number_string}"
+                    ),
+                    callback_data=CallbackData[f"DEVICE_{index}"],
+                ),
+            ]
+            writeoff_devices_dict[index] = writeoff_device.id
+            existing_writeoff_devices_button_rows.append(writeoff_device_button)
+        prev_next_buttons_row: list[InlineKeyboardButtonTG] = []
+        if total_writeoff_devices > current_page_writeoff_devices_count:
+            if page_index > last_page_index:
+                page_index = last_page_index
+            elif page_index < 0:
+                error_msg = (
+                    f"{self.log_prefix}CRITICAL: Current writeoff list "
+                    "page has negative index."
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+            prev_button = InlineKeyboardButtonTG(
+                text=f"{String.PREV_ONES}",
+                callback_data=CallbackData.PREV_ONES,
+            )
+            next_button = InlineKeyboardButtonTG(
+                text=f"{String.NEXT_ONES}",
+                callback_data=CallbackData.NEXT_ONES,
+            )
+            if page_index < last_page_index:
+                prev_next_buttons_row.append(prev_button)
+            if page_index > 0:
+                prev_next_buttons_row.append(next_button)
+        if prev_next_buttons_row:
+            inline_keyboard_rows.append(prev_next_buttons_row)
+        return_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
+            text=String.RETURN_BTN,
+            callback_data=CallbackData.RETURN_BTN,
+        )
+        inline_keyboard_rows.append([return_button])
+        return SendMessageTG(
+            chat_id=self.user_db.telegram_uid,
+            text=text,
+            reply_markup=InlineKeyboardMarkupTG(inline_keyboard=inline_keyboard_rows),
+        )
 
     def _build_edit_to_callback_button_text(
         self, prefix_text: str = ""
@@ -2491,7 +2645,7 @@ class Conversation:
         ticket_number = current_ticket.number
         contract_number = current_ticket.contract.number
         devices_list = current_ticket.devices
-        inline_keyboard_array: list[list[InlineKeyboardButtonTG]] = []
+        inline_keyboard_rows: list[list[InlineKeyboardButtonTG]] = []
         ticket_number_button: list[InlineKeyboardButtonTG] = [
             InlineKeyboardButtonTG(
                 text=f"{String.TICKET_NUMBER_BTN} {ticket_number} {String.EDIT}",
@@ -2504,7 +2658,7 @@ class Conversation:
                 callback_data=CallbackData.EDIT_CONTRACT_NUMBER,
             ),
         ]
-        device_button_array: list[list[InlineKeyboardButtonTG]] = []
+        device_button_rows: list[list[InlineKeyboardButtonTG]] = []
         for index, device in enumerate(devices_list):
             device_number = index + 1
             device_icon = "↪️" if device.removal else "✅"
@@ -2527,7 +2681,7 @@ class Conversation:
                 device_button_text = (
                     f"{device_number}. {device_icon} {device_type_name} >>"
                 )
-            device_button_array.append(
+            device_button_rows.append(
                 [
                     InlineKeyboardButtonTG(
                         text=device_button_text,
@@ -2553,19 +2707,19 @@ class Conversation:
                 callback_data=CallbackData.QUIT_WITHOUT_SAVING_BTN,
             ),
         ]
-        inline_keyboard_array.append(ticket_number_button)
-        inline_keyboard_array.append(contract_number_button)
-        inline_keyboard_array.extend(device_button_array)
+        inline_keyboard_rows.append(ticket_number_button)
+        inline_keyboard_rows.append(contract_number_button)
+        inline_keyboard_rows.extend(device_button_rows)
         device_list_length = len(devices_list)
         if device_list_length < settings.devices_per_ticket:
-            inline_keyboard_array.append(add_device_button)
+            inline_keyboard_rows.append(add_device_button)
         if device_list_length > 0:
-            inline_keyboard_array.append(close_ticket_button)
-        inline_keyboard_array.append(quit_without_saving_button)
+            inline_keyboard_rows.append(close_ticket_button)
+        inline_keyboard_rows.append(quit_without_saving_button)
         return SendMessageTG(
             chat_id=self.user_db.telegram_uid,
             text=text,
-            reply_markup=InlineKeyboardMarkupTG(inline_keyboard=inline_keyboard_array),
+            reply_markup=InlineKeyboardMarkupTG(inline_keyboard=inline_keyboard_rows),
         )
 
     def _build_pick_device_action_message(
@@ -2604,7 +2758,7 @@ class Conversation:
             )
             logger.error(error_msg)
             raise ValueError(error_msg)
-        inline_keyboard_array: list[list[InlineKeyboardButtonTG]] = []
+        inline_keyboard_rows: list[list[InlineKeyboardButtonTG]] = []
         device = devices_list[device_index]
         device_type_name = String[device.type.name.name]
         device_serial_number_text = (
@@ -2647,22 +2801,22 @@ class Conversation:
             text=String.DELETE_DEVICE_FROM_TICKET,
             callback_data=CallbackData.DELETE_DEVICE_BTN,
         )
-        inline_keyboard_array.append([device_type_button])
+        inline_keyboard_rows.append([device_type_button])
         if not device.type.is_disposable:
-            inline_keyboard_array.append([device_action_button])
+            inline_keyboard_rows.append([device_action_button])
         if device.type.has_serial_number:
-            inline_keyboard_array.append([serial_number_button])
+            inline_keyboard_rows.append([serial_number_button])
         if (
             device.type.has_serial_number
             and device.serial_number is not None
             or not device.type.has_serial_number
         ):
-            inline_keyboard_array.append([return_button])
-        inline_keyboard_array.append([delete_button])
+            inline_keyboard_rows.append([return_button])
+        inline_keyboard_rows.append([delete_button])
         return SendMessageTG(
             chat_id=self.user_db.telegram_uid,
             text=text,
-            reply_markup=InlineKeyboardMarkupTG(inline_keyboard=inline_keyboard_array),
+            reply_markup=InlineKeyboardMarkupTG(inline_keyboard=inline_keyboard_rows),
         )
 
     def _build_pick_confirm_close_ticket_message(
@@ -2862,10 +3016,10 @@ class Conversation:
             ),
         )
 
-    def _helper_mainmenu_keyboard_array(self) -> list[list[InlineKeyboardButtonTG]]:
-        inline_keyboard_array = []
+    def _helper_mainmenu_keyboard_rows(self) -> list[list[InlineKeyboardButtonTG]]:
+        inline_keyboard_rows = []
         if self.user_db.is_engineer:
-            inline_keyboard_array.append(
+            inline_keyboard_rows.append(
                 [
                     InlineKeyboardButtonTG(
                         text=String.CLOSE_TICKET_BTN,
@@ -2873,7 +3027,7 @@ class Conversation:
                     )
                 ],
             )
-            inline_keyboard_array.append(
+            inline_keyboard_rows.append(
                 [
                     InlineKeyboardButtonTG(
                         text=String.TICKETS_HISTORY_BTN,
@@ -2886,7 +3040,7 @@ class Conversation:
                 ],
             )
         if self.user_db.is_manager:
-            inline_keyboard_array.append(
+            inline_keyboard_rows.append(
                 [
                     InlineKeyboardButtonTG(
                         text=String.FORM_REPORT_BTN,
@@ -2895,7 +3049,7 @@ class Conversation:
                 ],
             )
             if self.user_db.is_hiring:
-                inline_keyboard_array.append(
+                inline_keyboard_rows.append(
                     [
                         InlineKeyboardButtonTG(
                             text=String.DISABLE_HIRING_BTN,
@@ -2904,7 +3058,7 @@ class Conversation:
                     ],
                 )
             else:
-                inline_keyboard_array.append(
+                inline_keyboard_rows.append(
                     [
                         InlineKeyboardButtonTG(
                             text=String.ENABLE_HIRING_BTN,
@@ -2912,4 +3066,7 @@ class Conversation:
                         )
                     ],
                 )
-        return inline_keyboard_array
+        return inline_keyboard_rows
+
+    # async def _handle_pick_writeoff_device(self, state: StateJS) -> list[MethodTG]:
+    #     pass

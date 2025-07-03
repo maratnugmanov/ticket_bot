@@ -44,6 +44,8 @@ class StateJS(BaseModel):
     script: Script
     # devices_list: list[DeviceJS] = []
     device_index: int = 0
+    writeoff_devices_page: int = 0
+    writeoff_devices_dict: dict[int, int] = {}
     # ticket_number: int | None = None
     # contract_number: int | None = None
     # device_type: DeviceTypeName | None = None

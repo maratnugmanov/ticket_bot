@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     telegram_api_base: str = "https://api.telegram.org/"
 
     devices_per_ticket: int = Field(alias="DEVICES_PER_TICKET")
+    writeoffs_per_page: int = Field(alias="WRITEOFFS_PER_PAGE")
 
     user_default_timezone: str = Field(alias="USER_DEFAULT_TIMEZONE")
 

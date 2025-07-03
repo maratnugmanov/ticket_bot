@@ -32,7 +32,6 @@ class CallbackData(enum.StrEnum):
     INSTALL_DEVICE_BTN = enum.auto()
     RETURN_DEVICE_BTN = enum.auto()
     DELETE_DEVICE_BTN = enum.auto()
-    # EDIT_DEVICE_SN_BTN = enum.auto()
 
     # ENABLE_HIRING = enum.auto()
     # DISABLE_HIRING = enum.auto()
@@ -74,6 +73,11 @@ class CallbackData(enum.StrEnum):
     CONFIRM_QUIT_BTN = enum.auto()
     CHANGED_MY_MIND_BTN = enum.auto()
     CONFIRM_CLOSE_TICKET_BTN = enum.auto()
+    RETURN_BTN = enum.auto()
+
+    ADD_WRITEOFF_BTN = enum.auto()
+    PREV_ONES = enum.auto()
+    NEXT_ONES = enum.auto()
 
 
 # icons: ✏️
@@ -95,7 +99,6 @@ class String(enum.StrEnum):
     INSTALL_DEVICE_BTN = "✅ Установка"
     RETURN_DEVICE_BTN = "↪️ Возврат"
     EDIT = "[ Ред ]"
-    # EDIT_DEVICE_SN_BTN = "Ввели неверный номер?"
 
     CLOSE_TICKET_BTN = "⚙ Закрыть заявку"
     TICKETS_HISTORY_BTN = "🗓 История"
@@ -160,6 +163,7 @@ class String(enum.StrEnum):
     DEVICE_ACTION_WAS_CHANGED_FOR = "Тип действия с устройством изменен на"
     PICK_TICKET_ACTION = "Возможные действия: изменение номера текущей заявки/договора, изменение/добавление/удаление устройств, закрытие заявки и выход без сохранения"
     PICK_DEVICE_ACTION = "Возможные действия: изменение серийного номера и типа устройства, смена производимого над ним действия, возврат в предыдущее меню или удаление устройства из данной заявки"
+    PICK_WRITEOFFS_ACTION = "Возможные действия: добавление/изменение/удаление брака или возврат в предыдущее меню."
     TICKET_NUMBER_BTN = "Заявка №"
     TICKET_NUMBER_TIP = "[ Изменить номер заявки ]"
     CONTRACT_NUMBER_BTN = "Договор №"
@@ -196,6 +200,10 @@ class String(enum.StrEnum):
     HIRING_ALREADY_DISABLED = f"Найм уже закрыт. {HIRING_DISABLED_TIP}"
     # YOU_HAVE_PICKED = "Вы выбрали"
 
+    ADD_WRITEOFF_BTN = "➕ Добавить брак"
+    PREV_ONES = "< Предыдущие"
+    NEXT_ONES = "Следующие >"
+
 
 class Action(enum.StrEnum):
     @staticmethod
@@ -216,6 +224,7 @@ class Action(enum.StrEnum):
     PICK_DEVICE_ACTION = enum.auto()
     CONFIRM_CLOSE_TICKET = enum.auto()
     CONFIRM_QUIT_WITHOUT_SAVING = enum.auto()
+    WRITEOFF_DEVICES = enum.auto()
 
     # ENABLE_HIRING = enum.auto()
     # DISABLE_HIRING = enum.auto()
