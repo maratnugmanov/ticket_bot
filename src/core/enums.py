@@ -73,9 +73,9 @@ class CallbackData(enum.StrEnum):
     CONFIRM_QUIT_BTN = enum.auto()
     CHANGED_MY_MIND_BTN = enum.auto()
     CONFIRM_CLOSE_TICKET_BTN = enum.auto()
-    RETURN_BTN = enum.auto()
+    RETURN_TO_MAIN_MENU = enum.auto()
 
-    ADD_WRITEOFF_BTN = enum.auto()
+    ADD_WRITEOFF_DEVICE_BTN = enum.auto()
     PREV_ONES = enum.auto()
     NEXT_ONES = enum.auto()
 
@@ -126,11 +126,14 @@ class String(enum.StrEnum):
     CONTRACT_NUMBER_REMAINS_THE_SAME = "Номер договора остался прежним"
 
     EDIT_DEVICE = "✏️ Изменить устройство"
+    EDIT_WRITEOFF_DEVICE = "✏️ Изменить бракованное устройство"
 
     RETURNING_TO_TICKET = "<< Возвращаемся в заявку"
+    RETURNING_TO_MAIN_MENU = "<< Возвращаемся в главное меню"
     RETURN_BTN = "<< Назад"
 
     PICK_DEVICE_TYPE = "Выберите тип устройства"
+    PICK_WRITEOFF_DEVICE_TYPE = "Выберите тип бракованного устройства"
     EDIT_DEVICE_TYPE = "✏️ Изменить тип устройства"
     PICK_NEW_DEVICE_TYPE = "Выберите новый тип устройства"
     FROM_OPTIONS_BELOW = "из предложенных ниже вариантов"
@@ -140,6 +143,7 @@ class String(enum.StrEnum):
     DEVICE_TYPE_WAS_EDITED = "Тип устройства был изменен"
     DEVICE_TYPE_REMAINS_THE_SAME = "Тип устройства остался прежним"
     NO_DEVICE_TYPE_AVAILABLE = "Ни один тип устройства в данный момент не доступен, работа с заявками невозможна. обратитесь к администратору"
+    NO_WRITEOFF_DEVICE_TYPE_AVAILABLE = "Ни один тип бракованного устройства в данный момент не доступен, добавление брака невозможно. обратитесь к администратору"
     ENTER_SERIAL_NUMBER = "Введите серийный номер"
     INCORRECT_SERIAL_NUMBER = "Серийный номер должен состоять из букв латинского алфавита и/или цифр и не может быть равен нулю, попробуйте снова"
     GOT_DATA_NOT_SERIAL_NUMBER = (
@@ -163,7 +167,7 @@ class String(enum.StrEnum):
     DEVICE_ACTION_WAS_CHANGED_FOR = "Тип действия с устройством изменен на"
     PICK_TICKET_ACTION = "Возможные действия: изменение номера текущей заявки/договора, изменение/добавление/удаление устройств, закрытие заявки и выход без сохранения"
     PICK_DEVICE_ACTION = "Возможные действия: изменение серийного номера и типа устройства, смена производимого над ним действия, возврат в предыдущее меню или удаление устройства из данной заявки"
-    PICK_WRITEOFFS_ACTION = "Возможные действия: добавление/изменение/удаление брака или возврат в предыдущее меню."
+    PICK_WRITEOFFS_ACTION = "Возможные действия: добавление/изменение/удаление брака или возврат в предыдущее меню"
     TICKET_NUMBER_BTN = "Заявка №"
     TICKET_NUMBER_TIP = "[ Изменить номер заявки ]"
     CONTRACT_NUMBER_BTN = "Договор №"
@@ -200,7 +204,7 @@ class String(enum.StrEnum):
     HIRING_ALREADY_DISABLED = f"Найм уже закрыт. {HIRING_DISABLED_TIP}"
     # YOU_HAVE_PICKED = "Вы выбрали"
 
-    ADD_WRITEOFF_BTN = "➕ Добавить брак"
+    ADD_WRITEOFF_DEVICE_BTN = "➕ Добавить брак"
     PREV_ONES = "< Предыдущие"
     NEXT_ONES = "Следующие >"
 
@@ -225,6 +229,7 @@ class Action(enum.StrEnum):
     CONFIRM_CLOSE_TICKET = enum.auto()
     CONFIRM_QUIT_WITHOUT_SAVING = enum.auto()
     WRITEOFF_DEVICES = enum.auto()
+    PICK_WRITEOFF_DEVICE_TYPE = enum.auto()
 
     # ENABLE_HIRING = enum.auto()
     # DISABLE_HIRING = enum.auto()

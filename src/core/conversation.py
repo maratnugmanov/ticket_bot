@@ -98,6 +98,7 @@ class Conversation:
             Action.EDIT_SERIAL_NUMBER: self._handle_action_edit_serial_number,
             Action.CONFIRM_CLOSE_TICKET: self._handle_pick_confirm_close_ticket,
             Action.CONFIRM_QUIT_WITHOUT_SAVING: self._handle_pick_confirm_quit_ticket_without_saving,
+            Action.WRITEOFF_DEVICES: self._handle_action_writeoff_devices,
             # Writeoff Scenario
             # Action.PICK_WRITEOFF_DEVICE: self._handle_pick_writeoff_device,
         }
@@ -2349,6 +2350,175 @@ class Conversation:
             )
         return methods_tg_list
 
+    async def _handle_action_writeoff_devices(self, state: StateJS) -> list[MethodTG]:
+        logger.info(f"{self.log_prefix}Awaiting writeoff devices choice to be made.")
+        if self.state is None:
+            error_msg = "'self.state' cannot be None at this point."
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        methods_tg_list: list[MethodTG] = []
+        await self.session.refresh(self.user_db, attribute_names=["writeoff_devices"])
+        if isinstance(self.update_tg, CallbackQueryUpdateTG):
+            expected_callback_data = [
+                CallbackData.ADD_WRITEOFF_DEVICE_BTN,
+                CallbackData.RETURN_TO_MAIN_MENU,
+            ]
+            page_index = self.state.writeoff_devices_page
+            writeoff_devices_dict = self.state.writeoff_devices_dict
+            total_writeoff_devices = len(writeoff_devices_dict)
+            if total_writeoff_devices % settings.writeoffs_per_page == 0:
+                total_pages = total_writeoff_devices // settings.writeoffs_per_page
+            else:
+                total_pages = total_writeoff_devices // settings.writeoffs_per_page + 1
+            if total_pages > 0:
+                last_page_index = total_pages - 1
+            elif total_pages == 0:
+                last_page_index = 0
+            else:
+                error_msg = (
+                    f"{self.log_prefix}CRITICAL: Current total number "
+                    "of pages cannot be negative."
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+            if page_index < last_page_index:
+                expected_callback_data.append(CallbackData.PREV_ONES)
+            if page_index > 0:
+                expected_callback_data.append(CallbackData.NEXT_ONES)
+            existing_writeoff_devices_callbacks = [
+                CallbackData[f"DEVICE_{index}"]
+                for index in range(total_writeoff_devices)
+            ]
+            expected_callback_data.extend(existing_writeoff_devices_callbacks)
+            raw_data = self.update_tg.callback_query.data
+            try:
+                received_callback_data = CallbackData(raw_data)
+                if received_callback_data in expected_callback_data:
+                    logger.info(
+                        f"{self.log_prefix}Got expected "
+                        f"{CallbackData.__name__} "
+                        f"'{received_callback_data.value}'."
+                    )
+                    self.next_state = state.model_copy(deep=True)
+                    if received_callback_data == CallbackData.ADD_WRITEOFF_DEVICE_BTN:
+                        methods_tg_list.append(
+                            self._build_edit_to_callback_button_text()
+                        )
+                        self.next_state.action = Action.PICK_WRITEOFF_DEVICE_TYPE
+                        methods_tg_list.append(
+                            await self._build_pick_writeoff_device_type_message(
+                                f"{String.PICK_WRITEOFF_DEVICE_TYPE}."
+                            )
+                        )
+                    elif received_callback_data == CallbackData.RETURN_TO_MAIN_MENU:
+                        methods_tg_list.append(
+                            self._build_edit_to_text_message(
+                                f"{String.RETURNING_TO_MAIN_MENU}."
+                            )
+                        )
+                        self.next_state = None
+                        self.user_db.state_json = None
+                        methods_tg_list.append(
+                            self._build_stateless_mainmenu_message(
+                                f"{String.YOU_QUIT_WITHOUT_SAVING}. {String.PICK_A_FUNCTION}."
+                            )
+                        )
+                    elif received_callback_data in existing_writeoff_devices_callbacks:
+                        pattern = r"(\d+)$"
+                        match = re.search(pattern, received_callback_data)
+                        if match:
+                            device_index_string = match.group(1)
+                        else:
+                            error_msg = (
+                                f"{self.log_prefix}"
+                                f"{CallbackData.__name__} "
+                                f"'{received_callback_data.value}' "
+                                "doesn't end with an integer."
+                            )
+                            logger.error(error_msg)
+                            raise ValueError(error_msg)
+                        callback_device_index = int(device_index_string)
+                        device = await self.session.scalar(
+                            select(WriteoffDeviceDB).where(
+                                WriteoffDeviceDB.id
+                                == self.state.writeoff_devices_dict.get(
+                                    callback_device_index
+                                )
+                            )
+                        ).options(selectinload(DeviceDB.type))
+                        methods_tg_list.append(
+                            self._build_edit_to_text_message(
+                                f"{String.EDIT_WRITEOFF_DEVICE} {callback_device_index + 1}."
+                            )
+                        )
+                        self.next_state.action = Action.PICK_DEVICE_ACTION
+                        self.next_state.device_index = callback_device_index
+                        methods_tg_list.append(
+                            self._build_pick_device_action_message(
+                                f"{String.PICK_DEVICE_ACTION}."
+                            )
+                        )
+                    elif received_callback_data == CallbackData.ADD_DEVICE_BTN:
+                        methods_tg_list.append(
+                            self._build_edit_to_callback_button_text()
+                        )
+                        self.next_state.action = Action.PICK_DEVICE_TYPE
+                        self.next_state.device_index = device_list_length
+                        methods_tg_list.append(
+                            await self._build_pick_device_type_message(
+                                f"{String.PICK_DEVICE_TYPE}."
+                            )
+                        )
+                    elif received_callback_data == CallbackData.CLOSE_TICKET_BTN:
+                        methods_tg_list.append(
+                            self._build_edit_to_callback_button_text()
+                        )
+                        self.next_state.action = Action.CONFIRM_CLOSE_TICKET
+                        methods_tg_list.append(
+                            self._build_pick_confirm_close_ticket_message(
+                                f"{String.CONFIRM_YOU_WANT_TO_CLOSE_TICKET}."
+                            )
+                        )
+                    elif received_callback_data == CallbackData.QUIT_WITHOUT_SAVING_BTN:
+                        methods_tg_list.append(
+                            self._build_edit_to_callback_button_text()
+                        )
+                        self.next_state.action = Action.CONFIRM_QUIT_WITHOUT_SAVING
+                        methods_tg_list.append(
+                            self._build_pick_confirm_quit_without_saving(
+                                f"{String.ARE_YOU_SURE_YOU_WANT_TO_QUIT_WITHOUT_SAVING}?"
+                            )
+                        )
+                else:
+                    logger.info(
+                        f"{self.log_prefix}Got unexpected "
+                        f"{CallbackData.__name__} "
+                        f"'{received_callback_data.value}'."
+                    )
+                    raise ValueError
+            except ValueError:
+                logger.info(
+                    f"{self.log_prefix}Got invalid callback data "
+                    f"'{raw_data}' for writeoff devices selection."
+                )
+                methods_tg_list.append(
+                    self._build_edit_to_text_message(f"{String.GOT_UNEXPECTED_DATA}.")
+                )
+                methods_tg_list.append(
+                    self._build_pick_ticket_action_message(
+                        f"{String.GOT_UNEXPECTED_DATA}. {String.PICK_TICKET_ACTION}."
+                    )
+                )
+        elif isinstance(self.update_tg, MessageUpdateTG):
+            logger.info(f"{self.log_prefix}Got message instead of callback data.")
+            methods_tg_list.append(
+                self._build_pick_ticket_action_message(
+                    f"{String.TICKET_ACTION_WAS_NOT_PICKED}. "
+                    f"{String.PICK_TICKET_ACTION}."
+                )
+            )
+        return methods_tg_list
+
     def _build_stateless_mainmenu_message(self, text: str) -> SendMessageTG:
         mainmenu_keyboard_rows = self._helper_mainmenu_keyboard_rows()
         if mainmenu_keyboard_rows:
@@ -2369,25 +2539,16 @@ class Conversation:
     async def _build_stateless_writeoffs_devices(
         self, text: str = f"{String.PICK_WRITEOFFS_ACTION}.", page_index: int = 0
     ) -> SendMessageTG:
+        if self.next_state is None:
+            error_msg = "'self.next_state' cannot be None at this point."
+            logger.error(error_msg)
+            raise ValueError(error_msg)
         await self.session.refresh(self.user_db, attribute_names=["writeoff_devices"])
-        # user_db: UserDB | None = await self.session.scalar(
-        #     select(UserDB)
-        #     .where(UserDB.telegram_uid == self.user_db.telegram_uid)
-        #     .options(selectinload(UserDB.roles), selectinload(UserDB.writeoff_devices))
-        # )
-        # if user_db is None:
-        #     error_msg = (
-        #         f"{self.log_prefix}CRITICAL: {self.user_db.full_name} "
-        #         "was not found in the database. You shouldn't see this."
-        #     )
-        #     logger.error(error_msg)
-        #     raise ValueError(error_msg)
-        # self.user_db = user_db
         inline_keyboard_rows: list[list[InlineKeyboardButtonTG]] = []
         add_new_writeoff_device_button: list[InlineKeyboardButtonTG] = [
             InlineKeyboardButtonTG(
-                text=f"{String.ADD_WRITEOFF_BTN}",
-                callback_data=CallbackData.ADD_WRITEOFF_BTN,
+                text=f"{String.ADD_WRITEOFF_DEVICE_BTN}",
+                callback_data=CallbackData.ADD_WRITEOFF_DEVICE_BTN,
             ),
         ]
         inline_keyboard_rows.append(add_new_writeoff_device_button)
@@ -2468,9 +2629,11 @@ class Conversation:
             inline_keyboard_rows.append(prev_next_buttons_row)
         return_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
             text=String.RETURN_BTN,
-            callback_data=CallbackData.RETURN_BTN,
+            callback_data=CallbackData.RETURN_TO_MAIN_MENU,
         )
         inline_keyboard_rows.append([return_button])
+        self.next_state.writeoff_devices_page = page_index
+        self.next_state.writeoff_devices_dict = writeoff_devices_dict
         return SendMessageTG(
             chat_id=self.user_db.telegram_uid,
             text=text,
@@ -2593,6 +2756,55 @@ class Conversation:
             self.user_db.state_json = None
             method_tg = self._build_stateless_mainmenu_message(
                 f"{String.NO_DEVICE_TYPE_AVAILABLE}. {String.PICK_A_FUNCTION}."
+            )
+        else:
+            method_tg = SendMessageTG(
+                chat_id=self.user_db.telegram_uid,
+                text=text,
+                reply_markup=InlineKeyboardMarkupTG(inline_keyboard=inline_keyboard),
+            )
+        return method_tg
+
+    async def _build_pick_writeoff_device_type_message(
+        self, text: str = f"{String.PICK_WRITEOFF_DEVICE_TYPE}."
+    ) -> SendMessageTG:
+        device_types = await self.session.scalars(
+            select(DeviceTypeDB).where(DeviceTypeDB.is_disposable == False)  # noqa: E712
+        )
+        inline_keyboard: list[list[InlineKeyboardButtonTG]] = []
+        for device_type in device_types:
+            try:
+                button_text = String[device_type.name.name]
+                button_callback_data = CallbackData[device_type.name.name]
+                inline_keyboard.append(
+                    [
+                        InlineKeyboardButtonTG(
+                            text=button_text,
+                            callback_data=button_callback_data,
+                        )
+                    ]
+                )
+            except KeyError as e:
+                error_msg = (
+                    f"{self.log_prefix}Configuration error: Missing "
+                    f"{String.__name__} or {CallbackData.__name__} "
+                    f"enum member for {DeviceTypeName.__name__} "
+                    f"'{device_type.name.name}'. Original error: {e}"
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg) from e
+        if not inline_keyboard:
+            warning_msg = (
+                f"{self.log_prefix}Warning: Not a single eligible "
+                f"(not disposable) {DeviceTypeDB.__name__} was found in the "
+                f"database. Cannot build {DeviceTypeDB.__name__} "
+                "selection keyboard."
+            )
+            logger.warning(warning_msg)
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.NO_WRITEOFF_DEVICE_TYPE_AVAILABLE}. {String.PICK_A_FUNCTION}."
             )
         else:
             method_tg = SendMessageTG(

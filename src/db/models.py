@@ -150,10 +150,11 @@ class UserDB(BaseDB, TimestampMixinDB):
 class WriteoffDeviceDB(BaseDB, TimestampMixinDB):
     __tablename__ = "writeoff_devices"
     id: Mapped[int] = mapped_column(init=False, primary_key=True)
-    device_id: Mapped[int] = mapped_column(ForeignKey("devices.id", ondelete="RESTRICT"), index=True)
-    device: Mapped[DeviceDB] = relationship(back_populates="writeoff_devices")
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
     user: Mapped[UserDB] = relationship(back_populates="writeoff_devices")
+    type_id: Mapped[int] = mapped_column(ForeignKey("device_types.id", ondelete="RESTRICT"), index=True)
+    type: Mapped[DeviceTypeDB] = relationship(back_populates="writeoff_devices", init=False)
+    serial_number: Mapped[str | None] = mapped_column(default=None, index=True)
 
     # __table_args__ = (UniqueConstraint("device_id", "user_id", name="unique_device_user_pair"),)
 
@@ -167,7 +168,6 @@ class DeviceDB(BaseDB, TimestampMixinDB):
     type: Mapped[DeviceTypeDB] = relationship(back_populates="devices", init=False)
     serial_number: Mapped[str | None] = mapped_column(default=None, index=True)
     removal: Mapped[bool | None] = mapped_column(default=None, index=True)
-    writeoff_devices: Mapped[list[WriteoffDeviceDB]] = relationship(default_factory=list, back_populates="device", cascade="all, delete-orphan", passive_deletes=True)
     is_draft: Mapped[bool] = mapped_column(default=True, index=True)
 
 
@@ -179,3 +179,4 @@ class DeviceTypeDB(BaseDB, TimestampMixinDB):
     has_serial_number: Mapped[bool] = mapped_column(index=True)
     is_active: Mapped[bool] = mapped_column(default=True, index=True)
     devices: Mapped[list[DeviceDB]] = relationship(default_factory=list, back_populates="type")
+    writeoff_devices: Mapped[list[WriteoffDeviceDB]] = relationship(default_factory=list, back_populates="type")
