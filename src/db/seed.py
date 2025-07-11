@@ -83,8 +83,8 @@ async def create_main_users(session: AsyncSession):
             first_name=settings.admin_first_name,
             last_name=settings.admin_last_name,
             timezone=settings.admin_timezone,
-            roles=admin_roles,
         )
+        admin_user.roles.extend(admin_roles)
         session.add(admin_user)
         logger.info("Admin user added to session.")
         await session.flush()
@@ -111,8 +111,8 @@ async def create_main_users(session: AsyncSession):
             first_name=settings.manager_first_name,
             last_name=settings.manager_last_name,
             timezone=settings.manager_timezone,
-            roles=manager_roles,
         )
+        manager_user.roles.extend(manager_roles)
         session.add(manager_user)
         logger.info("Manager user added to session.")
         await session.flush()

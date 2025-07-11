@@ -81,14 +81,14 @@ class RoleDB(BaseDB, TimestampMixinDB):
     __tablename__ = "roles"
     id: Mapped[int] = mapped_column(init=False, primary_key=True)
     name: Mapped[RoleName] = mapped_column(default=RoleName.GUEST, index=True, unique=True)
-    users: Mapped[list[UserDB]] = relationship(default_factory=list, secondary="users_roles_link", back_populates="roles")
+    users: Mapped[list[UserDB]] = relationship(default_factory=list, secondary="users_roles_link", back_populates="roles", init=False)
 
 
 class ContractDB(BaseDB, TimestampMixinDB):
     __tablename__ = "contracts"
     id: Mapped[int] = mapped_column(init=False, primary_key=True)
     number: Mapped[int] = mapped_column(unique=True, index=True)
-    tickets: Mapped[list[TicketDB]] = relationship(default_factory=list, back_populates="contract", cascade="all, delete-orphan", passive_deletes=True)
+    tickets: Mapped[list[TicketDB]] = relationship(default_factory=list, back_populates="contract", cascade="all, delete-orphan", passive_deletes=True, init=False)
 
 
 class TicketDB(BaseDB, TimestampMixinDB):
@@ -101,7 +101,7 @@ class TicketDB(BaseDB, TimestampMixinDB):
     contract: Mapped[ContractDB | None] = relationship(back_populates="tickets", init=False)
     locked_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), default=None, index=True)
     locked_by_user: Mapped[UserDB | None] = relationship(back_populates="current_ticket", foreign_keys=[locked_by_user_id], init=False)
-    devices: Mapped[list[DeviceDB]] = relationship(default_factory=list, back_populates="ticket", cascade="all, delete-orphan", passive_deletes=True)
+    devices: Mapped[list[DeviceDB]] = relationship(default_factory=list, back_populates="ticket", cascade="all, delete-orphan", passive_deletes=True, init=False)
     is_draft: Mapped[bool] = mapped_column(default=True, index=True)
 
 
@@ -116,9 +116,9 @@ class UserDB(BaseDB, TimestampMixinDB):
     timezone: Mapped[str] = mapped_column(default=settings.user_default_timezone)
     is_hiring: Mapped[bool] = mapped_column(default=False, index=True)
     is_active: Mapped[bool] = mapped_column(default=True, index=True)
-    roles: Mapped[list[RoleDB]] = relationship(default_factory=list, secondary="users_roles_link", back_populates="users")
-    tickets: Mapped[list[TicketDB]] = relationship(default_factory=list, back_populates="user", foreign_keys=TicketDB.user_id, passive_deletes=True)
-    writeoff_devices: Mapped[list[WriteoffDeviceDB]] = relationship(default_factory=list, back_populates="user", passive_deletes=True)
+    roles: Mapped[list[RoleDB]] = relationship(default_factory=list, secondary="users_roles_link", back_populates="users", init=False)
+    tickets: Mapped[list[TicketDB]] = relationship(default_factory=list, back_populates="user", foreign_keys=TicketDB.user_id, passive_deletes=True, init=False)
+    writeoff_devices: Mapped[list[WriteoffDeviceDB]] = relationship(default_factory=list, back_populates="user", passive_deletes=True, init=False)
 
     @property
     def full_name(self) -> str:
@@ -151,10 +151,11 @@ class WriteoffDeviceDB(BaseDB, TimestampMixinDB):
     __tablename__ = "writeoff_devices"
     id: Mapped[int] = mapped_column(init=False, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
-    user: Mapped[UserDB] = relationship(back_populates="writeoff_devices")
+    user: Mapped[UserDB] = relationship(back_populates="writeoff_devices", init=False)
     type_id: Mapped[int] = mapped_column(ForeignKey("device_types.id", ondelete="RESTRICT"), index=True)
     type: Mapped[DeviceTypeDB] = relationship(back_populates="writeoff_devices", init=False)
     serial_number: Mapped[str | None] = mapped_column(default=None, index=True)
+    is_draft: Mapped[bool] = mapped_column(default=True, index=True)
 
     # __table_args__ = (UniqueConstraint("device_id", "user_id", name="unique_device_user_pair"),)
 
@@ -178,5 +179,5 @@ class DeviceTypeDB(BaseDB, TimestampMixinDB):
     is_disposable: Mapped[bool] = mapped_column(index=True)
     has_serial_number: Mapped[bool] = mapped_column(index=True)
     is_active: Mapped[bool] = mapped_column(default=True, index=True)
-    devices: Mapped[list[DeviceDB]] = relationship(default_factory=list, back_populates="type")
-    writeoff_devices: Mapped[list[WriteoffDeviceDB]] = relationship(default_factory=list, back_populates="type")
+    devices: Mapped[list[DeviceDB]] = relationship(default_factory=list, back_populates="type", init=False)
+    writeoff_devices: Mapped[list[WriteoffDeviceDB]] = relationship(default_factory=list, back_populates="type", init=False)

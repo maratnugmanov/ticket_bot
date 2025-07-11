@@ -40,7 +40,7 @@ class CallbackData(enum.StrEnum):
     ENTER_CONTRACT_NUMBER = enum.auto()
     EDIT_CONTRACT_NUMBER = enum.auto()
 
-    EDIT_SERIAL_NUMBER = enum.auto()
+    EDIT_DEVICE_SERIAL_NUMBER = enum.auto()
     EDIT_DEVICE_TYPE = enum.auto()
     EDIT_TICKET = enum.auto()
 
@@ -102,7 +102,7 @@ class String(enum.StrEnum):
 
     CLOSE_TICKET_BTN = "⚙ Закрыть заявку"
     TICKETS_HISTORY_BTN = "🗓 История"
-    WRITEOFF_DEVICES_BTN = "☠ Брак"
+    WRITEOFF_DEVICES_BTN = "💩 Брак"
     FORM_REPORT_BTN = "🖨 Сформировать отчет"
     ENABLE_HIRING_BTN = "🙋‍♀️ Открыть найм"
     DISABLE_HIRING_BTN = "🙅‍♀️ Закрыть найм"
@@ -134,12 +134,14 @@ class String(enum.StrEnum):
 
     PICK_DEVICE_TYPE = "Выберите тип устройства"
     PICK_WRITEOFF_DEVICE_TYPE = "Выберите тип бракованного устройства"
+    WRITEOFF_DEVICE_WAS_NOT_FOUND = "Бракованное устройство не найдено в базе данных, возможно оно было удалено из базы данных пока вы вводили серийный номер"
     EDIT_DEVICE_TYPE = "✏️ Изменить тип устройства"
     PICK_NEW_DEVICE_TYPE = "Выберите новый тип устройства"
     FROM_OPTIONS_BELOW = "из предложенных ниже вариантов"
     DEVICE_TYPE_WAS_CHANGED_FOR = "Тип устройства изменен на"
     DEVICE_TYPE_WAS_NOT_PICKED = "Вы не выбрали тип устройства"
     DEVICE_TYPE_IS_DISABLED = "Выбранный тип устройства в данный момент не используется"
+    DEVICE_TYPE_IS_DISPOSABLE = "Выбранный тип устройства не нуждается в учете списания"
     DEVICE_TYPE_WAS_EDITED = "Тип устройства был изменен"
     DEVICE_TYPE_REMAINS_THE_SAME = "Тип устройства остался прежним"
     NO_DEVICE_TYPE_AVAILABLE = "Ни один тип устройства в данный момент не доступен, работа с заявками невозможна. обратитесь к администратору"
@@ -162,6 +164,7 @@ class String(enum.StrEnum):
     INSTALL_OR_RETURN_REMAINS_THE_SAME = "Действие с устройством осталось прежним"
     DEVICE_ACTION_WAS_NOT_PICKED = "Вы не выбрали действие с устройством"
     TICKET_ACTION_WAS_NOT_PICKED = "Вы не выбрали действие с текущей заявкой"
+    ACTION_WAS_NOT_PICKED = "Вы не выбрали действие"
     GOT_UNEXPECTED_DATA = "Ваш выбор не распознан"
     MESSAGE_HAS_EXPIRED = "Сообщение устарело"
     DEVICE_ACTION_WAS_CHANGED_FOR = "Тип действия с устройством изменен на"
@@ -179,6 +182,7 @@ class String(enum.StrEnum):
     CONFIRM_QUIT_BTN = "❌ Да, выйти"
     CHANGED_MY_MIND_BTN = "Я передумал"
     YOU_QUIT_WITHOUT_SAVING = "Вы вышли без сохранения текущей заявки"
+    YOU_LEFT_WRITEOFF_DEVICES = "Вы закончили работу с бракованными устройствами"
     CONFIRM_YOU_WANT_TO_CLOSE_TICKET = "Подтвердите что вы произвели все необходимые действия по заявке и уверены что готовы ее закрыть"
     CLOSE_TICKET_ACTION_WAS_NOT_PICKED = (
         "Вы не выбрали закрыть заявку или вернуться к работе с ней"
@@ -186,6 +190,7 @@ class String(enum.StrEnum):
     CONFIRM_CLOSE_TICKET_BTN = "⚙ Да, закрыть заявку"
     TICKET_CLOSE_FAILED = "🚫 Ошибка: не удалось сохранить и закрыть заявку, проверьте введенные данные или попробуйте позже"
     YOU_CLOSED_TICKET = "Вы успешно закрыли заявку"
+    YOU_ADDED_WRITEOFF_DEVICE = "Вы успешно добавили бракованное устройство"
     NUMBER_SYMBOL = "№"
     WITH_X = "с"
     X_DEVICE = "устройством"
@@ -220,8 +225,8 @@ class Action(enum.StrEnum):
     EDIT_CONTRACT_NUMBER = enum.auto()
     PICK_DEVICE_TYPE = enum.auto()
     EDIT_DEVICE_TYPE = enum.auto()
-    ENTER_SERIAL_NUMBER = enum.auto()
-    EDIT_SERIAL_NUMBER = enum.auto()
+    ENTER_DEVICE_SERIAL_NUMBER = enum.auto()
+    EDIT_DEVICE_SERIAL_NUMBER = enum.auto()
     PICK_INSTALL_OR_RETURN = enum.auto()
     EDIT_INSTALL_OR_RETURN = enum.auto()
     PICK_TICKET_ACTION = enum.auto()
@@ -230,6 +235,7 @@ class Action(enum.StrEnum):
     CONFIRM_QUIT_WITHOUT_SAVING = enum.auto()
     WRITEOFF_DEVICES = enum.auto()
     PICK_WRITEOFF_DEVICE_TYPE = enum.auto()
+    ENTER_WRITEOFF_DEVICE_SERIAL_NUMBER = enum.auto()
 
     # ENABLE_HIRING = enum.auto()
     # DISABLE_HIRING = enum.auto()
