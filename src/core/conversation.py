@@ -101,6 +101,8 @@ class Conversation:
             Action.WRITEOFF_DEVICES: self._handle_action_writeoff_devices,
             Action.PICK_WRITEOFF_DEVICE_TYPE: self._handle_action_pick_writeoff_device_type,
             Action.ENTER_WRITEOFF_DEVICE_SERIAL_NUMBER: self._handle_action_enter_writeoff_device_serial_number,
+            Action.PICK_WRITEOFF_DEVICE_ACTION: self._handle_action_pick_writeoff_device_action,
+            Action.EDIT_WRITEOFF_DEVICE_TYPE: self._handle_action_edit_writeoff_device_type,
             # Writeoff Scenario
             # Action.PICK_WRITEOFF_DEVICE: self._handle_pick_writeoff_device,
         }
@@ -1913,6 +1915,240 @@ class Conversation:
             )
         return methods_tg_list
 
+    # Not finished
+    async def _handle_action_edit_writeoff_device_type(
+        self, state: StateJS
+    ) -> list[MethodTG]:
+        logger.info(
+            f"{self.log_prefix}Awaiting new writeoff device type choice to be made."
+        )
+        if self.state is None:
+            error_msg = "'self.state' cannot be None at this point."
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        if self.state.writeoff_device_id == 0:
+            error_msg = "'writeoff_device_id' cannot be 0 at this point."
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        methods_tg_list: list[MethodTG] = []
+        if isinstance(self.update_tg, CallbackQueryUpdateTG):
+            raw_data = self.update_tg.callback_query.data
+            try:
+                received_callback_data = CallbackData(raw_data)
+                logger.info(
+                    f"{self.log_prefix}Got {CallbackData.__name__} "
+                    f"'{received_callback_data.value}'."
+                )
+                if received_callback_data.name not in DeviceTypeName.__members__:
+                    logger.info(
+                        f"{self.log_prefix}{CallbackData.__name__} "
+                        f"'{received_callback_data.value}' "
+                        "doesn't match any "
+                        f"{DeviceTypeName.__name__}."
+                    )
+                    raise ValueError
+                device_type_name = DeviceTypeName[received_callback_data.name]
+                logger.info(
+                    f"{self.log_prefix}{CallbackData.__name__} "
+                    f"'{received_callback_data.value}' "
+                    f"matches {DeviceTypeName.__name__} "
+                    f"'{device_type_name.name}'."
+                )
+                methods_tg_list.append(self._build_edit_to_callback_button_text())
+                device_type = await self.session.scalar(
+                    select(DeviceTypeDB).where(DeviceTypeDB.name == device_type_name)
+                )
+                if device_type is None:
+                    logger.info(
+                        f"{self.log_prefix}No {DeviceTypeDB.__name__} "
+                        f"found for {received_callback_data.name}."
+                    )
+                    methods_tg_list.append(
+                        await self._build_pick_writeoff_device_type_message(
+                            f"{String.GOT_UNEXPECTED_DATA}. "
+                            f"{String.PICK_NEW_WRITEOFF_DEVICE_TYPE} "
+                            f"{String.FROM_OPTIONS_BELOW}."
+                        )
+                    )
+                elif device_type.is_disposable:
+                    logger.info(
+                        f"{self.log_prefix}{DeviceTypeDB.__name__} "
+                        f"'{device_type.name.name}' is disposable."
+                    )
+                    methods_tg_list.append(
+                        await self._build_pick_writeoff_device_type_message(
+                            f"{String.DEVICE_TYPE_IS_DISPOSABLE}. "
+                            f"{String.PICK_NEW_WRITEOFF_DEVICE_TYPE} "
+                            f"{String.FROM_OPTIONS_BELOW}."
+                        )
+                    )
+                else:
+                    logger.info(
+                        f"{self.log_prefix}Found non-disposable "
+                        f"{DeviceTypeDB.__name__}: "
+                        f"name='{device_type.name.name}' "
+                        f"id={device_type.id}."
+                    )
+                    self.next_state = state.model_copy(deep=True)
+                    writeoff_device_id = self.state.writeoff_device_id
+                    writeoff_device = await self.session.scalar(
+                        select(WriteoffDeviceDB)
+                        .where(WriteoffDeviceDB.id == writeoff_device_id)
+                        .options(selectinload(WriteoffDeviceDB.type))
+                    )
+                    if writeoff_device is None:
+                        logger.warning(
+                            f"{self.log_prefix}Writeoff device with "
+                            f"id={writeoff_device_id} "
+                            "was not found in the database. "
+                            "Cannot edit its device type. "
+                            "Going back to the writeoff devices menu."
+                        )
+                        self.next_state.action = Action.WRITEOFF_DEVICES
+                        self.next_state.writeoff_device_id = 0
+                        methods_tg_list.append(
+                            await self._build_stateless_writeoffs_devices(
+                                f"{String.WRITEOFF_DEVICE_WAS_NOT_FOUND}. "
+                                f"{String.PICK_WRITEOFFS_ACTION}."
+                            ),
+                        )
+                    elif writeoff_device.type.name.name != device_type.name.name:
+                        logger.info(
+                            f"{self.log_prefix}New "
+                            f"{DeviceTypeDB.__name__} "
+                            f"'{device_type.name.name}' "
+                            "is different from old "
+                            f"{DeviceTypeDB.__name__} "
+                            f"'{writeoff_device.type.name.name}'. "
+                            "Applying change."
+                        )
+                        writeoff_device.type_id = device_type.id
+                        writeoff_device.type = device_type
+                        if device_type.has_serial_number:
+                            logger.info(
+                                f"{DeviceTypeDB.__name__} "
+                                f"'{device_type.name.name}' "
+                                "has serial number parameter. "
+                                "Keeping serial number intact."
+                            )
+                        else:
+                            logger.info(
+                                f"{DeviceTypeDB.__name__} "
+                                f"'{device_type.name.name}' "
+                                "doesn't have serial number parameter. "
+                                "Setting serial number to None."
+                            )
+                            writeoff_device.serial_number = None
+                        await self.session.flush()
+                        existing_writeoff_device_menu = (
+                            await self._build_pick_writeoff_device_action_message(
+                                f"{String.DEVICE_TYPE_WAS_EDITED}. "
+                                f"{String.PICK_WRITEOFF_DEVICE_ACTION}."
+                            )
+                        )
+                        if existing_writeoff_device_menu is None:
+                            logger.info(
+                                f"{self.log_prefix}Going back to the writeoff devices menu."
+                            )
+                            self.next_state.action = Action.WRITEOFF_DEVICES
+                            self.next_state.writeoff_device_id = 0
+                            methods_tg_list.append(
+                                await self._build_stateless_writeoffs_devices(
+                                    f"{String.WRITEOFF_DEVICE_WAS_NOT_FOUND}. "
+                                    f"{String.PICK_WRITEOFFS_ACTION}."
+                                )
+                            )
+                        else:
+                            self.next_state.action = Action.PICK_WRITEOFF_DEVICE_ACTION
+                            methods_tg_list.append(existing_writeoff_device_menu)
+                    else:
+                        logger.info(
+                            f"{self.log_prefix}New "
+                            f"{DeviceTypeDB.__name__} "
+                            f"'{device_type.name.name}' "
+                            "is the same as old "
+                            f"{DeviceTypeDB.__name__} "
+                            f"'{writeoff_device.type.name.name}'. "
+                            "No change needed."
+                        )
+                        existing_writeoff_device_menu = (
+                            await self._build_pick_writeoff_device_action_message(
+                                f"{String.DEVICE_TYPE_REMAINS_THE_SAME}. "
+                                f"{String.PICK_WRITEOFF_DEVICE_ACTION}."
+                            )
+                        )
+                        if existing_writeoff_device_menu is None:
+                            logger.info(
+                                f"{self.log_prefix}Going back to the writeoff devices menu."
+                            )
+                            self.next_state.action = Action.WRITEOFF_DEVICES
+                            self.next_state.writeoff_device_id = 0
+                            self.next_state.writeoff_devices_dict = {}
+                            methods_tg_list.append(
+                                await self._build_stateless_writeoffs_devices(
+                                    f"{String.WRITEOFF_DEVICE_WAS_NOT_FOUND}. "
+                                    f"{String.PICK_WRITEOFFS_ACTION}."
+                                )
+                            )
+                        else:
+                            self.next_state.action = Action.PICK_WRITEOFF_DEVICE_ACTION
+                            methods_tg_list.append(existing_writeoff_device_menu)
+            except ValueError:
+                logger.info(
+                    f"{self.log_prefix}Got invalid callback data "
+                    f"'{raw_data}' for current device new type selection."
+                )
+                methods_tg_list.append(
+                    self._build_edit_to_text_message(f"{String.GOT_UNEXPECTED_DATA}.")
+                )
+                existing_writeoff_device_menu = (
+                    await self._build_pick_writeoff_device_type_message(
+                        f"{String.GOT_UNEXPECTED_DATA}. "
+                        f"{String.PICK_NEW_WRITEOFF_DEVICE_TYPE} "
+                        f"{String.FROM_OPTIONS_BELOW}."
+                    )
+                )
+                if existing_writeoff_device_menu is None:
+                    logger.info(
+                        f"{self.log_prefix}Going back to the writeoff devices menu."
+                    )
+                    self.next_state.action = Action.WRITEOFF_DEVICES
+                    self.next_state.writeoff_device_id = 0
+                    self.next_state.writeoff_devices_dict = {}
+                    methods_tg_list.append(
+                        await self._build_stateless_writeoffs_devices(
+                            f"{String.WRITEOFF_DEVICE_WAS_NOT_FOUND}. "
+                            f"{String.PICK_WRITEOFFS_ACTION}."
+                        )
+                    )
+                else:
+                    methods_tg_list.append(existing_writeoff_device_menu)
+        elif isinstance(self.update_tg, MessageUpdateTG):
+            logger.info(f"{self.log_prefix}Got message instead of callback data.")
+            existing_writeoff_device_menu = (
+                await self._build_pick_writeoff_device_type_message(
+                    f"{String.DEVICE_TYPE_WAS_NOT_PICKED}. "
+                    f"{String.PICK_NEW_WRITEOFF_DEVICE_TYPE} "
+                    f"{String.FROM_OPTIONS_BELOW}."
+                )
+            )
+            if existing_writeoff_device_menu is None:
+                logger.info(
+                    f"{self.log_prefix}Going back to the writeoff devices menu."
+                )
+                self.next_state.action = Action.WRITEOFF_DEVICES
+                self.next_state.writeoff_device_id = 0
+                self.next_state.writeoff_devices_dict = {}
+                methods_tg_list.append(
+                    await self._build_stateless_writeoffs_devices(
+                        f"{String.WRITEOFF_DEVICE_WAS_NOT_FOUND}. "
+                        f"{String.PICK_WRITEOFFS_ACTION}."
+                    )
+                )
+            else:
+                methods_tg_list.append(existing_writeoff_device_menu)
+        return methods_tg_list
+
     async def _handle_action_edit_install_or_return(
         self, state: StateJS
     ) -> list[MethodTG]:
@@ -2083,7 +2319,7 @@ class Conversation:
                         f"'{message_text}'."
                     )
                     self.next_state = state.model_copy(deep=True)
-                    self.next_state.action = Action.PICK_TICKET_ACTION
+                    self.next_state.action = Action.PICK_DEVICE_ACTION
                     devices_list = current_ticket.devices
                     device_index = self.next_state.device_index
                     device_list_length = len(devices_list)
@@ -2414,6 +2650,7 @@ class Conversation:
                             self._build_edit_to_callback_button_text()
                         )
                         self.next_state.action = Action.PICK_WRITEOFF_DEVICE_TYPE
+                        self.next_state.writeoff_devices_dict = {}
                         methods_tg_list.append(
                             await self._build_pick_writeoff_device_type_message(
                                 f"{String.PICK_WRITEOFF_DEVICE_TYPE}."
@@ -2460,29 +2697,44 @@ class Conversation:
                             )
                             logger.error(error_msg)
                             raise ValueError("Invalid writeoff device index in state.")
-                        writeoff_device = await self.session.scalar(
-                            select(WriteoffDeviceDB)
-                            .where(WriteoffDeviceDB.id == writeoff_device_id)
-                            .options(selectinload(WriteoffDeviceDB.type))
-                        )
+                        self.state.writeoff_device_id = writeoff_device_id
+                        button_text = self._helper_extract_callback_button_text()
                         methods_tg_list.append(
                             self._build_edit_to_text_message(
-                                f"{String.EDIT_WRITEOFF_DEVICE} {callback_device_index + 1}."
+                                f"{String.EDIT_WRITEOFF_DEVICE} {button_text}."
                             )
                         )
-                        self.next_state.action = Action.PICK_DEVICE_ACTION
-                        self.next_state.device_index = callback_device_index
-                        methods_tg_list.append(
-                            self._build_pick_device_action_message(
-                                f"{String.PICK_DEVICE_ACTION}."
+                        existing_writeoff_device_menu = (
+                            await self._build_pick_writeoff_device_action_message(
+                                f"{String.PICK_WRITEOFF_DEVICE_ACTION}."
                             )
                         )
+                        if existing_writeoff_device_menu is None:
+                            logger.info(
+                                f"{self.log_prefix}Going back to the writeoff devices menu."
+                            )
+                            self.next_state.writeoff_device_id = 0
+                            methods_tg_list.append(
+                                await self._build_stateless_writeoffs_devices(
+                                    f"{String.WRITEOFF_DEVICE_WAS_NOT_FOUND}. "
+                                    f"{String.PICK_WRITEOFFS_ACTION}."
+                                )
+                            )
+                        else:
+                            # logger.info(
+                            #     f"{self.log_prefix}Working with "
+                            #     f"{WriteoffDeviceDB.__name__} "
+                            #     f"id={writeoff_device.id}. Setting "
+                            #     f"serial number to '{message_text}'."
+                            # )
+                            self.next_state.action = Action.PICK_WRITEOFF_DEVICE_ACTION
+                            self.next_state.writeoff_device_id = writeoff_device_id
+                            methods_tg_list.append(existing_writeoff_device_menu)
                     elif received_callback_data == CallbackData.ADD_DEVICE_BTN:
                         methods_tg_list.append(
                             self._build_edit_to_callback_button_text()
                         )
                         self.next_state.action = Action.PICK_DEVICE_TYPE
-                        self.next_state.device_index = device_list_length
                         methods_tg_list.append(
                             await self._build_pick_device_type_message(
                                 f"{String.PICK_DEVICE_TYPE}."
@@ -2524,8 +2776,8 @@ class Conversation:
                     self._build_edit_to_text_message(f"{String.GOT_UNEXPECTED_DATA}.")
                 )
                 methods_tg_list.append(
-                    self._build_pick_ticket_action_message(
-                        f"{String.GOT_UNEXPECTED_DATA}. {String.PICK_TICKET_ACTION}."
+                    await self._build_stateless_writeoffs_devices(
+                        f"{String.GOT_UNEXPECTED_DATA}. {String.PICK_WRITEOFFS_ACTION}."
                     )
                 )
         elif isinstance(self.update_tg, MessageUpdateTG):
@@ -2687,6 +2939,10 @@ class Conversation:
             error_msg = "'self.state' cannot be None at this point."
             logger.error(error_msg)
             raise ValueError(error_msg)
+        if self.state.writeoff_device_id == 0:
+            error_msg = "'writeoff_device_id' cannot be 0 at this point."
+            logger.error(error_msg)
+            raise ValueError(error_msg)
         methods_tg_list: list[MethodTG] = []
         if isinstance(self.update_tg, MessageUpdateTG):
             if self.update_tg.message.text is not None:
@@ -2699,26 +2955,21 @@ class Conversation:
                     )
                     self.next_state = state.model_copy(deep=True)
                     self.next_state.action = Action.WRITEOFF_DEVICES
-                    if self.state.writeoff_device_id == 0:
-                        error_msg = (
-                            f"{self.log_prefix}No writeoff_device_id "
-                            "being stored in self.state."
-                        )
-                        logger.error(error_msg)
-                        raise ValueError(error_msg)
+                    writeoff_device_id = self.state.writeoff_device_id
+                    self.next_state.writeoff_device_id = 0
                     writeoff_device = await self.session.scalar(
                         select(WriteoffDeviceDB).where(
-                            WriteoffDeviceDB.id == self.state.writeoff_device_id
+                            WriteoffDeviceDB.id == writeoff_device_id
                         )
                     )
                     if writeoff_device is None:
                         logger.warning(
                             f"{self.log_prefix}Writeoff device with "
-                            f"id={self.state.writeoff_device_id} "
+                            f"id={writeoff_device_id} "
                             "was not found in the database. "
-                            "Cannot populate its serial number."
+                            "Cannot populate its serial number. "
+                            "Going back to the writeoff devices menu."
                         )
-                        self.next_state.writeoff_device_id = 0
                         methods_tg_list.append(
                             await self._build_stateless_writeoffs_devices(
                                 f"{String.WRITEOFF_DEVICE_WAS_NOT_FOUND}. "
@@ -2777,6 +3028,224 @@ class Conversation:
                     f"{String.ENTER_SERIAL_NUMBER}."
                 )
             )
+        return methods_tg_list
+
+    # Not finished
+    async def _handle_action_pick_writeoff_device_action(
+        self, state: StateJS
+    ) -> list[MethodTG]:
+        logger.info(
+            f"{self.log_prefix}Awaiting writeoff device menu choice to be made."
+        )
+        if self.state is None:
+            error_msg = "'self.state' cannot be None at this point."
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        if self.state.writeoff_device_id == 0:
+            error_msg = "'writeoff_device_id' cannot be 0 at this point."
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        methods_tg_list: list[MethodTG] = []
+        self.next_state = state.model_copy(deep=True)
+        if isinstance(self.update_tg, CallbackQueryUpdateTG):
+            expected_callback_data = [
+                CallbackData.EDIT_WRITEOFF_DEVICE_TYPE,
+                CallbackData.DELETE_WRITEOFF_DEVICE_BTN,
+            ]
+            writeoff_device_id = self.state.writeoff_device_id
+            writeoff_device = await self.session.scalar(
+                select(WriteoffDeviceDB)
+                .where(WriteoffDeviceDB.id == writeoff_device_id)
+                .options(selectinload(WriteoffDeviceDB.type))
+            )
+            if writeoff_device is None:
+                logger.warning(
+                    f"{self.log_prefix}Writeoff device with "
+                    f"id={writeoff_device_id} "
+                    "was not found in the database. "
+                    "Cannot proceed with it. "
+                )
+                logger.info(
+                    f"{self.log_prefix}Going back to the writeoff devices menu."
+                )
+                self.next_state.action = Action.WRITEOFF_DEVICES
+                self.next_state.writeoff_device_id = 0
+                self.next_state.writeoff_devices_dict = {}
+                methods_tg_list.append(
+                    await self._build_stateless_writeoffs_devices(
+                        f"{String.WRITEOFF_DEVICE_WAS_NOT_FOUND}. "
+                        f"{String.PICK_WRITEOFFS_ACTION}."
+                    )
+                )
+            else:
+                device_type_name = String[writeoff_device.type.name.name]
+                logger.info(
+                    f"{self.log_prefix}Working with "
+                    f"{WriteoffDeviceDB.__name__} "
+                    f"id={writeoff_device_id} device type "
+                    f"'{device_type_name}'."
+                )
+                if writeoff_device.type.is_disposable:
+                    error_msg = (
+                        f"{self.log_prefix}Configuration error: "
+                        f"The device type '{device_type_name}' is not "
+                        "an eligible writeoff device type as it is "
+                        "disposable. You shouldn't be seeing this ever. "
+                        "Cannot proceed further."
+                    )
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+                if writeoff_device.type.has_serial_number:
+                    expected_callback_data.append(
+                        CallbackData.EDIT_WRITEOFF_DEVICE_SERIAL_NUMBER
+                    )
+                    if writeoff_device.serial_number is not None:
+                        expected_callback_data.append(CallbackData.WRITEOFF_DEVICES_BTN)
+                else:
+                    if writeoff_device.serial_number is None:
+                        expected_callback_data.append(CallbackData.WRITEOFF_DEVICES_BTN)
+                    else:
+                        raise ValueError(
+                            f"{DeviceTypeDB.__name__} has no serial number "
+                            f"but {WriteoffDeviceDB.__name__} has "
+                            f"serial_number={writeoff_device.serial_number}"
+                        )
+                raw_data = self.update_tg.callback_query.data
+                try:
+                    received_callback_data = CallbackData(raw_data)
+                    if received_callback_data in expected_callback_data:
+                        logger.info(
+                            f"{self.log_prefix}Got expected "
+                            f"{CallbackData.__name__} "
+                            f"'{received_callback_data.value}'."
+                        )
+                        if (
+                            received_callback_data
+                            == CallbackData.EDIT_WRITEOFF_DEVICE_TYPE
+                        ):
+                            methods_tg_list.append(
+                                self._build_edit_to_callback_button_text()
+                            )
+                            self.next_state.action = Action.EDIT_WRITEOFF_DEVICE_TYPE
+                            methods_tg_list.append(
+                                await self._build_pick_writeoff_device_type_message(
+                                    f"{String.PICK_NEW_WRITEOFF_DEVICE_TYPE}."
+                                )
+                            )
+                        elif (
+                            received_callback_data
+                            == CallbackData.EDIT_WRITEOFF_DEVICE_SERIAL_NUMBER
+                        ):
+                            methods_tg_list.append(
+                                self._build_edit_to_text_message(
+                                    f"{String.EDIT_SERIAL_NUMBER}."
+                                )
+                            )
+                            self.next_state.action = (
+                                Action.EDIT_WRITEOFF_DEVICE_SERIAL_NUMBER
+                            )
+                            methods_tg_list.append(
+                                self._build_new_text_message(
+                                    f"{String.ENTER_NEW_SERIAL_NUMBER}."
+                                )
+                            )
+                        elif (
+                            received_callback_data == CallbackData.WRITEOFF_DEVICES_BTN
+                        ):
+                            methods_tg_list.append(
+                                self._build_edit_to_text_message(
+                                    f"{String.RETURNING_TO_WRITEOFF_DEVICES}."
+                                )
+                            )
+                            self.next_state.action = Action.WRITEOFF_DEVICES
+                            methods_tg_list.append(
+                                await self._build_stateless_writeoffs_devices(
+                                    f"{String.YOU_LEFT_WRITEOFF_DEVICE}. {String.PICK_WRITEOFFS_ACTION}."
+                                ),
+                            )
+                        elif (
+                            received_callback_data
+                            == CallbackData.DELETE_WRITEOFF_DEVICE_BTN
+                        ):
+                            await self.session.delete(writeoff_device)
+                            await self.session.flush()
+                            methods_tg_list.append(
+                                self._build_edit_to_text_message(
+                                    f"{String.DEVICE_WAS_DELETED_FROM_WRITEOFF}."
+                                )
+                            )
+                            self.next_state.action = Action.WRITEOFF_DEVICES
+                            self.next_state.writeoff_device_id = 0
+                            self.next_state.writeoff_devices_dict = {}
+                            methods_tg_list.append(
+                                await self._build_stateless_writeoffs_devices(
+                                    f"{String.PICK_WRITEOFFS_ACTION}."
+                                )
+                            )
+                    else:
+                        logger.info(
+                            f"{self.log_prefix}Got unexpected "
+                            f"{CallbackData.__name__} "
+                            f"'{received_callback_data.value}'."
+                        )
+                        raise ValueError
+                except ValueError:
+                    logger.info(
+                        f"{self.log_prefix}Got invalid callback data "
+                        f"'{raw_data}' for current writeoff device "
+                        "menu selection."
+                    )
+                    methods_tg_list.append(
+                        self._build_edit_to_text_message(
+                            f"{String.GOT_UNEXPECTED_DATA}."
+                        )
+                    )
+                    existing_writeoff_device_menu = (
+                        await self._build_pick_writeoff_device_action_message(
+                            f"{String.GOT_UNEXPECTED_DATA}. "
+                            f"{String.PICK_WRITEOFF_DEVICE_ACTION}."
+                        )
+                    )
+                    if existing_writeoff_device_menu is None:
+                        logger.info(
+                            f"{self.log_prefix}Going back to the writeoff devices menu."
+                        )
+                        self.next_state.action = Action.WRITEOFF_DEVICES
+                        self.next_state.writeoff_device_id = 0
+                        self.next_state.writeoff_devices_dict = {}
+                        methods_tg_list.append(
+                            await self._build_stateless_writeoffs_devices(
+                                f"{String.WRITEOFF_DEVICE_WAS_NOT_FOUND}. "
+                                f"{String.PICK_WRITEOFFS_ACTION}."
+                            )
+                        )
+                    else:
+                        self.next_state.action = Action.PICK_WRITEOFF_DEVICE_ACTION
+                        self.next_state.writeoff_device_id = writeoff_device_id
+                        methods_tg_list.append(existing_writeoff_device_menu)
+        elif isinstance(self.update_tg, MessageUpdateTG):
+            logger.info(f"{self.log_prefix}Got message instead of callback data.")
+            existing_writeoff_device_menu = (
+                await self._build_pick_writeoff_device_action_message(
+                    f"{String.WRITEOFF_DEVICE_ACTION_WAS_NOT_PICKED}. "
+                    f"{String.PICK_WRITEOFF_DEVICE_ACTION}."
+                )
+            )
+            if existing_writeoff_device_menu is None:
+                logger.info(
+                    f"{self.log_prefix}Going back to the writeoff devices menu."
+                )
+                self.next_state.action = Action.WRITEOFF_DEVICES
+                self.next_state.writeoff_device_id = 0
+                self.next_state.writeoff_devices_dict = {}
+                methods_tg_list.append(
+                    await self._build_stateless_writeoffs_devices(
+                        f"{String.WRITEOFF_DEVICE_WAS_NOT_FOUND}. "
+                        f"{String.PICK_WRITEOFFS_ACTION}."
+                    )
+                )
+            else:
+                methods_tg_list.append(existing_writeoff_device_menu)
         return methods_tg_list
 
     def _build_stateless_mainmenu_message(self, text: str) -> SendMessageTG:
@@ -2930,23 +3399,7 @@ class Conversation:
             raise ValueError(error_msg)
         chat_id = self.update_tg.callback_query.message.chat.id
         message_id = self.update_tg.callback_query.message.message_id
-        callback_data = self.update_tg.callback_query.data
-        inline_keyboard = (
-            self.update_tg.callback_query.message.reply_markup.inline_keyboard
-        )
-        button_text: str = ""
-        for row in inline_keyboard:
-            for button in row:
-                if button.callback_data == callback_data:
-                    button_text = button.text
-                    logger.info(
-                        f"{self.log_prefix}Button text '{button_text}' found "
-                        f"for callback data '{callback_data}'."
-                    )
-                    break
-            else:
-                continue
-            break
+        button_text = self._helper_extract_callback_button_text()
         logger.info(
             f"{self.log_prefix}Editing message id={message_id} text "
             f"to button text '{button_text}'."
@@ -3306,6 +3759,83 @@ class Conversation:
             reply_markup=InlineKeyboardMarkupTG(inline_keyboard=inline_keyboard_rows),
         )
 
+    async def _build_pick_writeoff_device_action_message(
+        self, text: str = f"{String.PICK_WRITEOFF_DEVICE_ACTION}."
+    ) -> SendMessageTG | None:
+        if self.next_state is not None and self.next_state.writeoff_device_id != 0:
+            writeoff_device_id = self.next_state.writeoff_device_id
+        elif self.state is not None and self.state.writeoff_device_id != 0:
+            writeoff_device_id = self.state.writeoff_device_id
+        else:
+            error_msg = (
+                "The writeoff device menu only works with next_state/"
+                "state having writeoff_device_id being filled in."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        inline_keyboard_rows: list[list[InlineKeyboardButtonTG]] = []
+        writeoff_device = await self.session.scalar(
+            select(WriteoffDeviceDB)
+            .where(WriteoffDeviceDB.id == writeoff_device_id)
+            .options(selectinload(WriteoffDeviceDB.type))
+        )
+        if writeoff_device is None:
+            logger.warning(
+                f"{self.log_prefix}Writeoff device with "
+                f"id={writeoff_device_id} "
+                "was not found in the database. "
+                "Cannot proceed with it. "
+            )
+            # current_state.writeoff_device_id = 0
+            return None
+        device_type_name = String[writeoff_device.type.name.name]
+        if writeoff_device.type.is_disposable:
+            error_msg = (
+                f"{self.log_prefix}Configuration error: "
+                f"The device type '{device_type_name}' is not "
+                "an eligible writeoff device type as it is "
+                "disposable. You shouldn't be seeing this ever. "
+                "Cannot proceed further."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        device_serial_number_text = (
+            writeoff_device.serial_number
+            if writeoff_device.serial_number is not None
+            else String.ENTER_SERIAL_NUMBER
+        )
+        device_type_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
+            text=f"{device_type_name} {String.EDIT}",
+            callback_data=CallbackData.EDIT_WRITEOFF_DEVICE_TYPE,
+        )
+        serial_number_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
+            text=f"{device_serial_number_text} {String.EDIT}",
+            callback_data=CallbackData.EDIT_WRITEOFF_DEVICE_SERIAL_NUMBER,
+        )
+        return_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
+            text=String.RETURN_BTN,
+            callback_data=CallbackData.WRITEOFF_DEVICES_BTN,
+        )
+        delete_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
+            text=String.DELETE_DEVICE_FROM_WRITEOFF,
+            callback_data=CallbackData.DELETE_WRITEOFF_DEVICE_BTN,
+        )
+        inline_keyboard_rows.append([device_type_button])
+        if writeoff_device.type.has_serial_number:
+            inline_keyboard_rows.append([serial_number_button])
+        if (
+            writeoff_device.type.has_serial_number
+            and writeoff_device.serial_number is not None
+            or not writeoff_device.type.has_serial_number
+        ):
+            inline_keyboard_rows.append([return_button])
+        inline_keyboard_rows.append([delete_button])
+        return SendMessageTG(
+            chat_id=self.user_db.telegram_uid,
+            text=text,
+            reply_markup=InlineKeyboardMarkupTG(inline_keyboard=inline_keyboard_rows),
+        )
+
     def _build_pick_confirm_close_ticket_message(
         self, text: str = f"{String.CONFIRM_YOU_WANT_TO_CLOSE_TICKET}."
     ) -> SendMessageTG:
@@ -3554,6 +4084,36 @@ class Conversation:
                     ],
                 )
         return inline_keyboard_rows
+
+    def _helper_extract_callback_button_text(self) -> str:
+        """Returns text of a button with matching callback data."""
+        if not isinstance(self.update_tg, CallbackQueryUpdateTG):
+            raise TypeError(
+                "This method only works with "
+                f"{CallbackQueryUpdateTG.__name__} update type only."
+            )
+        if self.update_tg.callback_query.message.reply_markup is None:
+            error_msg = "This method only works with inline keyboard attached."
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        callback_data = self.update_tg.callback_query.data
+        inline_keyboard = (
+            self.update_tg.callback_query.message.reply_markup.inline_keyboard
+        )
+        button_text: str = ""
+        for row in inline_keyboard:
+            for button in row:
+                if button.callback_data == callback_data:
+                    button_text = button.text
+                    logger.info(
+                        f"{self.log_prefix}Button text '{button_text}' found "
+                        f"for callback data '{callback_data}'."
+                    )
+                    break
+            else:
+                continue
+            break
+        return button_text
 
     # async def _handle_pick_writeoff_device(self, state: StateJS) -> list[MethodTG]:
     #     pass

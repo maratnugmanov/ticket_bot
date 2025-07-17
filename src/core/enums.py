@@ -32,6 +32,7 @@ class CallbackData(enum.StrEnum):
     INSTALL_DEVICE_BTN = enum.auto()
     RETURN_DEVICE_BTN = enum.auto()
     DELETE_DEVICE_BTN = enum.auto()
+    DELETE_WRITEOFF_DEVICE_BTN = enum.auto()
 
     # ENABLE_HIRING = enum.auto()
     # DISABLE_HIRING = enum.auto()
@@ -43,6 +44,9 @@ class CallbackData(enum.StrEnum):
     EDIT_DEVICE_SERIAL_NUMBER = enum.auto()
     EDIT_DEVICE_TYPE = enum.auto()
     EDIT_TICKET = enum.auto()
+
+    EDIT_WRITEOFF_DEVICE_TYPE = enum.auto()
+    EDIT_WRITEOFF_DEVICE_SERIAL_NUMBER = enum.auto()
 
     TICKETS_HISTORY_BTN = enum.auto()
     WRITEOFF_DEVICES_BTN = enum.auto()
@@ -130,11 +134,15 @@ class String(enum.StrEnum):
 
     RETURNING_TO_TICKET = "<< Возвращаемся в заявку"
     RETURNING_TO_MAIN_MENU = "<< Возвращаемся в главное меню"
+    RETURNING_TO_WRITEOFF_DEVICES = "<< Возвращаемся к списку бракованных устройств"
     RETURN_BTN = "<< Назад"
 
     PICK_DEVICE_TYPE = "Выберите тип устройства"
     PICK_WRITEOFF_DEVICE_TYPE = "Выберите тип бракованного устройства"
-    WRITEOFF_DEVICE_WAS_NOT_FOUND = "Бракованное устройство не найдено в базе данных, возможно оно было удалено из базы данных пока вы вводили серийный номер"
+    PICK_NEW_WRITEOFF_DEVICE_TYPE = "Выберите новый тип бракованного устройства"
+    WRITEOFF_DEVICE_WAS_NOT_FOUND = (
+        "Бракованное устройство не найдено в базе данных, возможно оно было удалено"
+    )
     EDIT_DEVICE_TYPE = "✏️ Изменить тип устройства"
     PICK_NEW_DEVICE_TYPE = "Выберите новый тип устройства"
     FROM_OPTIONS_BELOW = "из предложенных ниже вариантов"
@@ -163,6 +171,9 @@ class String(enum.StrEnum):
     INSTALL_OR_RETURN_WAS_EDITED = "Действие с устройством было изменено"
     INSTALL_OR_RETURN_REMAINS_THE_SAME = "Действие с устройством осталось прежним"
     DEVICE_ACTION_WAS_NOT_PICKED = "Вы не выбрали действие с устройством"
+    WRITEOFF_DEVICE_ACTION_WAS_NOT_PICKED = (
+        "Вы не выбрали действие с бракованным устройством"
+    )
     TICKET_ACTION_WAS_NOT_PICKED = "Вы не выбрали действие с текущей заявкой"
     ACTION_WAS_NOT_PICKED = "Вы не выбрали действие"
     GOT_UNEXPECTED_DATA = "Ваш выбор не распознан"
@@ -170,7 +181,10 @@ class String(enum.StrEnum):
     DEVICE_ACTION_WAS_CHANGED_FOR = "Тип действия с устройством изменен на"
     PICK_TICKET_ACTION = "Возможные действия: изменение номера текущей заявки/договора, изменение/добавление/удаление устройств, закрытие заявки и выход без сохранения"
     PICK_DEVICE_ACTION = "Возможные действия: изменение серийного номера и типа устройства, смена производимого над ним действия, возврат в предыдущее меню или удаление устройства из данной заявки"
+    PICK_WRITEOFF_DEVICE_ACTION = "Возможные действия: изменение серийного номера и типа бракованного устройства, возврат в предыдущее меню или удаление устройства из брака"
     PICK_WRITEOFFS_ACTION = "Возможные действия: добавление/изменение/удаление брака или возврат в предыдущее меню"
+    DELETE_DEVICE_FROM_WRITEOFF = "🗑 Удалить устройство из брака"
+    DEVICE_WAS_DELETED_FROM_WRITEOFF = "🗑 Устройство удалено из брака"
     TICKET_NUMBER_BTN = "Заявка №"
     TICKET_NUMBER_TIP = "[ Изменить номер заявки ]"
     CONTRACT_NUMBER_BTN = "Договор №"
@@ -183,6 +197,7 @@ class String(enum.StrEnum):
     CHANGED_MY_MIND_BTN = "Я передумал"
     YOU_QUIT_WITHOUT_SAVING = "Вы вышли без сохранения текущей заявки"
     YOU_LEFT_WRITEOFF_DEVICES = "Вы закончили работу с бракованными устройствами"
+    YOU_LEFT_WRITEOFF_DEVICE = "Вы закончили работу с бракованным устройством"
     CONFIRM_YOU_WANT_TO_CLOSE_TICKET = "Подтвердите что вы произвели все необходимые действия по заявке и уверены что готовы ее закрыть"
     CLOSE_TICKET_ACTION_WAS_NOT_PICKED = (
         "Вы не выбрали закрыть заявку или вернуться к работе с ней"
@@ -236,6 +251,9 @@ class Action(enum.StrEnum):
     WRITEOFF_DEVICES = enum.auto()
     PICK_WRITEOFF_DEVICE_TYPE = enum.auto()
     ENTER_WRITEOFF_DEVICE_SERIAL_NUMBER = enum.auto()
+    PICK_WRITEOFF_DEVICE_ACTION = enum.auto()
+    EDIT_WRITEOFF_DEVICE_TYPE = enum.auto()
+    EDIT_WRITEOFF_DEVICE_SERIAL_NUMBER = enum.auto()
 
     # ENABLE_HIRING = enum.auto()
     # DISABLE_HIRING = enum.auto()
