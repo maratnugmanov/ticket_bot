@@ -231,6 +231,7 @@ class String(enum.StrEnum):
     ADD_WRITEOFF_DEVICE_BTN = "➕ Добавить брак"
     PREV_ONES = "< Предыдущие"
     NEXT_ONES = "Следующие >"
+    DONE_BTN = "Готово"
 
 
 class Action(enum.StrEnum):

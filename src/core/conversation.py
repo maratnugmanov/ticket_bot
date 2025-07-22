@@ -2581,8 +2581,7 @@ class Conversation:
                 CallbackData.RETURN_TO_MAIN_MENU,
             ]
             page_index = self.state.writeoff_devices_page
-            writeoff_devices_dict = self.state.writeoff_devices_dict
-            total_writeoff_devices = len(writeoff_devices_dict)
+            total_writeoff_devices = len(self.user_db.writeoff_devices)
             if total_writeoff_devices % settings.writeoffs_per_page == 0:
                 total_pages = total_writeoff_devices // settings.writeoffs_per_page
             else:
@@ -2598,6 +2597,11 @@ class Conversation:
                 )
                 logger.error(error_msg)
                 raise ValueError(error_msg)
+            logger.debug(
+                f"page_index={page_index}\n"
+                f"last_page_index={last_page_index}\n"
+                f"total_pages={total_pages}"
+            )
             if page_index < last_page_index:
                 expected_callback_data.append(CallbackData.PREV_ONES)
             if page_index > 0:
@@ -2693,24 +2697,26 @@ class Conversation:
                                 f"{String.PICK_DEVICE_TYPE}."
                             )
                         )
-                    elif received_callback_data == CallbackData.CLOSE_TICKET_BTN:
+                    elif received_callback_data == CallbackData.PREV_ONES:
                         methods_tg_list.append(
                             self._build_edit_to_callback_button_text()
                         )
-                        self.next_state.action = Action.CONFIRM_CLOSE_TICKET
+                        self.next_state.writeoff_devices_page += 1
+                        # await self.session.flush()
                         methods_tg_list.append(
-                            self._build_pick_confirm_close_ticket_message(
-                                f"{String.CONFIRM_YOU_WANT_TO_CLOSE_TICKET}."
+                            await self._build_stateless_writeoffs_devices(
+                                f"{String.PICK_WRITEOFFS_ACTION}."
                             )
                         )
-                    elif received_callback_data == CallbackData.QUIT_WITHOUT_SAVING_BTN:
+                    elif received_callback_data == CallbackData.NEXT_ONES:
                         methods_tg_list.append(
                             self._build_edit_to_callback_button_text()
                         )
-                        self.next_state.action = Action.CONFIRM_QUIT_WITHOUT_SAVING
+                        self.next_state.writeoff_devices_page -= 1
+                        # await self.session.flush()
                         methods_tg_list.append(
-                            self._build_pick_confirm_quit_without_saving(
-                                f"{String.ARE_YOU_SURE_YOU_WANT_TO_QUIT_WITHOUT_SAVING}?"
+                            await self._build_stateless_writeoffs_devices(
+                                f"{String.PICK_WRITEOFFS_ACTION}."
                             )
                         )
                 else:
@@ -3342,6 +3348,10 @@ class Conversation:
             logger.error(error_msg)
             raise ValueError(error_msg)
         existing_writeoff_devices_button_rows: list[list[InlineKeyboardButtonTG]] = []
+        if self.next_state:
+            page_index = self.next_state.writeoff_devices_page
+        elif self.state:
+            page_index = self.state.writeoff_devices_page
         writeoff_device_index_offset = page_index * settings.writeoffs_per_page
         current_page_writeoff_devices = writeoff_devices[
             writeoff_device_index_offset : writeoff_device_index_offset
@@ -3417,7 +3427,7 @@ class Conversation:
         if prev_next_buttons_row:
             inline_keyboard_rows.append(prev_next_buttons_row)
         return_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
-            text=String.RETURN_BTN,
+            text=String.DONE_BTN,
             callback_data=CallbackData.RETURN_TO_MAIN_MENU,
         )
         inline_keyboard_rows.append([return_button])
