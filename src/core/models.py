@@ -41,7 +41,7 @@ class DeviceTypeJS(BaseModel):
 class StateJS(BaseModel):
     #  message_id: int
     action: Action
-    script: Script
+    # script: Script
     # devices_list: list[DeviceJS] = []
     device_index: int = 0
     writeoff_device_id: int = 0

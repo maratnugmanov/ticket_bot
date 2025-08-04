@@ -4,7 +4,7 @@ import inspect
 import re
 import httpx
 from pydantic import ValidationError
-from sqlalchemy import select, exists
+from sqlalchemy import select, exists, func
 from sqlalchemy.orm import selectinload
 from src.core.config import settings
 from src.core.logger import logger
@@ -80,8 +80,8 @@ class Conversation:
         }
         self._state_handlers: dict[
             Action,
-            Callable[[StateJS], Coroutine[Any, Any, list[MethodTG]]]
-            | Callable[[StateJS], list[MethodTG]],
+            Callable[[], Coroutine[Any, Any, list[MethodTG]]]
+            | Callable[[], list[MethodTG]],
         ] = {
             # New Ticket Scenario
             Action.ENTER_TICKET_NUMBER: self._handle_action_enter_ticket_number,
@@ -98,14 +98,13 @@ class Conversation:
             Action.EDIT_DEVICE_SERIAL_NUMBER: self._handle_action_edit_device_serial_number,
             Action.CONFIRM_CLOSE_TICKET: self._handle_pick_confirm_close_ticket,
             Action.CONFIRM_QUIT_WITHOUT_SAVING: self._handle_pick_confirm_quit_ticket_without_saving,
+            # Writeoff Scenario
             Action.WRITEOFF_DEVICES: self._handle_action_writeoff_devices,
             Action.PICK_WRITEOFF_DEVICE_TYPE: self._handle_action_pick_writeoff_device_type,
             Action.ENTER_WRITEOFF_DEVICE_SERIAL_NUMBER: self._handle_action_enter_writeoff_device_serial_number,
             Action.PICK_WRITEOFF_DEVICE_ACTION: self._handle_action_pick_writeoff_device_action,
             Action.EDIT_WRITEOFF_DEVICE_TYPE: self._handle_action_edit_writeoff_device_type,
             Action.EDIT_WRITEOFF_DEVICE_SERIAL_NUMBER: self._handle_action_edit_writeoff_device_serial_number,
-            # Writeoff Scenario
-            # Action.PICK_WRITEOFF_DEVICE: self._handle_pick_writeoff_device,
         }
         # logger.debug(f"{self.log_prefix}Conversation instance initialized.")
 
@@ -301,6 +300,7 @@ class Conversation:
                     error_data = e.response.json()
                     error_tg = ErrorTG.model_validate(error_data)
                     logger.warning(
+                        f"{self.log_prefix}"
                         "Telegram API Error Details for "
                         f"method '{method_tg._url}': "
                         f"error_code='{error_tg.error_code}', "
@@ -309,6 +309,7 @@ class Conversation:
                     return error_tg  # Return the response even on error status
                 except (ValidationError, Exception) as error_parsing_error:
                     logger.error(
+                        f"{self.log_prefix}"
                         "Could not validate/parse Telegram error "
                         "response JSON after HTTPStatusError for "
                         f"Method '{method_tg._url}': "
@@ -339,6 +340,13 @@ class Conversation:
         | Callable[[], Coroutine[Any, Any, list[MethodTG]]],
         ensure_delivery: bool = True,
     ) -> bool:
+        def _persist_next_state():
+            """Saves the next state to the user's database object if it's a valid state."""
+            if isinstance(self.next_state, StateJS):
+                self.user_db.state_json = self.next_state.model_dump_json(
+                    exclude_none=True
+                )
+
         response_tg: SuccessTG | ErrorTG | None
         method_tg_list: list[MethodTG]
         if inspect.iscoroutinefunction(method_generator):
@@ -351,11 +359,7 @@ class Conversation:
             response_tg = await self._post_method_tg(method_tg)
             if index == last_method_tg_index:
                 if isinstance(response_tg, SuccessTG):
-                    if isinstance(self.next_state, StateJS):
-                        next_state_json = self.next_state.model_dump_json(
-                            exclude_none=True
-                        )
-                        self.user_db.state_json = next_state_json
+                    _persist_next_state()
                     success = True
                 elif (
                     ensure_delivery is True
@@ -376,32 +380,55 @@ class Conversation:
                     )
                     response_tg = await self._post_method_tg(method_tg)
                     if isinstance(response_tg, SuccessTG):
-                        if isinstance(self.next_state, StateJS):
-                            next_state_json = self.next_state.model_dump_json(
-                                exclude_none=True
-                            )
-                            self.user_db.state_json = next_state_json
+                        _persist_next_state()
                         success = True
         return success
 
     async def process(self) -> bool:
         success = False
-        if self.state is None:
-            if self.next_state is not None:
-                self.next_state = None
+        initial_state = self.state
+        if initial_state is None:
             success = await self._make_delivery(self._stateless_conversation)
-            logger.info(f"{self.log_prefix}Bot is idle.")
         else:
-            if self.state.script == Script.INITIAL_DATA:
+            if initial_state.action in Action:
                 success = await self._make_delivery(self._state_action_conversation)
-                if success:
-                    if self.next_state is not None:
+        if success:
+            final_state = self.next_state
+            if initial_state is None:
+                if final_state is None:
+                    logger.info(
+                        f"{self.log_prefix}Stateless conversation has completed."
+                    )
+                else:
+                    logger.info(
+                        f"{self.log_prefix}Entered stateful "
+                        "conversation with "
+                        f"Action '{final_state.action.name}'."
+                    )
+            else:
+                if final_state is None:
+                    if self.user_db.state_json is None:
                         logger.info(
-                            f"{self.log_prefix}Advancing to Action '{self.next_state.action.name}'."
+                            f"{self.log_prefix}Exited stateful "
+                            "conversation from "
+                            f"Action '{initial_state.action.name}'."
                         )
-                    elif self.state is not None:
+                    else:
                         logger.info(
-                            f"{self.log_prefix}Still on Action '{self.state.action.name}'."
+                            f"{self.log_prefix}Still on "
+                            f"Action '{initial_state.action.name}'."
+                        )
+                else:
+                    if initial_state.action.name != final_state.action.name:
+                        logger.info(
+                            f"{self.log_prefix}Advancing from "
+                            f"Action '{initial_state.action.name}' "
+                            f"to '{final_state.action.name}'."
+                        )
+                    else:
+                        logger.info(
+                            f"{self.log_prefix}Refreshed "
+                            f"Action '{initial_state.action.name}'."
                         )
         return success
 
@@ -410,7 +437,7 @@ class Conversation:
             f"{self.log_prefix}Starting new conversation with {self.user_db.full_name}."
         )
         if self.state is not None:
-            error_msg = "'self.state' should be None at this point."
+            error_msg = f"{self.log_prefix}'self.state' should be None at this point."
             logger.error(error_msg)
             raise ValueError(error_msg)
         methods_tg_list: list[MethodTG] = []
@@ -480,7 +507,7 @@ class Conversation:
             f"{self.log_prefix}Continuing conversation with {self.user_db.full_name}."
         )
         if self.state is None:
-            error_msg = "'self.state' cannot be None at this point."
+            error_msg = f"{self.log_prefix}'self.state' cannot be None at this point."
             logger.error(error_msg)
             raise ValueError(error_msg)
         methods_tg_list: list[MethodTG] = []
@@ -492,14 +519,14 @@ class Conversation:
                     f"{self.state.action.__class__.__name__} "
                     f"'{self.state.action.value}'."
                 )
-                methods_tg_list.extend(await action_handler(self.state))
+                methods_tg_list.extend(await action_handler())
             else:
                 logger.info(
                     f"{self.log_prefix}Calling sync handler for "
                     f"{self.state.action.__class__.__name__} "
                     f"'{self.state.action.value}'."
                 )
-                methods_tg_list.extend(action_handler(self.state))  # type: ignore
+                methods_tg_list.extend(action_handler())  # type: ignore
         else:
             error_msg = (
                 f"{self.log_prefix}Unhandled action: "
@@ -519,10 +546,7 @@ class Conversation:
         # might not be used directly by all handlers.
         logger.info(f"{self.log_prefix}Initiating ticket creation.")
         methods_tg_list: list[MethodTG] = []
-        self.next_state = StateJS(
-            action=Action.ENTER_TICKET_NUMBER,
-            script=Script.INITIAL_DATA,
-        )
+        self.next_state = StateJS(action=Action.ENTER_TICKET_NUMBER)
         methods_tg_list.append(
             self._build_edit_to_callback_button_text(),
         )
@@ -538,18 +562,15 @@ class Conversation:
         conversation."""
         # chat_id, message_id are part of the uniform signature but
         # might not be used directly by all handlers.
-        logger.info(f"{self.log_prefix}Initiating writeoff scenario.")
+        logger.info(f"{self.log_prefix}Initiating writeoff devices scenario.")
         methods_tg_list: list[MethodTG] = []
-        self.next_state = StateJS(
-            action=Action.WRITEOFF_DEVICES,
-            script=Script.INITIAL_DATA,
-        )
+        self.next_state = StateJS(action=Action.WRITEOFF_DEVICES)
         methods_tg_list.append(
             self._build_edit_to_callback_button_text(),
         )
         methods_tg_list.append(
-            await self._build_stateless_writeoffs_devices(
-                f"{String.PICK_WRITEOFFS_ACTION}."
+            await self._build_stateless_writeoff_devices(
+                f"{String.PICK_WRITEOFF_DEVICES_ACTION}."
             ),
         )
         return methods_tg_list
@@ -621,9 +642,8 @@ class Conversation:
         )
         return methods_tg_list
 
-    async def _handle_action_enter_ticket_number(
-        self, state: StateJS
-    ) -> list[MethodTG]:
+    async def _handle_action_enter_ticket_number(self) -> list[MethodTG]:
+        assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting ticket number.")
         current_ticket = self.user_db.current_ticket
         if current_ticket:
@@ -641,13 +661,14 @@ class Conversation:
         if isinstance(self.update_tg, MessageUpdateTG):
             if self.update_tg.message.text is not None:
                 message_text = self.update_tg.message.text
-                if re.fullmatch(r"\d+", message_text) and message_text != "0":
+                if (
+                    re.fullmatch(settings.ticket_number_regex, message_text)
+                    and message_text != "0"
+                ):
                     logger.info(
                         f"{self.log_prefix}Got correct ticket number: '{message_text}'."
                     )
                     ticket_number = int(message_text)
-                    self.next_state = state.model_copy(deep=True)
-                    self.next_state.action = Action.ENTER_CONTRACT_NUMBER
                     new_ticket = TicketDB(
                         number=ticket_number,
                         user_id=self.user_db.id,
@@ -655,6 +676,7 @@ class Conversation:
                     )
                     self.user_db.current_ticket = new_ticket
                     await self.session.flush()
+                    self.next_state = StateJS(action=Action.ENTER_CONTRACT_NUMBER)
                     methods_tg_list.append(
                         self._build_new_text_message(f"{String.ENTER_CONTRACT_NUMBER}.")
                     )
@@ -690,9 +712,8 @@ class Conversation:
             )
         return methods_tg_list
 
-    async def _handle_action_enter_contract_number(
-        self, state: StateJS
-    ) -> list[MethodTG]:
+    async def _handle_action_enter_contract_number(self) -> list[MethodTG]:
+        assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting contract number.")
         current_ticket = self.user_db.current_ticket
         if current_ticket is None:
@@ -706,14 +727,15 @@ class Conversation:
         if isinstance(self.update_tg, MessageUpdateTG):
             if self.update_tg.message.text is not None:
                 message_text = self.update_tg.message.text
-                if re.fullmatch(r"\d+", message_text) and message_text != "0":
+                if (
+                    re.fullmatch(settings.contract_number_regex, message_text)
+                    and message_text != "0"
+                ):
                     logger.info(
                         f"{self.log_prefix}Got correct "
                         f"contract number: '{message_text}'."
                     )
                     contract_number = int(message_text)
-                    self.next_state = state.model_copy(deep=True)
-                    self.next_state.action = Action.PICK_DEVICE_TYPE
                     contract_exist = await self.session.scalar(
                         select(ContractDB).where(ContractDB.number == contract_number)
                     )
@@ -734,6 +756,7 @@ class Conversation:
                         new_contract = ContractDB(number=contract_number)
                         current_ticket.contract = new_contract
                     await self.session.flush()
+                    self.next_state = StateJS(action=Action.PICK_DEVICE_TYPE)
                     methods_tg_list.append(
                         await self._build_pick_device_type_message(
                             f"{String.PICK_DEVICE_TYPE}."
@@ -773,7 +796,8 @@ class Conversation:
             )
         return methods_tg_list
 
-    async def _handle_action_pick_device_type(self, state: StateJS) -> list[MethodTG]:
+    async def _handle_action_pick_device_type(self) -> list[MethodTG]:
+        assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting device type choice to be made.")
         current_ticket = self.user_db.current_ticket
         if current_ticket is None:
@@ -792,20 +816,8 @@ class Conversation:
                     f"{self.log_prefix}Got {CallbackData.__name__} "
                     f"'{received_callback_data.value}'."
                 )
-                if received_callback_data.name not in DeviceTypeName.__members__:
-                    logger.info(
-                        f"{self.log_prefix}{CallbackData.__name__} "
-                        f"'{received_callback_data.value}' "
-                        "doesn't match any "
-                        f"{DeviceTypeName.__name__}."
-                    )
-                    raise ValueError
-                device_type_name = DeviceTypeName[received_callback_data.name]
-                logger.info(
-                    f"{self.log_prefix}{CallbackData.__name__} "
-                    f"'{received_callback_data.value}' "
-                    f"matches {DeviceTypeName.__name__} "
-                    f"'{device_type_name.name}'."
+                device_type_name = self._get_device_type_name_from_callback_data(
+                    received_callback_data
                 )
                 methods_tg_list.append(self._build_edit_to_callback_button_text())
                 device_type = await self.session.scalar(
@@ -826,7 +838,9 @@ class Conversation:
                 elif not device_type.is_active:
                     logger.info(
                         f"{self.log_prefix}{DeviceTypeDB.__name__} "
-                        f"'{device_type.name.name}' is disabled."
+                        f"'{device_type.name.name}' is disabled. "
+                        f"Only active {DeviceTypeDB.__name__} "
+                        "is allowed."
                     )
                     methods_tg_list.append(
                         await self._build_pick_device_type_message(
@@ -842,11 +856,10 @@ class Conversation:
                         f"name='{device_type.name.name}' "
                         f"id={device_type.id}."
                     )
-                    self.next_state = state.model_copy(deep=True)
                     devices_list = current_ticket.devices
-                    device_index = self.next_state.device_index
-                    device_list_length = len(devices_list)
-                    if device_index == device_list_length:
+                    device_index = self.state.device_index
+                    total_devices = len(devices_list)
+                    if device_index == total_devices:
                         logger.info(
                             f"{self.log_prefix}No existing "
                             f"{DeviceDB.__name__} to work with. "
@@ -861,7 +874,7 @@ class Conversation:
                         )
                         device.type = device_type
                         devices_list.append(device)
-                    elif 0 <= device_index < device_list_length:
+                    elif 0 <= device_index < total_devices:
                         logger.info(
                             f"{self.log_prefix}Working with existing "
                             f"{DeviceDB.__name__} at "
@@ -876,15 +889,15 @@ class Conversation:
                         error_msg = (
                             f"{self.log_prefix}Error: "
                             f"device_index={device_index} and "
-                            f"device_list_length={device_list_length}. "
+                            f"total_devices={total_devices}. "
                             "Expected: "
-                            "0 <= device_index <= device_list_length."
+                            "0 <= device_index <= total_devices."
                         )
                         logger.error(error_msg)
                         raise IndexError(error_msg)
                     if device_type.is_disposable:
                         logger.info(
-                            f"{DeviceTypeDB.__name__} "
+                            f"{self.log_prefix}{DeviceTypeDB.__name__} "
                             f"'{device_type.name.name}' "
                             "is disposable. Install or return step "
                             "will be skipped."
@@ -892,11 +905,16 @@ class Conversation:
                         device.removal = False
                         if device_type.has_serial_number:
                             logger.info(
+                                f"{self.log_prefix}"
                                 f"{DeviceTypeDB.__name__} "
                                 f"'{device_type.name.name}' "
-                                "has serial number parameter."
+                                "has serial number parameter. "
+                                "Next step is serial number."
                             )
-                            self.next_state.action = Action.ENTER_DEVICE_SERIAL_NUMBER
+                            self.next_state = StateJS(
+                                action=Action.ENTER_DEVICE_SERIAL_NUMBER,
+                                device_index=device_index,
+                            )
                             methods_tg_list.append(
                                 self._build_new_text_message(
                                     f"{String.ENTER_SERIAL_NUMBER}."
@@ -904,12 +922,14 @@ class Conversation:
                             )
                         else:
                             logger.info(
+                                f"{self.log_prefix}"
                                 f"{DeviceTypeDB.__name__} "
                                 f"'{device_type.name.name}' "
                                 "doesn't have serial number parameter. "
-                                "Serial number step will be skipped."
+                                "Serial number step will be skipped. "
+                                "Next step is ticket menu."
                             )
-                            self.next_state.action = Action.PICK_TICKET_ACTION
+                            self.next_state = StateJS(action=Action.PICK_TICKET_ACTION)
                             methods_tg_list.append(
                                 self._build_pick_ticket_action_message(
                                     f"{String.PICK_TICKET_ACTION}."
@@ -917,11 +937,15 @@ class Conversation:
                             )
                     else:
                         logger.info(
-                            f"{DeviceTypeDB.__name__} "
+                            f"{self.log_prefix}{DeviceTypeDB.__name__} "
                             f"'{device_type.name.name}' "
-                            "is non-disposable."
+                            "is non-disposable. "
+                            "Next step is pick install or return."
                         )
-                        self.next_state.action = Action.PICK_INSTALL_OR_RETURN
+                        self.next_state = StateJS(
+                            action=Action.PICK_INSTALL_OR_RETURN,
+                            device_index=device_index,
+                        )
                         methods_tg_list.append(
                             self._build_pick_install_or_return_message(
                                 f"{String.PICK_INSTALL_OR_RETURN}."
@@ -954,9 +978,8 @@ class Conversation:
             )
         return methods_tg_list
 
-    async def _handle_action_pick_install_or_return(
-        self, state: StateJS
-    ) -> list[MethodTG]:
+    async def _handle_action_pick_install_or_return(self) -> list[MethodTG]:
+        assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting install or return choice to be made.")
         current_ticket = self.user_db.current_ticket
         if current_ticket is None:
@@ -999,7 +1022,7 @@ class Conversation:
                         removal = True
                     else:
                         error_msg = (
-                            f"{CallbackData.__name__} "
+                            f"{self.log_prefix}{CallbackData.__name__} "
                             f"{received_callback_data.value}"
                             "is in expected callback list, "
                             "but somehow doesn't match anything."
@@ -1007,11 +1030,10 @@ class Conversation:
                         logger.error(error_msg)
                         raise ValueError(error_msg)
                     methods_tg_list.append(self._build_edit_to_callback_button_text())
-                    self.next_state = state.model_copy(deep=True)
                     devices_list = current_ticket.devices
-                    device_index = self.next_state.device_index
-                    device_list_length = len(devices_list)
-                    if 0 <= device_index < device_list_length:
+                    device_index = self.state.device_index
+                    total_devices = len(devices_list)
+                    if 0 <= device_index < total_devices:
                         logger.info(
                             f"{self.log_prefix}Working with "
                             f"{DeviceDB.__name__} "
@@ -1025,20 +1047,24 @@ class Conversation:
                         error_msg = (
                             f"{self.log_prefix}Error: "
                             f"device_index={device_index} and "
-                            f"device_list_length={device_list_length}. "
+                            f"total_devices={total_devices}. "
                             "Expected: "
-                            "0 <= device_index < device_list_length."
+                            "0 <= device_index < total_devices."
                         )
                         logger.error(error_msg)
                         raise IndexError(error_msg)
                     device_type = device.type
                     if device_type.has_serial_number:
                         logger.info(
-                            f"{DeviceTypeDB.__name__} "
+                            f"{self.log_prefix}{DeviceTypeDB.__name__} "
                             f"'{device_type.name.name}' "
-                            "has serial number parameter."
+                            "has serial number parameter. "
+                            "Next step is serial number."
                         )
-                        self.next_state.action = Action.ENTER_DEVICE_SERIAL_NUMBER
+                        self.next_state = StateJS(
+                            action=Action.ENTER_DEVICE_SERIAL_NUMBER,
+                            device_index=device_index,
+                        )
                         methods_tg_list.append(
                             self._build_new_text_message(
                                 f"{String.ENTER_SERIAL_NUMBER}."
@@ -1046,13 +1072,13 @@ class Conversation:
                         )
                     else:
                         logger.info(
-                            f"{DeviceTypeDB.__name__} "
+                            f"{self.log_prefix}{DeviceTypeDB.__name__} "
                             f"'{device_type.name.name}' "
                             "doesn't have serial number parameter. "
-                            "Serial number step will be skipped."
+                            "Serial number step will be skipped. "
+                            "Next step is ticket menu."
                         )
-                        self.next_state.action = Action.PICK_TICKET_ACTION
-                        self.next_state.device_index = 0
+                        self.next_state = StateJS(action=Action.PICK_TICKET_ACTION)
                         methods_tg_list.append(
                             self._build_pick_ticket_action_message(
                                 f"{String.PICK_TICKET_ACTION}."
@@ -1089,9 +1115,8 @@ class Conversation:
             )
         return methods_tg_list
 
-    def _handle_action_enter_device_serial_number(
-        self, state: StateJS
-    ) -> list[MethodTG]:
+    def _handle_action_enter_device_serial_number(self) -> list[MethodTG]:
+        assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting device serial number.")
         current_ticket = self.user_db.current_ticket
         if current_ticket is None:
@@ -1105,18 +1130,19 @@ class Conversation:
         if isinstance(self.update_tg, MessageUpdateTG):
             if self.update_tg.message.text is not None:
                 message_text = self.update_tg.message.text.upper()
-                if re.fullmatch(r"[\dA-Z]+", message_text) and message_text != "0":
+                if (
+                    re.fullmatch(settings.serial_number_regex, message_text)
+                    and message_text != "0"
+                ):
                     logger.info(
                         f"{self.log_prefix}Got correct device "
                         "serial number (forced uppercase): "
                         f"'{message_text}'."
                     )
-                    self.next_state = state.model_copy(deep=True)
-                    self.next_state.action = Action.PICK_TICKET_ACTION
                     devices_list = current_ticket.devices
-                    device_index = self.next_state.device_index
-                    device_list_length = len(devices_list)
-                    if 0 <= device_index < device_list_length:
+                    device_index = self.state.device_index
+                    total_devices = len(devices_list)
+                    if 0 <= device_index < total_devices:
                         logger.info(
                             f"{self.log_prefix}Working with "
                             f"{DeviceDB.__name__} "
@@ -1129,12 +1155,13 @@ class Conversation:
                         error_msg = (
                             f"{self.log_prefix}Error: "
                             f"device_index={device_index} and "
-                            f"device_list_length={device_list_length}. "
+                            f"total_devices={total_devices}. "
                             "Expected: "
-                            "0 <= device_index < device_list_length."
+                            "0 <= device_index < total_devices."
                         )
                         logger.error(error_msg)
                         raise IndexError(error_msg)
+                    self.next_state = StateJS(action=Action.PICK_TICKET_ACTION)
                     methods_tg_list.append(
                         self._build_pick_ticket_action_message(
                             f"{String.PICK_TICKET_ACTION}."
@@ -1175,7 +1202,8 @@ class Conversation:
             )
         return methods_tg_list
 
-    async def _handle_action_pick_ticket_action(self, state: StateJS) -> list[MethodTG]:
+    async def _handle_action_pick_ticket_action(self) -> list[MethodTG]:
+        assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting ticket menu choice to be made.")
         current_ticket = self.user_db.current_ticket
         if current_ticket is None:
@@ -1192,17 +1220,16 @@ class Conversation:
                 CallbackData.EDIT_CONTRACT_NUMBER,
                 CallbackData.QUIT_WITHOUT_SAVING_BTN,
             ]
-            device_list_length = len(current_ticket.devices)
-            if device_list_length < settings.devices_per_ticket:
+            total_devices = len(current_ticket.devices)
+            if total_devices < settings.devices_per_ticket:
                 expected_callback_data.append(CallbackData.ADD_DEVICE_BTN)
-            if device_list_length > 0:
+            if total_devices > 0:
                 expected_callback_data.append(CallbackData.CLOSE_TICKET_BTN)
-            all_devices_list = [
+            expected_devices_callbacks = [
                 CallbackData[f"DEVICE_{index}"]
-                for index in range(settings.devices_per_ticket)
+                for index in range(min(total_devices, settings.devices_per_ticket))
             ]
-            expected_devices_list = all_devices_list[:device_list_length]
-            expected_callback_data.extend(expected_devices_list)
+            expected_callback_data.extend(expected_devices_callbacks)
             raw_data = self.update_tg.callback_query.data
             try:
                 received_callback_data = CallbackData(raw_data)
@@ -1212,14 +1239,13 @@ class Conversation:
                         f"{CallbackData.__name__} "
                         f"'{received_callback_data.value}'."
                     )
-                    self.next_state = state.model_copy(deep=True)
                     if received_callback_data == CallbackData.EDIT_TICKET_NUMBER:
                         methods_tg_list.append(
                             self._build_edit_to_text_message(
                                 f"{String.EDIT_TICKET_NUMBER}."
                             )
                         )
-                        self.next_state.action = Action.EDIT_TICKET_NUMBER
+                        self.next_state = StateJS(action=Action.EDIT_TICKET_NUMBER)
                         methods_tg_list.append(
                             self._build_new_text_message(
                                 f"{String.ENTER_NEW_TICKET_NUMBER}."
@@ -1231,34 +1257,27 @@ class Conversation:
                                 f"{String.EDIT_CONTRACT_NUMBER}."
                             )
                         )
-                        self.next_state.action = Action.EDIT_CONTRACT_NUMBER
+                        self.next_state = StateJS(action=Action.EDIT_CONTRACT_NUMBER)
                         methods_tg_list.append(
                             self._build_new_text_message(
                                 f"{String.ENTER_NEW_CONTRACT_NUMBER}."
                             )
                         )
-                    elif received_callback_data in expected_devices_list:
-                        pattern = r"(\d+)$"
-                        match = re.search(pattern, received_callback_data)
-                        if match:
-                            device_index_string = match.group(1)
-                        else:
-                            error_msg = (
-                                f"{self.log_prefix}"
-                                f"{CallbackData.__name__} "
-                                f"'{received_callback_data.value}' "
-                                "doesn't end with an integer."
+                    elif received_callback_data in expected_devices_callbacks:
+                        callback_device_index = (
+                            self._get_callback_data_ending_as_integer(
+                                received_callback_data
                             )
-                            logger.error(error_msg)
-                            raise ValueError(error_msg)
-                        callback_device_index = int(device_index_string)
+                        )
                         methods_tg_list.append(
                             self._build_edit_to_text_message(
                                 f"{String.EDIT_DEVICE} {callback_device_index + 1}."
                             )
                         )
-                        self.next_state.action = Action.PICK_DEVICE_ACTION
-                        self.next_state.device_index = callback_device_index
+                        self.next_state = StateJS(
+                            action=Action.PICK_DEVICE_ACTION,
+                            device_index=callback_device_index,
+                        )
                         methods_tg_list.append(
                             self._build_pick_device_action_message(
                                 f"{String.PICK_DEVICE_ACTION}."
@@ -1268,8 +1287,10 @@ class Conversation:
                         methods_tg_list.append(
                             self._build_edit_to_callback_button_text()
                         )
-                        self.next_state.action = Action.PICK_DEVICE_TYPE
-                        self.next_state.device_index = device_list_length
+                        self.next_state = StateJS(
+                            action=Action.PICK_DEVICE_TYPE,
+                            device_index=total_devices,
+                        )
                         methods_tg_list.append(
                             await self._build_pick_device_type_message(
                                 f"{String.PICK_DEVICE_TYPE}."
@@ -1279,7 +1300,7 @@ class Conversation:
                         methods_tg_list.append(
                             self._build_edit_to_callback_button_text()
                         )
-                        self.next_state.action = Action.CONFIRM_CLOSE_TICKET
+                        self.next_state = StateJS(action=Action.CONFIRM_CLOSE_TICKET)
                         methods_tg_list.append(
                             self._build_pick_confirm_close_ticket_message(
                                 f"{String.CONFIRM_YOU_WANT_TO_CLOSE_TICKET}."
@@ -1289,7 +1310,9 @@ class Conversation:
                         methods_tg_list.append(
                             self._build_edit_to_callback_button_text()
                         )
-                        self.next_state.action = Action.CONFIRM_QUIT_WITHOUT_SAVING
+                        self.next_state = StateJS(
+                            action=Action.CONFIRM_QUIT_WITHOUT_SAVING
+                        )
                         methods_tg_list.append(
                             self._build_pick_confirm_quit_without_saving(
                                 f"{String.ARE_YOU_SURE_YOU_WANT_TO_QUIT_WITHOUT_SAVING}?"
@@ -1325,7 +1348,8 @@ class Conversation:
             )
         return methods_tg_list
 
-    def _handle_action_edit_ticket_number(self, state: StateJS) -> list[MethodTG]:
+    def _handle_action_edit_ticket_number(self) -> list[MethodTG]:
+        assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting new ticket number.")
         current_ticket = self.user_db.current_ticket
         if current_ticket is None:
@@ -1339,14 +1363,15 @@ class Conversation:
         if isinstance(self.update_tg, MessageUpdateTG):
             if self.update_tg.message.text is not None:
                 message_text = self.update_tg.message.text
-                if re.fullmatch(r"\d+", message_text) and message_text != "0":
+                if (
+                    re.fullmatch(settings.ticket_number_regex, message_text)
+                    and message_text != "0"
+                ):
                     logger.info(
                         f"{self.log_prefix}Got correct new "
                         f"ticket number: '{message_text}'."
                     )
                     new_ticket_number = int(message_text)
-                    self.next_state = state.model_copy(deep=True)
-                    self.next_state.action = Action.PICK_TICKET_ACTION
                     if current_ticket.number != new_ticket_number:
                         logger.info(
                             f"{self.log_prefix}New ticket "
@@ -1356,6 +1381,7 @@ class Conversation:
                             "Applying change."
                         )
                         current_ticket.number = new_ticket_number
+                        self.next_state = StateJS(action=Action.PICK_TICKET_ACTION)
                         methods_tg_list.append(
                             self._build_pick_ticket_action_message(
                                 f"{String.TICKET_NUMBER_WAS_EDITED}. "
@@ -1370,6 +1396,7 @@ class Conversation:
                             f"number={current_ticket.number}. "
                             "No change needed."
                         )
+                        self.next_state = StateJS(action=Action.PICK_TICKET_ACTION)
                         methods_tg_list.append(
                             self._build_pick_ticket_action_message(
                                 f"{String.TICKET_NUMBER_REMAINS_THE_SAME}. "
@@ -1410,9 +1437,8 @@ class Conversation:
             )
         return methods_tg_list
 
-    async def _handle_action_edit_contract_number(
-        self, state: StateJS
-    ) -> list[MethodTG]:
+    async def _handle_action_edit_contract_number(self) -> list[MethodTG]:
+        assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting new contract number.")
         current_ticket = self.user_db.current_ticket
         if current_ticket is None:
@@ -1435,14 +1461,15 @@ class Conversation:
         if isinstance(self.update_tg, MessageUpdateTG):
             if self.update_tg.message.text is not None:
                 message_text = self.update_tg.message.text
-                if re.fullmatch(r"\d+", message_text) and message_text != "0":
+                if (
+                    re.fullmatch(settings.contract_number_regex, message_text)
+                    and message_text != "0"
+                ):
                     logger.info(
                         f"{self.log_prefix}Got correct new "
                         f"contract number: '{message_text}'."
                     )
                     new_contract_number = int(message_text)
-                    self.next_state = state.model_copy(deep=True)
-                    self.next_state.action = Action.PICK_TICKET_ACTION
                     if current_ticket.contract.number != new_contract_number:
                         logger.info(
                             f"{self.log_prefix}New contract "
@@ -1512,6 +1539,7 @@ class Conversation:
                                 f"id={old_contract_id} "
                                 "was not found in the database."
                             )
+                        self.next_state = StateJS(action=Action.PICK_TICKET_ACTION)
                         methods_tg_list.append(
                             self._build_pick_ticket_action_message(
                                 f"{String.CONTRACT_NUMBER_WAS_EDITED}. "
@@ -1526,6 +1554,7 @@ class Conversation:
                             f"number={current_ticket.contract.number}. "
                             "No change needed."
                         )
+                        self.next_state = StateJS(action=Action.PICK_TICKET_ACTION)
                         methods_tg_list.append(
                             self._build_pick_ticket_action_message(
                                 f"{String.CONTRACT_NUMBER_REMAINS_THE_SAME}. "
@@ -1566,7 +1595,8 @@ class Conversation:
             )
         return methods_tg_list
 
-    async def _handle_action_pick_device_action(self, state: StateJS) -> list[MethodTG]:
+    async def _handle_action_pick_device_action(self) -> list[MethodTG]:
+        assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting device menu choice to be made.")
         current_ticket = self.user_db.current_ticket
         if current_ticket is None:
@@ -1583,9 +1613,9 @@ class Conversation:
                 CallbackData.DELETE_DEVICE_BTN,
             ]
             devices_list = current_ticket.devices
-            device_index = state.device_index
-            device_list_length = len(devices_list)
-            if 0 <= device_index < device_list_length:
+            device_index = self.state.device_index
+            total_devices = len(devices_list)
+            if 0 <= device_index < total_devices:
                 logger.info(
                     f"{self.log_prefix}Working with "
                     f"{DeviceDB.__name__} "
@@ -1596,8 +1626,8 @@ class Conversation:
                 error_msg = (
                     f"{self.log_prefix}Error: "
                     f"device_index={device_index} and "
-                    f"device_list_length={device_list_length}. "
-                    "Expected: 0 <= device_index < device_list_length."
+                    f"total_devices={total_devices}. "
+                    "Expected: 0 <= device_index < total_devices."
                 )
                 logger.error(error_msg)
                 raise IndexError(error_msg)
@@ -1633,12 +1663,14 @@ class Conversation:
                         f"{CallbackData.__name__} "
                         f"'{received_callback_data.value}'."
                     )
-                    self.next_state = state.model_copy(deep=True)
                     if received_callback_data == CallbackData.EDIT_DEVICE_TYPE:
                         methods_tg_list.append(
                             self._build_edit_to_callback_button_text()
                         )
-                        self.next_state.action = Action.EDIT_DEVICE_TYPE
+                        self.next_state = StateJS(
+                            action=Action.EDIT_DEVICE_TYPE,
+                            device_index=device_index,
+                        )
                         methods_tg_list.append(
                             await self._build_pick_device_type_message(
                                 f"{String.PICK_NEW_DEVICE_TYPE}."
@@ -1653,7 +1685,10 @@ class Conversation:
                                 f"{String.EDIT_INSTALL_OR_RETURN}."
                             )
                         )
-                        self.next_state.action = Action.EDIT_INSTALL_OR_RETURN
+                        self.next_state = StateJS(
+                            action=Action.EDIT_INSTALL_OR_RETURN,
+                            device_index=device_index,
+                        )
                         methods_tg_list.append(
                             self._build_pick_install_or_return_message(
                                 f"{String.PICK_INSTALL_OR_RETURN}."
@@ -1667,7 +1702,10 @@ class Conversation:
                                 f"{String.EDIT_SERIAL_NUMBER}."
                             )
                         )
-                        self.next_state.action = Action.EDIT_DEVICE_SERIAL_NUMBER
+                        self.next_state = StateJS(
+                            action=Action.EDIT_DEVICE_SERIAL_NUMBER,
+                            device_index=device_index,
+                        )
                         methods_tg_list.append(
                             self._build_new_text_message(
                                 f"{String.ENTER_NEW_SERIAL_NUMBER}."
@@ -1679,7 +1717,7 @@ class Conversation:
                                 f"{String.RETURNING_TO_TICKET}."
                             )
                         )
-                        self.next_state.action = Action.PICK_TICKET_ACTION
+                        self.next_state = StateJS(action=Action.PICK_TICKET_ACTION)
                         methods_tg_list.append(
                             self._build_pick_ticket_action_message(
                                 f"{String.PICK_TICKET_ACTION}."
@@ -1694,13 +1732,12 @@ class Conversation:
                         await self.session.delete(device)
                         await self.session.flush()
                         await self.session.refresh(current_ticket, ["devices"])
-                        self.next_state.device_index = 0
                         methods_tg_list.append(
                             self._build_edit_to_text_message(
                                 f"{String.DEVICE_WAS_DELETED_FROM_TICKET}."
                             )
                         )
-                        self.next_state.action = Action.PICK_TICKET_ACTION
+                        self.next_state = StateJS(action=Action.PICK_TICKET_ACTION)
                         methods_tg_list.append(
                             self._build_pick_ticket_action_message(
                                 f"{String.PICK_TICKET_ACTION}."
@@ -1736,7 +1773,8 @@ class Conversation:
             )
         return methods_tg_list
 
-    async def _handle_action_edit_device_type(self, state: StateJS) -> list[MethodTG]:
+    async def _handle_action_edit_device_type(self) -> list[MethodTG]:
+        assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting new device type choice to be made.")
         current_ticket = self.user_db.current_ticket
         if current_ticket is None:
@@ -1755,20 +1793,8 @@ class Conversation:
                     f"{self.log_prefix}Got {CallbackData.__name__} "
                     f"'{received_callback_data.value}'."
                 )
-                if received_callback_data.name not in DeviceTypeName.__members__:
-                    logger.info(
-                        f"{self.log_prefix}{CallbackData.__name__} "
-                        f"'{received_callback_data.value}' "
-                        "doesn't match any "
-                        f"{DeviceTypeName.__name__}."
-                    )
-                    raise ValueError
-                device_type_name = DeviceTypeName[received_callback_data.name]
-                logger.info(
-                    f"{self.log_prefix}{CallbackData.__name__} "
-                    f"'{received_callback_data.value}' "
-                    f"matches {DeviceTypeName.__name__} "
-                    f"'{device_type_name.name}'."
+                device_type_name = self._get_device_type_name_from_callback_data(
+                    received_callback_data
                 )
                 methods_tg_list.append(self._build_edit_to_callback_button_text())
                 device_type = await self.session.scalar(
@@ -1805,12 +1831,10 @@ class Conversation:
                         f"name='{device_type.name.name}' "
                         f"id={device_type.id}."
                     )
-                    self.next_state = state.model_copy(deep=True)
-                    self.next_state.action = Action.PICK_DEVICE_ACTION
                     devices_list = current_ticket.devices
-                    device_index = self.next_state.device_index
-                    device_list_length = len(devices_list)
-                    if 0 <= device_index < device_list_length:
+                    device_index = self.state.device_index
+                    total_devices = len(devices_list)
+                    if 0 <= device_index < total_devices:
                         logger.info(
                             f"{self.log_prefix}Working with "
                             f"{DeviceDB.__name__} at "
@@ -1821,9 +1845,9 @@ class Conversation:
                         error_msg = (
                             f"{self.log_prefix}Error: "
                             f"device_index={device_index} and "
-                            f"device_list_length={device_list_length}. "
+                            f"total_devices={total_devices}. "
                             "Expected: "
-                            "0 <= device_index < device_list_length."
+                            "0 <= device_index < total_devices."
                         )
                         logger.error(error_msg)
                         raise IndexError(error_msg)
@@ -1841,6 +1865,7 @@ class Conversation:
                         device.type = device_type
                         if device_type.is_disposable:
                             logger.info(
+                                f"{self.log_prefix}"
                                 f"{DeviceTypeDB.__name__} "
                                 f"'{device_type.name.name}' is "
                                 "disposable. Install action set."
@@ -1848,6 +1873,7 @@ class Conversation:
                             device.removal = False
                         else:
                             logger.info(
+                                f"{self.log_prefix}"
                                 f"{DeviceTypeDB.__name__} "
                                 f"'{device_type.name.name}' "
                                 "is not disposable. "
@@ -1855,6 +1881,7 @@ class Conversation:
                             )
                         if device_type.has_serial_number:
                             logger.info(
+                                f"{self.log_prefix}"
                                 f"{DeviceTypeDB.__name__} "
                                 f"'{device_type.name.name}' "
                                 "has serial number parameter. "
@@ -1862,12 +1889,17 @@ class Conversation:
                             )
                         else:
                             logger.info(
+                                f"{self.log_prefix}"
                                 f"{DeviceTypeDB.__name__} "
                                 f"'{device_type.name.name}' "
                                 "doesn't have serial number parameter. "
                                 "Setting serial number to None."
                             )
                             device.serial_number = None
+                        self.next_state = StateJS(
+                            action=Action.PICK_DEVICE_ACTION,
+                            device_index=device_index,
+                        )
                         methods_tg_list.append(
                             self._build_pick_device_action_message(
                                 f"{String.DEVICE_TYPE_WAS_EDITED}. "
@@ -1883,6 +1915,10 @@ class Conversation:
                             f"{DeviceTypeDB.__name__} "
                             f"'{device.type.name.name}'. "
                             "No change needed."
+                        )
+                        self.next_state = StateJS(
+                            action=Action.PICK_DEVICE_ACTION,
+                            device_index=device_index,
                         )
                         methods_tg_list.append(
                             self._build_pick_device_action_message(
@@ -1916,214 +1952,8 @@ class Conversation:
             )
         return methods_tg_list
 
-    # Not finished
-    async def _handle_action_edit_writeoff_device_type(
-        self, state: StateJS
-    ) -> list[MethodTG]:
-        logger.info(
-            f"{self.log_prefix}Awaiting new writeoff device type choice to be made."
-        )
-        if self.state is None:
-            error_msg = "'self.state' cannot be None at this point."
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        if self.state.writeoff_device_id == 0:
-            error_msg = "'writeoff_device_id' cannot be 0 at this point."
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        methods_tg_list: list[MethodTG] = []
-        if isinstance(self.update_tg, CallbackQueryUpdateTG):
-            raw_data = self.update_tg.callback_query.data
-            try:
-                received_callback_data = CallbackData(raw_data)
-                logger.info(
-                    f"{self.log_prefix}Got {CallbackData.__name__} "
-                    f"'{received_callback_data.value}'."
-                )
-                if received_callback_data.name not in DeviceTypeName.__members__:
-                    logger.info(
-                        f"{self.log_prefix}{CallbackData.__name__} "
-                        f"'{received_callback_data.value}' "
-                        "doesn't match any "
-                        f"{DeviceTypeName.__name__}."
-                    )
-                    raise ValueError
-                device_type_name = DeviceTypeName[received_callback_data.name]
-                logger.info(
-                    f"{self.log_prefix}{CallbackData.__name__} "
-                    f"'{received_callback_data.value}' "
-                    f"matches {DeviceTypeName.__name__} "
-                    f"'{device_type_name.name}'."
-                )
-                methods_tg_list.append(self._build_edit_to_callback_button_text())
-                device_type = await self.session.scalar(
-                    select(DeviceTypeDB).where(DeviceTypeDB.name == device_type_name)
-                )
-                if device_type is None:
-                    logger.info(
-                        f"{self.log_prefix}No {DeviceTypeDB.__name__} "
-                        f"found for {received_callback_data.name}."
-                    )
-                    methods_tg_list.append(
-                        await self._build_pick_writeoff_device_type_message(
-                            f"{String.GOT_UNEXPECTED_DATA}. "
-                            f"{String.PICK_NEW_WRITEOFF_DEVICE_TYPE} "
-                            f"{String.FROM_OPTIONS_BELOW}."
-                        )
-                    )
-                elif device_type.is_disposable:
-                    logger.info(
-                        f"{self.log_prefix}{DeviceTypeDB.__name__} "
-                        f"'{device_type.name.name}' is disposable."
-                    )
-                    methods_tg_list.append(
-                        await self._build_pick_writeoff_device_type_message(
-                            f"{String.DEVICE_TYPE_IS_DISPOSABLE}. "
-                            f"{String.PICK_NEW_WRITEOFF_DEVICE_TYPE} "
-                            f"{String.FROM_OPTIONS_BELOW}."
-                        )
-                    )
-                else:
-                    logger.info(
-                        f"{self.log_prefix}Found non-disposable "
-                        f"{DeviceTypeDB.__name__}: "
-                        f"name='{device_type.name.name}' "
-                        f"id={device_type.id}."
-                    )
-                    self.next_state = state.model_copy(deep=True)
-                    writeoff_device_id = self.state.writeoff_device_id
-                    writeoff_device = await self.session.scalar(
-                        select(WriteoffDeviceDB)
-                        .where(WriteoffDeviceDB.id == writeoff_device_id)
-                        .options(selectinload(WriteoffDeviceDB.type))
-                    )
-                    if writeoff_device is None:
-                        logger.warning(
-                            f"{self.log_prefix}Writeoff device with "
-                            f"id={writeoff_device_id} "
-                            "was not found in the database. "
-                            "Cannot edit its device type. "
-                            "Going back to the writeoff devices menu."
-                        )
-                        self.next_state.action = Action.WRITEOFF_DEVICES
-                        self.next_state.writeoff_device_id = 0
-                        methods_tg_list.append(
-                            await self._build_stateless_writeoffs_devices(
-                                f"{String.WRITEOFF_DEVICE_WAS_NOT_FOUND}. "
-                                f"{String.PICK_WRITEOFFS_ACTION}."
-                            ),
-                        )
-                    elif writeoff_device.type.name.name != device_type.name.name:
-                        logger.info(
-                            f"{self.log_prefix}New "
-                            f"{DeviceTypeDB.__name__} "
-                            f"'{device_type.name.name}' "
-                            "is different from old "
-                            f"{DeviceTypeDB.__name__} "
-                            f"'{writeoff_device.type.name.name}'. "
-                            "Applying change."
-                        )
-                        writeoff_device.type_id = device_type.id
-                        writeoff_device.type = device_type
-                        if device_type.has_serial_number:
-                            logger.info(
-                                f"{DeviceTypeDB.__name__} "
-                                f"'{device_type.name.name}' "
-                                "has serial number parameter. "
-                                "Keeping serial number intact."
-                            )
-                        else:
-                            logger.info(
-                                f"{DeviceTypeDB.__name__} "
-                                f"'{device_type.name.name}' "
-                                "doesn't have serial number parameter. "
-                                "Setting serial number to None."
-                            )
-                            writeoff_device.serial_number = None
-                        await self.session.flush()
-                        self.next_state.action = Action.PICK_WRITEOFF_DEVICE_ACTION
-                        methods_tg_list.append(
-                            await self._build_pick_writeoff_device_action_message(
-                                f"{String.DEVICE_TYPE_WAS_EDITED}. "
-                                f"{String.PICK_WRITEOFF_DEVICE_ACTION}."
-                            )
-                        )
-                    else:
-                        logger.info(
-                            f"{self.log_prefix}New "
-                            f"{DeviceTypeDB.__name__} "
-                            f"'{device_type.name.name}' "
-                            "is the same as old "
-                            f"{DeviceTypeDB.__name__} "
-                            f"'{writeoff_device.type.name.name}'. "
-                            "No change needed."
-                        )
-                        self.next_state.action = Action.PICK_WRITEOFF_DEVICE_ACTION
-                        methods_tg_list.append(
-                            await self._build_pick_writeoff_device_action_message(
-                                f"{String.DEVICE_TYPE_REMAINS_THE_SAME}. "
-                                f"{String.PICK_WRITEOFF_DEVICE_ACTION}."
-                            )
-                        )
-            except ValueError:
-                logger.info(
-                    f"{self.log_prefix}Got invalid callback data "
-                    f"'{raw_data}' for current device new type selection."
-                )
-                methods_tg_list.append(
-                    self._build_edit_to_text_message(f"{String.GOT_UNEXPECTED_DATA}.")
-                )
-                existing_writeoff_device_menu = (
-                    await self._build_pick_writeoff_device_type_message(
-                        f"{String.GOT_UNEXPECTED_DATA}. "
-                        f"{String.PICK_NEW_WRITEOFF_DEVICE_TYPE} "
-                        f"{String.FROM_OPTIONS_BELOW}."
-                    )
-                )
-                if existing_writeoff_device_menu is None:
-                    logger.info(
-                        f"{self.log_prefix}Going back to the writeoff devices menu."
-                    )
-                    self.next_state.action = Action.WRITEOFF_DEVICES
-                    self.next_state.writeoff_device_id = 0
-                    self.next_state.writeoff_devices_dict = {}
-                    methods_tg_list.append(
-                        await self._build_stateless_writeoffs_devices(
-                            f"{String.WRITEOFF_DEVICE_WAS_NOT_FOUND}. "
-                            f"{String.PICK_WRITEOFFS_ACTION}."
-                        )
-                    )
-                else:
-                    methods_tg_list.append(existing_writeoff_device_menu)
-        elif isinstance(self.update_tg, MessageUpdateTG):
-            logger.info(f"{self.log_prefix}Got message instead of callback data.")
-            existing_writeoff_device_menu = (
-                await self._build_pick_writeoff_device_type_message(
-                    f"{String.DEVICE_TYPE_WAS_NOT_PICKED}. "
-                    f"{String.PICK_NEW_WRITEOFF_DEVICE_TYPE} "
-                    f"{String.FROM_OPTIONS_BELOW}."
-                )
-            )
-            if existing_writeoff_device_menu is None:
-                logger.info(
-                    f"{self.log_prefix}Going back to the writeoff devices menu."
-                )
-                self.next_state.action = Action.WRITEOFF_DEVICES
-                self.next_state.writeoff_device_id = 0
-                self.next_state.writeoff_devices_dict = {}
-                methods_tg_list.append(
-                    await self._build_stateless_writeoffs_devices(
-                        f"{String.WRITEOFF_DEVICE_WAS_NOT_FOUND}. "
-                        f"{String.PICK_WRITEOFFS_ACTION}."
-                    )
-                )
-            else:
-                methods_tg_list.append(existing_writeoff_device_menu)
-        return methods_tg_list
-
-    async def _handle_action_edit_install_or_return(
-        self, state: StateJS
-    ) -> list[MethodTG]:
+    async def _handle_action_edit_install_or_return(self) -> list[MethodTG]:
+        assert self.state is not None
         logger.info(
             f"{self.log_prefix}Awaiting new install or return choice to be made."
         )
@@ -2168,7 +1998,7 @@ class Conversation:
                         removal = True
                     else:
                         error_msg = (
-                            f"{CallbackData.__name__} "
+                            f"{self.log_prefix}{CallbackData.__name__} "
                             f"{received_callback_data.value}"
                             "is in expected callback list, "
                             "but somehow doesn't match anything."
@@ -2176,12 +2006,10 @@ class Conversation:
                         logger.error(error_msg)
                         raise ValueError(error_msg)
                     methods_tg_list.append(self._build_edit_to_callback_button_text())
-                    self.next_state = state.model_copy(deep=True)
-                    self.next_state.action = Action.PICK_DEVICE_ACTION
                     devices_list = current_ticket.devices
-                    device_index = self.next_state.device_index
-                    device_list_length = len(devices_list)
-                    if 0 <= device_index < device_list_length:
+                    device_index = self.state.device_index
+                    total_devices = len(devices_list)
+                    if 0 <= device_index < total_devices:
                         logger.info(
                             f"{self.log_prefix}Working with "
                             f"{DeviceDB.__name__} "
@@ -2192,9 +2020,9 @@ class Conversation:
                         error_msg = (
                             f"{self.log_prefix}Error: "
                             f"device_index={device_index} and "
-                            f"device_list_length={device_list_length}. "
+                            f"total_devices={total_devices}. "
                             "Expected: "
-                            "0 <= device_index < device_list_length."
+                            "0 <= device_index < total_devices."
                         )
                         logger.error(error_msg)
                         raise IndexError(error_msg)
@@ -2210,6 +2038,7 @@ class Conversation:
                         device_type = device.type
                         if device_type.is_disposable:
                             error_msg = (
+                                f"{self.log_prefix}"
                                 f"{DeviceTypeDB.__name__} "
                                 f"'{device_type.name.name}' "
                                 "is disposable, install or return "
@@ -2217,6 +2046,10 @@ class Conversation:
                             )
                             logger.error(error_msg)
                             raise ValueError(error_msg)
+                        self.next_state = StateJS(
+                            action=Action.PICK_DEVICE_ACTION,
+                            device_index=device_index,
+                        )
                         methods_tg_list.append(
                             self._build_pick_device_action_message(
                                 f"{String.INSTALL_OR_RETURN_WAS_EDITED}. "
@@ -2230,6 +2063,10 @@ class Conversation:
                             "is the same as device "
                             f"old removal flag '{device.removal}'. "
                             "No change needed."
+                        )
+                        self.next_state = StateJS(
+                            action=Action.PICK_DEVICE_ACTION,
+                            device_index=device_index,
                         )
                         methods_tg_list.append(
                             self._build_pick_device_action_message(
@@ -2268,9 +2105,8 @@ class Conversation:
             )
         return methods_tg_list
 
-    def _handle_action_edit_device_serial_number(
-        self, state: StateJS
-    ) -> list[MethodTG]:
+    def _handle_action_edit_device_serial_number(self) -> list[MethodTG]:
+        assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting new device serial number.")
         current_ticket = self.user_db.current_ticket
         if current_ticket is None:
@@ -2284,18 +2120,19 @@ class Conversation:
         if isinstance(self.update_tg, MessageUpdateTG):
             if self.update_tg.message.text is not None:
                 message_text = self.update_tg.message.text.upper()
-                if re.fullmatch(r"[\dA-Z]+", message_text) and message_text != "0":
+                if (
+                    re.fullmatch(settings.serial_number_regex, message_text)
+                    and message_text != "0"
+                ):
                     logger.info(
                         f"{self.log_prefix}Got correct new device "
                         "serial number (forced uppercase): "
                         f"'{message_text}'."
                     )
-                    self.next_state = state.model_copy(deep=True)
-                    self.next_state.action = Action.PICK_DEVICE_ACTION
                     devices_list = current_ticket.devices
-                    device_index = self.next_state.device_index
-                    device_list_length = len(devices_list)
-                    if 0 <= device_index < device_list_length:
+                    device_index = self.state.device_index
+                    total_devices = len(devices_list)
+                    if 0 <= device_index < total_devices:
                         logger.info(
                             f"{self.log_prefix}Working with "
                             f"{DeviceDB.__name__} "
@@ -2306,9 +2143,9 @@ class Conversation:
                         error_msg = (
                             f"{self.log_prefix}Error: "
                             f"device_index={device_index} and "
-                            f"device_list_length={device_list_length}. "
+                            f"total_devices={total_devices}. "
                             "Expected: "
-                            "0 <= device_index < device_list_length."
+                            "0 <= device_index < total_devices."
                         )
                         logger.error(error_msg)
                         raise IndexError(error_msg)
@@ -2321,6 +2158,10 @@ class Conversation:
                             "Applying change."
                         )
                         device.serial_number = message_text
+                        self.next_state = StateJS(
+                            action=Action.PICK_DEVICE_ACTION,
+                            device_index=device_index,
+                        )
                         methods_tg_list.append(
                             self._build_pick_device_action_message(
                                 f"{String.SERIAL_NUMBER_WAS_EDITED}. "
@@ -2334,6 +2175,10 @@ class Conversation:
                             "is the same as device old "
                             f"serial_number={device.serial_number}. "
                             "No change needed."
+                        )
+                        self.next_state = StateJS(
+                            action=Action.PICK_DEVICE_ACTION,
+                            device_index=device_index,
                         )
                         methods_tg_list.append(
                             self._build_pick_device_action_message(
@@ -2376,7 +2221,8 @@ class Conversation:
             )
         return methods_tg_list
 
-    async def _handle_pick_confirm_close_ticket(self, state: StateJS) -> list[MethodTG]:
+    async def _handle_pick_confirm_close_ticket(self) -> list[MethodTG]:
+        assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting close ticket confirmation.")
         current_ticket = self.user_db.current_ticket
         if current_ticket is None:
@@ -2417,7 +2263,7 @@ class Conversation:
                             self.user_db.state_json = None
                             methods_tg_list.append(
                                 self._build_new_text_message(
-                                    f"{String.TICKET_NUMBER_BTN} "
+                                    f"{String.TICKET_NUMBER_BTN} "  # nbsp
                                     f"{ticket_number} "
                                     f"{String.WITH_X} "
                                     f"{total_devices} "
@@ -2431,8 +2277,7 @@ class Conversation:
                                 )
                             )
                         else:
-                            self.next_state = state.model_copy(deep=True)
-                            self.next_state.action = Action.PICK_TICKET_ACTION
+                            self.next_state = StateJS(action=Action.PICK_TICKET_ACTION)
                             methods_tg_list.append(
                                 self._build_pick_ticket_action_message(
                                     f"{String.TICKET_CLOSE_FAILED}. "
@@ -2440,11 +2285,10 @@ class Conversation:
                                 )
                             )
                     elif received_callback_data == CallbackData.CHANGED_MY_MIND_BTN:
-                        self.next_state = state.model_copy(deep=True)
                         methods_tg_list.append(
                             self._build_edit_to_callback_button_text()
                         )
-                        self.next_state.action = Action.PICK_TICKET_ACTION
+                        self.next_state = StateJS(action=Action.PICK_TICKET_ACTION)
                         methods_tg_list.append(
                             self._build_pick_ticket_action_message(
                                 f"{String.PICK_TICKET_ACTION}."
@@ -2482,9 +2326,8 @@ class Conversation:
             )
         return methods_tg_list
 
-    async def _handle_pick_confirm_quit_ticket_without_saving(
-        self, state: StateJS
-    ) -> list[MethodTG]:
+    async def _handle_pick_confirm_quit_ticket_without_saving(self) -> list[MethodTG]:
+        assert self.state is not None
         logger.info(
             f"{self.log_prefix}Awaiting quit ticket without saving confirmation."
         )
@@ -2524,11 +2367,10 @@ class Conversation:
                             )
                         )
                     elif received_callback_data == CallbackData.CHANGED_MY_MIND_BTN:
-                        self.next_state = state.model_copy(deep=True)
                         methods_tg_list.append(
                             self._build_edit_to_callback_button_text()
                         )
-                        self.next_state.action = Action.PICK_TICKET_ACTION
+                        self.next_state = StateJS(action=Action.PICK_TICKET_ACTION)
                         methods_tg_list.append(
                             self._build_pick_ticket_action_message(
                                 f"{String.PICK_TICKET_ACTION}."
@@ -2566,51 +2408,62 @@ class Conversation:
             )
         return methods_tg_list
 
-    # Not finished
-    async def _handle_action_writeoff_devices(self, state: StateJS) -> list[MethodTG]:
+    async def _handle_action_writeoff_devices(self) -> list[MethodTG]:
+        assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting writeoff devices choice to be made.")
-        if self.state is None:
-            error_msg = "'self.state' cannot be None at this point."
-            logger.error(error_msg)
-            raise ValueError(error_msg)
         methods_tg_list: list[MethodTG] = []
-        await self.session.refresh(self.user_db, attribute_names=["writeoff_devices"])
         if isinstance(self.update_tg, CallbackQueryUpdateTG):
+            writeoffs_per_page = settings.writeoffs_per_page
+            if writeoffs_per_page <= 0:
+                error_msg = (
+                    f"{self.log_prefix}CRITICAL: 'writeoffs_per_page' setting "
+                    f"must be a positive integer, but is {writeoffs_per_page}."
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+            # await self.session.refresh(
+            #     self.user_db,
+            #     attribute_names=["writeoff_devices"],
+            # )
+            # total_writeoff_devices = len(self.user_db.writeoff_devices)
+            total_writeoff_devices = (
+                await self.session.scalar(
+                    select(func.count())
+                    .select_from(WriteoffDeviceDB)
+                    .where(WriteoffDeviceDB.user_id == self.user_db.id)
+                )
+                or 0  # Mypy fix
+            )
+            total_pages = max(
+                1,
+                (total_writeoff_devices + writeoffs_per_page - 1) // writeoffs_per_page,
+            )
+            last_page_index = total_pages - 1
+            page_index = self.state.writeoff_devices_page
+            logger.info(
+                f"{self.log_prefix}The user is on "
+                f"page {page_index + 1} of {total_pages}."
+            )
+            logger.debug(
+                f"page_index={page_index}, "
+                f"last_page_index={last_page_index}, "
+                f"total_pages={total_pages}."
+            )
             expected_callback_data = [
                 CallbackData.ADD_WRITEOFF_DEVICE_BTN,
                 CallbackData.RETURN_TO_MAIN_MENU,
             ]
-            page_index = self.state.writeoff_devices_page
-            total_writeoff_devices = len(self.user_db.writeoff_devices)
-            if total_writeoff_devices % settings.writeoffs_per_page == 0:
-                total_pages = total_writeoff_devices // settings.writeoffs_per_page
-            else:
-                total_pages = total_writeoff_devices // settings.writeoffs_per_page + 1
-            if total_pages > 0:
-                last_page_index = total_pages - 1
-            elif total_pages == 0:
-                last_page_index = 0
-            else:
-                error_msg = (
-                    f"{self.log_prefix}CRITICAL: Current total number "
-                    "of pages cannot be negative."
-                )
-                logger.error(error_msg)
-                raise ValueError(error_msg)
-            logger.debug(
-                f"page_index={page_index}\n"
-                f"last_page_index={last_page_index}\n"
-                f"total_pages={total_pages}"
-            )
             if page_index < last_page_index:
                 expected_callback_data.append(CallbackData.PREV_ONES)
             if page_index > 0:
                 expected_callback_data.append(CallbackData.NEXT_ONES)
-            existing_writeoff_devices_callbacks = [
+            expected_writeoff_devices_callbacks = [
                 CallbackData[f"DEVICE_{index}"]
-                for index in range(total_writeoff_devices)
+                for index in range(
+                    min(total_writeoff_devices, settings.writeoffs_per_page)
+                )
             ]
-            expected_callback_data.extend(existing_writeoff_devices_callbacks)
+            expected_callback_data.extend(expected_writeoff_devices_callbacks)
             raw_data = self.update_tg.callback_query.data
             try:
                 received_callback_data = CallbackData(raw_data)
@@ -2620,13 +2473,13 @@ class Conversation:
                         f"{CallbackData.__name__} "
                         f"'{received_callback_data.value}'."
                     )
-                    self.next_state = state.model_copy(deep=True)
                     if received_callback_data == CallbackData.ADD_WRITEOFF_DEVICE_BTN:
                         methods_tg_list.append(
                             self._build_edit_to_callback_button_text()
                         )
-                        self.next_state.action = Action.PICK_WRITEOFF_DEVICE_TYPE
-                        self.next_state.writeoff_devices_dict = {}
+                        self.next_state = StateJS(
+                            action=Action.PICK_WRITEOFF_DEVICE_TYPE
+                        )
                         methods_tg_list.append(
                             await self._build_pick_writeoff_device_type_message(
                                 f"{String.PICK_WRITEOFF_DEVICE_TYPE}."
@@ -2645,43 +2498,35 @@ class Conversation:
                                 f"{String.YOU_LEFT_WRITEOFF_DEVICES}. {String.PICK_A_FUNCTION}."
                             )
                         )
-                    elif received_callback_data in existing_writeoff_devices_callbacks:
-                        pattern = r"(\d+)$"
-                        match = re.search(pattern, received_callback_data)
-                        if match:
-                            device_index_string = match.group(1)
-                        else:
-                            error_msg = (
-                                f"{self.log_prefix}"
-                                f"{CallbackData.__name__} "
-                                f"'{received_callback_data.value}' "
-                                "doesn't end with an integer."
+                    elif received_callback_data in expected_writeoff_devices_callbacks:
+                        callback_device_index = (
+                            self._get_callback_data_ending_as_integer(
+                                received_callback_data
                             )
-                            logger.error(error_msg)
-                            raise ValueError(error_msg)
-                        callback_device_index = int(device_index_string)
+                        )
                         writeoff_device_id = self.state.writeoff_devices_dict.get(
                             callback_device_index
                         )
                         if writeoff_device_id is None:
                             error_msg = (
                                 f"{self.log_prefix}"
-                                f"Could not find writeoff device id "
+                                "Could not find writeoff device id "
                                 f"for index {callback_device_index}. "
                                 f"'{received_callback_data.value}' "
                                 "State may be inconsistent."
                             )
                             logger.error(error_msg)
                             raise ValueError("Invalid writeoff device index in state.")
-                        self.state.writeoff_device_id = writeoff_device_id
-                        button_text = self._helper_extract_callback_button_text()
+                        button_text = self._get_callback_button_text()
                         methods_tg_list.append(
                             self._build_edit_to_text_message(
                                 f"{String.EDIT_WRITEOFF_DEVICE} {button_text}."
                             )
                         )
-                        self.next_state.action = Action.PICK_WRITEOFF_DEVICE_ACTION
-                        self.next_state.writeoff_device_id = writeoff_device_id
+                        self.next_state = StateJS(
+                            action=Action.PICK_WRITEOFF_DEVICE_ACTION,
+                            writeoff_device_id=writeoff_device_id,
+                        )
                         methods_tg_list.append(
                             await self._build_pick_writeoff_device_action_message(
                                 f"{String.PICK_WRITEOFF_DEVICE_ACTION}."
@@ -2691,7 +2536,7 @@ class Conversation:
                         methods_tg_list.append(
                             self._build_edit_to_callback_button_text()
                         )
-                        self.next_state.action = Action.PICK_DEVICE_TYPE
+                        self.next_state = StateJS(action=Action.PICK_DEVICE_TYPE)
                         methods_tg_list.append(
                             await self._build_pick_device_type_message(
                                 f"{String.PICK_DEVICE_TYPE}."
@@ -2701,22 +2546,26 @@ class Conversation:
                         methods_tg_list.append(
                             self._build_edit_to_callback_button_text()
                         )
-                        self.next_state.writeoff_devices_page += 1
-                        # await self.session.flush()
+                        self.next_state = StateJS(
+                            action=Action.WRITEOFF_DEVICES,
+                            writeoff_devices_page=self.state.writeoff_devices_page + 1,
+                        )
                         methods_tg_list.append(
-                            await self._build_stateless_writeoffs_devices(
-                                f"{String.PICK_WRITEOFFS_ACTION}."
+                            await self._build_stateless_writeoff_devices(
+                                f"{String.PICK_WRITEOFF_DEVICES_ACTION}."
                             )
                         )
                     elif received_callback_data == CallbackData.NEXT_ONES:
                         methods_tg_list.append(
                             self._build_edit_to_callback_button_text()
                         )
-                        self.next_state.writeoff_devices_page -= 1
-                        # await self.session.flush()
+                        self.next_state = StateJS(
+                            action=Action.WRITEOFF_DEVICES,
+                            writeoff_devices_page=self.state.writeoff_devices_page - 1,
+                        )
                         methods_tg_list.append(
-                            await self._build_stateless_writeoffs_devices(
-                                f"{String.PICK_WRITEOFFS_ACTION}."
+                            await self._build_stateless_writeoff_devices(
+                                f"{String.PICK_WRITEOFF_DEVICES_ACTION}."
                             )
                         )
                 else:
@@ -2735,30 +2584,24 @@ class Conversation:
                     self._build_edit_to_text_message(f"{String.GOT_UNEXPECTED_DATA}.")
                 )
                 methods_tg_list.append(
-                    await self._build_stateless_writeoffs_devices(
-                        f"{String.GOT_UNEXPECTED_DATA}. {String.PICK_WRITEOFFS_ACTION}."
+                    await self._build_stateless_writeoff_devices(
+                        f"{String.GOT_UNEXPECTED_DATA}. {String.PICK_WRITEOFF_DEVICES_ACTION}."
                     )
                 )
         elif isinstance(self.update_tg, MessageUpdateTG):
             logger.info(f"{self.log_prefix}Got message instead of callback data.")
             methods_tg_list.append(
-                await self._build_stateless_writeoffs_devices(
-                    f"{String.ACTION_WAS_NOT_PICKED}. {String.PICK_WRITEOFFS_ACTION}."
+                await self._build_stateless_writeoff_devices(
+                    f"{String.ACTION_WAS_NOT_PICKED}. {String.PICK_WRITEOFF_DEVICES_ACTION}."
                 )
             )
         return methods_tg_list
 
-    # Not finished!
-    async def _handle_action_pick_writeoff_device_type(
-        self, state: StateJS
-    ) -> list[MethodTG]:
+    async def _handle_action_pick_writeoff_device_type(self) -> list[MethodTG]:
+        assert self.state is not None
         logger.info(
             f"{self.log_prefix}Awaiting writeoff device type choice to be made."
         )
-        if self.state is None:
-            error_msg = "'self.state' cannot be None at this point."
-            logger.error(error_msg)
-            raise ValueError(error_msg)
         methods_tg_list: list[MethodTG] = []
         if isinstance(self.update_tg, CallbackQueryUpdateTG):
             raw_data = self.update_tg.callback_query.data
@@ -2768,20 +2611,8 @@ class Conversation:
                     f"{self.log_prefix}Got {CallbackData.__name__} "
                     f"'{received_callback_data.value}'."
                 )
-                if received_callback_data.name not in DeviceTypeName.__members__:
-                    logger.info(
-                        f"{self.log_prefix}{CallbackData.__name__} "
-                        f"'{received_callback_data.value}' "
-                        "doesn't match any "
-                        f"{DeviceTypeName.__name__}."
-                    )
-                    raise ValueError
-                device_type_name = DeviceTypeName[received_callback_data.name]
-                logger.info(
-                    f"{self.log_prefix}{CallbackData.__name__} "
-                    f"'{received_callback_data.value}' "
-                    f"matches {DeviceTypeName.__name__} "
-                    f"'{device_type_name.name}'."
+                device_type_name = self._get_device_type_name_from_callback_data(
+                    received_callback_data
                 )
                 methods_tg_list.append(self._build_edit_to_callback_button_text())
                 device_type = await self.session.scalar(
@@ -2802,7 +2633,9 @@ class Conversation:
                 elif device_type.is_disposable:
                     logger.info(
                         f"{self.log_prefix}{DeviceTypeDB.__name__} "
-                        f"'{device_type.name.name}' is disposable."
+                        f"'{device_type.name.name}' is disposable. "
+                        f"Only non-disposable {DeviceTypeDB.__name__} "
+                        "is allowed."
                     )
                     methods_tg_list.append(
                         await self._build_pick_writeoff_device_type_message(
@@ -2818,7 +2651,6 @@ class Conversation:
                         f"name='{device_type.name.name}' "
                         f"id={device_type.id}."
                     )
-                    self.next_state = state.model_copy(deep=True)
                     logger.info(
                         f"{self.log_prefix}Creating new "
                         f"{WriteoffDeviceDB.__name__} with "
@@ -2834,14 +2666,15 @@ class Conversation:
                     await self.session.flush()
                     if device_type.has_serial_number:
                         logger.info(
-                            f"{DeviceTypeDB.__name__} "
+                            f"{self.log_prefix}{DeviceTypeDB.__name__} "
                             f"'{device_type.name.name}' "
-                            "has serial number parameter."
+                            "has serial number parameter. "
+                            "Next step is serial number."
                         )
-                        self.next_state.action = (
-                            Action.ENTER_WRITEOFF_DEVICE_SERIAL_NUMBER
+                        self.next_state = StateJS(
+                            action=Action.ENTER_WRITEOFF_DEVICE_SERIAL_NUMBER,
+                            writeoff_device_id=writeoff_device.id,
                         )
-                        self.next_state.writeoff_device_id = writeoff_device.id
                         methods_tg_list.append(
                             self._build_new_text_message(
                                 f"{String.ENTER_SERIAL_NUMBER}."
@@ -2849,18 +2682,19 @@ class Conversation:
                         )
                     else:
                         logger.info(
-                            f"{DeviceTypeDB.__name__} "
+                            f"{self.log_prefix}{DeviceTypeDB.__name__} "
                             f"'{device_type.name.name}' "
                             "doesn't have serial number parameter. "
-                            "Serial number step will be skipped."
+                            "Serial number step will be skipped. "
+                            "Next step is writeoff devices menu."
                         )
-                        self.next_state.action = Action.WRITEOFF_DEVICES
+                        self.next_state = StateJS(action=Action.WRITEOFF_DEVICES)
                         writeoff_device.is_draft = False
                         await self.session.flush()
                         methods_tg_list.append(
-                            await self._build_stateless_writeoffs_devices(
+                            await self._build_stateless_writeoff_devices(
                                 f"{String.YOU_ADDED_WRITEOFF_DEVICE}. "
-                                f"{String.PICK_WRITEOFFS_ACTION}."
+                                f"{String.PICK_WRITEOFF_DEVICES_ACTION}."
                             ),
                         )
             except ValueError:
@@ -2891,31 +2725,30 @@ class Conversation:
         return methods_tg_list
 
     async def _handle_action_enter_writeoff_device_serial_number(
-        self, state: StateJS
+        self,
     ) -> list[MethodTG]:
+        assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting writeoff device serial number.")
-        if self.state is None:
-            error_msg = "'self.state' cannot be None at this point."
-            logger.error(error_msg)
-            raise ValueError(error_msg)
         if self.state.writeoff_device_id == 0:
-            error_msg = "'writeoff_device_id' cannot be 0 at this point."
+            error_msg = (
+                f"{self.log_prefix}'writeoff_device_id' cannot be 0 at this point."
+            )
             logger.error(error_msg)
             raise ValueError(error_msg)
         methods_tg_list: list[MethodTG] = []
         if isinstance(self.update_tg, MessageUpdateTG):
             if self.update_tg.message.text is not None:
                 message_text = self.update_tg.message.text.upper()
-                if re.fullmatch(r"[\dA-Z]+", message_text) and message_text != "0":
+                if (
+                    re.fullmatch(settings.serial_number_regex, message_text)
+                    and message_text != "0"
+                ):
                     logger.info(
                         f"{self.log_prefix}Got correct writeoff device "
                         "serial number (forced uppercase): "
                         f"'{message_text}'."
                     )
-                    self.next_state = state.model_copy(deep=True)
-                    self.next_state.action = Action.WRITEOFF_DEVICES
                     writeoff_device_id = self.state.writeoff_device_id
-                    self.next_state.writeoff_device_id = 0
                     writeoff_device = await self.session.scalar(
                         select(WriteoffDeviceDB).where(
                             WriteoffDeviceDB.id == writeoff_device_id
@@ -2929,10 +2762,11 @@ class Conversation:
                             "Cannot populate its serial number. "
                             "Going back to the writeoff devices menu."
                         )
+                        self.next_state = StateJS(action=Action.WRITEOFF_DEVICES)
                         methods_tg_list.append(
-                            await self._build_stateless_writeoffs_devices(
+                            await self._build_stateless_writeoff_devices(
                                 f"{String.WRITEOFF_DEVICE_WAS_NOT_FOUND}. "
-                                f"{String.PICK_WRITEOFFS_ACTION}."
+                                f"{String.PICK_WRITEOFF_DEVICES_ACTION}."
                             ),
                         )
                     else:
@@ -2945,10 +2779,11 @@ class Conversation:
                         writeoff_device.serial_number = message_text
                         writeoff_device.is_draft = False
                         await self.session.flush()
+                        self.next_state = StateJS(action=Action.WRITEOFF_DEVICES)
                         methods_tg_list.append(
-                            await self._build_stateless_writeoffs_devices(
+                            await self._build_stateless_writeoff_devices(
                                 f"{String.YOU_ADDED_WRITEOFF_DEVICE}. "
-                                f"{String.PICK_WRITEOFFS_ACTION}."
+                                f"{String.PICK_WRITEOFF_DEVICES_ACTION}."
                             ),
                         )
                 else:
@@ -2989,30 +2824,401 @@ class Conversation:
             )
         return methods_tg_list
 
-    async def _handle_action_edit_writeoff_device_serial_number(
-        self, state: StateJS
-    ) -> list[MethodTG]:
-        logger.info(f"{self.log_prefix}Awaiting new writeoff device serial number.")
-        if self.state is None:
-            error_msg = "'self.state' cannot be None at this point."
+    async def _handle_action_pick_writeoff_device_action(self) -> list[MethodTG]:
+        assert self.state is not None
+        logger.info(
+            f"{self.log_prefix}Awaiting writeoff device menu choice to be made."
+        )
+        if self.state.writeoff_device_id == 0:
+            error_msg = (
+                f"{self.log_prefix}'writeoff_device_id' cannot be 0 at this point."
+            )
             logger.error(error_msg)
             raise ValueError(error_msg)
+        methods_tg_list: list[MethodTG] = []
+        if isinstance(self.update_tg, CallbackQueryUpdateTG):
+            expected_callback_data = [
+                CallbackData.EDIT_WRITEOFF_DEVICE_TYPE,
+                CallbackData.DELETE_WRITEOFF_DEVICE_BTN,
+            ]
+            writeoff_device_id = self.state.writeoff_device_id
+            writeoff_device = await self.session.scalar(
+                select(WriteoffDeviceDB)
+                .where(WriteoffDeviceDB.id == writeoff_device_id)
+                .options(selectinload(WriteoffDeviceDB.type))
+            )
+            if writeoff_device is None:
+                logger.warning(
+                    f"{self.log_prefix}Writeoff device with "
+                    f"id={writeoff_device_id} "
+                    "was not found in the database. "
+                    "Cannot proceed with it. "
+                )
+                logger.info(
+                    f"{self.log_prefix}Going back to the writeoff devices menu."
+                )
+                self.next_state = StateJS(action=Action.WRITEOFF_DEVICES)
+                methods_tg_list.append(
+                    await self._build_stateless_writeoff_devices(
+                        f"{String.WRITEOFF_DEVICE_WAS_NOT_FOUND}. "
+                        f"{String.PICK_WRITEOFF_DEVICES_ACTION}."
+                    )
+                )
+            else:
+                device_type_name = String[writeoff_device.type.name.name]
+                logger.info(
+                    f"{self.log_prefix}Working with "
+                    f"{WriteoffDeviceDB.__name__} "
+                    f"id={writeoff_device_id} device type "
+                    f"'{device_type_name}'."
+                )
+                if writeoff_device.type.is_disposable:
+                    error_msg = (
+                        f"{self.log_prefix}Configuration error: "
+                        f"{DeviceTypeDB.__name__} '{device_type_name}' "
+                        "is not an eligible writeoff device type "
+                        "as it is disposable. You shouldn't be seeing "
+                        "this ever. Cannot proceed further."
+                    )
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+                if writeoff_device.type.has_serial_number:
+                    expected_callback_data.append(
+                        CallbackData.EDIT_WRITEOFF_DEVICE_SERIAL_NUMBER
+                    )
+                    if writeoff_device.serial_number is not None:
+                        expected_callback_data.append(CallbackData.WRITEOFF_DEVICES_BTN)
+                else:
+                    if writeoff_device.serial_number is None:
+                        expected_callback_data.append(CallbackData.WRITEOFF_DEVICES_BTN)
+                    else:
+                        raise ValueError(
+                            f"{DeviceTypeDB.__name__} has no serial number "
+                            f"but {WriteoffDeviceDB.__name__} has "
+                            f"serial_number={writeoff_device.serial_number}"
+                        )
+                raw_data = self.update_tg.callback_query.data
+                try:
+                    received_callback_data = CallbackData(raw_data)
+                    if received_callback_data in expected_callback_data:
+                        logger.info(
+                            f"{self.log_prefix}Got expected "
+                            f"{CallbackData.__name__} "
+                            f"'{received_callback_data.value}'."
+                        )
+                        if (
+                            received_callback_data
+                            == CallbackData.EDIT_WRITEOFF_DEVICE_TYPE
+                        ):
+                            methods_tg_list.append(
+                                self._build_edit_to_callback_button_text()
+                            )
+                            self.next_state = StateJS(
+                                action=Action.EDIT_WRITEOFF_DEVICE_TYPE,
+                                writeoff_device_id=writeoff_device_id,
+                            )
+                            methods_tg_list.append(
+                                await self._build_pick_writeoff_device_type_message(
+                                    f"{String.PICK_NEW_WRITEOFF_DEVICE_TYPE}."
+                                )
+                            )
+                        elif (
+                            received_callback_data
+                            == CallbackData.EDIT_WRITEOFF_DEVICE_SERIAL_NUMBER
+                        ):
+                            methods_tg_list.append(
+                                self._build_edit_to_text_message(
+                                    f"{String.EDIT_SERIAL_NUMBER}."
+                                )
+                            )
+                            self.next_state = StateJS(
+                                action=Action.EDIT_WRITEOFF_DEVICE_SERIAL_NUMBER,
+                                writeoff_device_id=writeoff_device_id,
+                            )
+                            methods_tg_list.append(
+                                self._build_new_text_message(
+                                    f"{String.ENTER_NEW_SERIAL_NUMBER}."
+                                )
+                            )
+                        elif (
+                            received_callback_data == CallbackData.WRITEOFF_DEVICES_BTN
+                        ):
+                            methods_tg_list.append(
+                                self._build_edit_to_text_message(
+                                    f"{String.RETURNING_TO_WRITEOFF_DEVICES}."
+                                )
+                            )
+                            self.next_state = StateJS(action=Action.WRITEOFF_DEVICES)
+                            methods_tg_list.append(
+                                await self._build_stateless_writeoff_devices(
+                                    f"{String.YOU_LEFT_WRITEOFF_DEVICE}. "
+                                    f"{String.PICK_WRITEOFF_DEVICES_ACTION}."
+                                ),
+                            )
+                        elif (
+                            received_callback_data
+                            == CallbackData.DELETE_WRITEOFF_DEVICE_BTN
+                        ):
+                            await self.session.delete(writeoff_device)
+                            await self.session.flush()
+                            methods_tg_list.append(
+                                self._build_edit_to_text_message(
+                                    f"{String.DEVICE_WAS_DELETED_FROM_WRITEOFF}."
+                                )
+                            )
+                            self.next_state = StateJS(action=Action.WRITEOFF_DEVICES)
+                            methods_tg_list.append(
+                                await self._build_stateless_writeoff_devices(
+                                    f"{String.PICK_WRITEOFF_DEVICES_ACTION}."
+                                )
+                            )
+                    else:
+                        logger.info(
+                            f"{self.log_prefix}Got unexpected "
+                            f"{CallbackData.__name__} "
+                            f"'{received_callback_data.value}'."
+                        )
+                        raise ValueError
+                except ValueError:
+                    logger.info(
+                        f"{self.log_prefix}Got invalid callback data "
+                        f"'{raw_data}' for current writeoff device "
+                        "menu selection."
+                    )
+                    methods_tg_list.append(
+                        self._build_edit_to_text_message(
+                            f"{String.GOT_UNEXPECTED_DATA}."
+                        )
+                    )
+                    methods_tg_list.append(
+                        await self._build_pick_writeoff_device_action_message(
+                            f"{String.GOT_UNEXPECTED_DATA}. "
+                            f"{String.PICK_WRITEOFF_DEVICE_ACTION}."
+                        )
+                    )
+        elif isinstance(self.update_tg, MessageUpdateTG):
+            logger.info(f"{self.log_prefix}Got message instead of callback data.")
+            methods_tg_list.append(
+                await self._build_pick_writeoff_device_action_message(
+                    f"{String.WRITEOFF_DEVICE_ACTION_WAS_NOT_PICKED}. "
+                    f"{String.PICK_WRITEOFF_DEVICE_ACTION}."
+                )
+            )
+        return methods_tg_list
+
+    async def _handle_action_edit_writeoff_device_type(self) -> list[MethodTG]:
+        assert self.state is not None
+        logger.info(
+            f"{self.log_prefix}Awaiting new writeoff device type choice to be made."
+        )
         if self.state.writeoff_device_id == 0:
-            error_msg = "'writeoff_device_id' cannot be 0 at this point."
+            error_msg = (
+                f"{self.log_prefix}'writeoff_device_id' cannot be 0 at this point."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        methods_tg_list: list[MethodTG] = []
+        if isinstance(self.update_tg, CallbackQueryUpdateTG):
+            raw_data = self.update_tg.callback_query.data
+            try:
+                received_callback_data = CallbackData(raw_data)
+                logger.info(
+                    f"{self.log_prefix}Got {CallbackData.__name__} "
+                    f"'{received_callback_data.value}'."
+                )
+                device_type_name = self._get_device_type_name_from_callback_data(
+                    received_callback_data
+                )
+                methods_tg_list.append(self._build_edit_to_callback_button_text())
+                device_type = await self.session.scalar(
+                    select(DeviceTypeDB).where(DeviceTypeDB.name == device_type_name)
+                )
+                if device_type is None:
+                    logger.info(
+                        f"{self.log_prefix}No {DeviceTypeDB.__name__} "
+                        f"found for {received_callback_data.name}."
+                    )
+                    methods_tg_list.append(
+                        await self._build_pick_writeoff_device_type_message(
+                            f"{String.GOT_UNEXPECTED_DATA}. "
+                            f"{String.PICK_NEW_WRITEOFF_DEVICE_TYPE} "
+                            f"{String.FROM_OPTIONS_BELOW}."
+                        )
+                    )
+                elif device_type.is_disposable:
+                    logger.info(
+                        f"{self.log_prefix}{DeviceTypeDB.__name__} "
+                        f"'{device_type.name.name}' is disposable."
+                    )
+                    methods_tg_list.append(
+                        await self._build_pick_writeoff_device_type_message(
+                            f"{String.DEVICE_TYPE_IS_DISPOSABLE}. "
+                            f"{String.PICK_NEW_WRITEOFF_DEVICE_TYPE} "
+                            f"{String.FROM_OPTIONS_BELOW}."
+                        )
+                    )
+                else:
+                    logger.info(
+                        f"{self.log_prefix}Found non-disposable "
+                        f"{DeviceTypeDB.__name__}: "
+                        f"name='{device_type.name.name}' "
+                        f"id={device_type.id}."
+                    )
+                    writeoff_device_id = self.state.writeoff_device_id
+                    writeoff_device = await self.session.scalar(
+                        select(WriteoffDeviceDB)
+                        .where(WriteoffDeviceDB.id == writeoff_device_id)
+                        .options(selectinload(WriteoffDeviceDB.type))
+                    )
+                    if writeoff_device is None:
+                        logger.warning(
+                            f"{self.log_prefix}Writeoff device with "
+                            f"id={writeoff_device_id} "
+                            "was not found in the database. "
+                            "Cannot edit its device type. "
+                            "Going back to the writeoff devices menu."
+                        )
+                        self.next_state = StateJS(action=Action.WRITEOFF_DEVICES)
+                        methods_tg_list.append(
+                            await self._build_stateless_writeoff_devices(
+                                f"{String.WRITEOFF_DEVICE_WAS_NOT_FOUND}. "
+                                f"{String.PICK_WRITEOFF_DEVICES_ACTION}."
+                            ),
+                        )
+                    elif writeoff_device.type.name.name != device_type.name.name:
+                        logger.info(
+                            f"{self.log_prefix}New "
+                            f"{DeviceTypeDB.__name__} "
+                            f"'{device_type.name.name}' "
+                            "is different from old "
+                            f"{DeviceTypeDB.__name__} "
+                            f"'{writeoff_device.type.name.name}'. "
+                            "Applying change."
+                        )
+                        writeoff_device.type_id = device_type.id
+                        writeoff_device.type = device_type
+                        if device_type.has_serial_number:
+                            logger.info(
+                                f"{self.log_prefix}"
+                                f"{DeviceTypeDB.__name__} "
+                                f"'{device_type.name.name}' "
+                                "has serial number parameter. "
+                                "Keeping serial number intact."
+                            )
+                        else:
+                            logger.info(
+                                f"{self.log_prefix}"
+                                f"{DeviceTypeDB.__name__} "
+                                f"'{device_type.name.name}' "
+                                "doesn't have serial number parameter. "
+                                "Setting serial number to None."
+                            )
+                            writeoff_device.serial_number = None
+                        await self.session.flush()
+                        self.next_state = StateJS(
+                            action=Action.PICK_WRITEOFF_DEVICE_ACTION,
+                            writeoff_device_id=writeoff_device_id,
+                        )
+                        methods_tg_list.append(
+                            await self._build_pick_writeoff_device_action_message(
+                                f"{String.DEVICE_TYPE_WAS_EDITED}. "
+                                f"{String.PICK_WRITEOFF_DEVICE_ACTION}."
+                            )
+                        )
+                    else:
+                        logger.info(
+                            f"{self.log_prefix}New "
+                            f"{DeviceTypeDB.__name__} "
+                            f"'{device_type.name.name}' "
+                            "is the same as old "
+                            f"{DeviceTypeDB.__name__} "
+                            f"'{writeoff_device.type.name.name}'. "
+                            "No change needed."
+                        )
+                        self.next_state = StateJS(
+                            action=Action.PICK_WRITEOFF_DEVICE_ACTION,
+                            writeoff_device_id=writeoff_device_id,
+                        )
+                        methods_tg_list.append(
+                            await self._build_pick_writeoff_device_action_message(
+                                f"{String.DEVICE_TYPE_REMAINS_THE_SAME}. "
+                                f"{String.PICK_WRITEOFF_DEVICE_ACTION}."
+                            )
+                        )
+            except ValueError:
+                logger.info(
+                    f"{self.log_prefix}Got invalid callback data "
+                    f"'{raw_data}' for current device new type selection."
+                )
+                methods_tg_list.append(
+                    self._build_edit_to_text_message(f"{String.GOT_UNEXPECTED_DATA}.")
+                )
+                existing_writeoff_device_menu = (
+                    await self._build_pick_writeoff_device_type_message(
+                        f"{String.GOT_UNEXPECTED_DATA}. "
+                        f"{String.PICK_NEW_WRITEOFF_DEVICE_TYPE} "
+                        f"{String.FROM_OPTIONS_BELOW}."
+                    )
+                )
+                if existing_writeoff_device_menu is None:
+                    logger.info(
+                        f"{self.log_prefix}Going back to the writeoff devices menu."
+                    )
+                    self.next_state = StateJS(action=Action.WRITEOFF_DEVICES)
+                    methods_tg_list.append(
+                        await self._build_stateless_writeoff_devices(
+                            f"{String.WRITEOFF_DEVICE_WAS_NOT_FOUND}. "
+                            f"{String.PICK_WRITEOFF_DEVICES_ACTION}."
+                        )
+                    )
+                else:
+                    methods_tg_list.append(existing_writeoff_device_menu)
+        elif isinstance(self.update_tg, MessageUpdateTG):
+            logger.info(f"{self.log_prefix}Got message instead of callback data.")
+            existing_writeoff_device_menu = (
+                await self._build_pick_writeoff_device_type_message(
+                    f"{String.DEVICE_TYPE_WAS_NOT_PICKED}. "
+                    f"{String.PICK_NEW_WRITEOFF_DEVICE_TYPE} "
+                    f"{String.FROM_OPTIONS_BELOW}."
+                )
+            )
+            if existing_writeoff_device_menu is None:
+                logger.info(
+                    f"{self.log_prefix}Going back to the writeoff devices menu."
+                )
+                self.next_state = StateJS(action=Action.WRITEOFF_DEVICES)
+                methods_tg_list.append(
+                    await self._build_stateless_writeoff_devices(
+                        f"{String.WRITEOFF_DEVICE_WAS_NOT_FOUND}. "
+                        f"{String.PICK_WRITEOFF_DEVICES_ACTION}."
+                    )
+                )
+            else:
+                methods_tg_list.append(existing_writeoff_device_menu)
+        return methods_tg_list
+
+    async def _handle_action_edit_writeoff_device_serial_number(self) -> list[MethodTG]:
+        assert self.state is not None
+        logger.info(f"{self.log_prefix}Awaiting new writeoff device serial number.")
+        if self.state.writeoff_device_id == 0:
+            error_msg = (
+                f"{self.log_prefix}'writeoff_device_id' cannot be 0 at this point."
+            )
             logger.error(error_msg)
             raise ValueError(error_msg)
         methods_tg_list: list[MethodTG] = []
         if isinstance(self.update_tg, MessageUpdateTG):
             if self.update_tg.message.text is not None:
                 message_text = self.update_tg.message.text.upper()
-                if re.fullmatch(r"[\dA-Z]+", message_text) and message_text != "0":
+                if (
+                    re.fullmatch(settings.serial_number_regex, message_text)
+                    and message_text != "0"
+                ):
                     logger.info(
                         f"{self.log_prefix}Got correct new writeoff "
                         "device serial number (forced uppercase): "
                         f"'{message_text}'."
                     )
-                    self.next_state = state.model_copy(deep=True)
-                    self.next_state.action = Action.PICK_WRITEOFF_DEVICE_ACTION
                     writeoff_device_id = self.state.writeoff_device_id
                     writeoff_device = await self.session.scalar(
                         select(WriteoffDeviceDB).where(
@@ -3027,10 +3233,11 @@ class Conversation:
                             "Cannot edit its serial number. "
                             "Going back to the writeoff devices menu."
                         )
+                        self.next_state = StateJS(action=Action.WRITEOFF_DEVICES)
                         methods_tg_list.append(
-                            await self._build_stateless_writeoffs_devices(
+                            await self._build_stateless_writeoff_devices(
                                 f"{String.WRITEOFF_DEVICE_WAS_NOT_FOUND}. "
-                                f"{String.PICK_WRITEOFFS_ACTION}."
+                                f"{String.PICK_WRITEOFF_DEVICES_ACTION}."
                             ),
                         )
                     else:
@@ -3049,6 +3256,10 @@ class Conversation:
                             )
                             writeoff_device.serial_number = message_text
                             await self.session.flush()
+                            self.next_state = StateJS(
+                                action=Action.PICK_WRITEOFF_DEVICE_ACTION,
+                                writeoff_device_id=writeoff_device_id,
+                            )
                             methods_tg_list.append(
                                 await self._build_pick_writeoff_device_action_message(
                                     f"{String.SERIAL_NUMBER_WAS_EDITED}. "
@@ -3062,6 +3273,10 @@ class Conversation:
                                 "is the same as writeoff device old "
                                 f"serial_number={writeoff_device.serial_number}. "
                                 "No change needed."
+                            )
+                            self.next_state = StateJS(
+                                action=Action.PICK_WRITEOFF_DEVICE_ACTION,
+                                writeoff_device_id=writeoff_device_id,
                             )
                             methods_tg_list.append(
                                 await self._build_pick_writeoff_device_action_message(
@@ -3107,219 +3322,55 @@ class Conversation:
             )
         return methods_tg_list
 
-    # Not finished
-    async def _handle_action_pick_writeoff_device_action(
-        self, state: StateJS
-    ) -> list[MethodTG]:
-        logger.info(
-            f"{self.log_prefix}Awaiting writeoff device menu choice to be made."
-        )
-        if self.state is None:
-            error_msg = "'self.state' cannot be None at this point."
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        if self.state.writeoff_device_id == 0:
-            error_msg = "'writeoff_device_id' cannot be 0 at this point."
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        methods_tg_list: list[MethodTG] = []
-        self.next_state = state.model_copy(deep=True)
-        if isinstance(self.update_tg, CallbackQueryUpdateTG):
-            expected_callback_data = [
-                CallbackData.EDIT_WRITEOFF_DEVICE_TYPE,
-                CallbackData.DELETE_WRITEOFF_DEVICE_BTN,
-            ]
-            writeoff_device_id = self.state.writeoff_device_id
-            writeoff_device = await self.session.scalar(
-                select(WriteoffDeviceDB)
-                .where(WriteoffDeviceDB.id == writeoff_device_id)
-                .options(selectinload(WriteoffDeviceDB.type))
-            )
-            if writeoff_device is None:
-                logger.warning(
-                    f"{self.log_prefix}Writeoff device with "
-                    f"id={writeoff_device_id} "
-                    "was not found in the database. "
-                    "Cannot proceed with it. "
-                )
-                logger.info(
-                    f"{self.log_prefix}Going back to the writeoff devices menu."
-                )
-                self.next_state.action = Action.WRITEOFF_DEVICES
-                self.next_state.writeoff_device_id = 0
-                self.next_state.writeoff_devices_dict = {}
-                methods_tg_list.append(
-                    await self._build_stateless_writeoffs_devices(
-                        f"{String.WRITEOFF_DEVICE_WAS_NOT_FOUND}. "
-                        f"{String.PICK_WRITEOFFS_ACTION}."
-                    )
-                )
-            else:
-                device_type_name = String[writeoff_device.type.name.name]
-                logger.info(
-                    f"{self.log_prefix}Working with "
-                    f"{WriteoffDeviceDB.__name__} "
-                    f"id={writeoff_device_id} device type "
-                    f"'{device_type_name}'."
-                )
-                if writeoff_device.type.is_disposable:
-                    error_msg = (
-                        f"{self.log_prefix}Configuration error: "
-                        f"The device type '{device_type_name}' is not "
-                        "an eligible writeoff device type as it is "
-                        "disposable. You shouldn't be seeing this ever. "
-                        "Cannot proceed further."
-                    )
-                    logger.error(error_msg)
-                    raise ValueError(error_msg)
-                if writeoff_device.type.has_serial_number:
-                    expected_callback_data.append(
-                        CallbackData.EDIT_WRITEOFF_DEVICE_SERIAL_NUMBER
-                    )
-                    if writeoff_device.serial_number is not None:
-                        expected_callback_data.append(CallbackData.WRITEOFF_DEVICES_BTN)
-                else:
-                    if writeoff_device.serial_number is None:
-                        expected_callback_data.append(CallbackData.WRITEOFF_DEVICES_BTN)
-                    else:
-                        raise ValueError(
-                            f"{DeviceTypeDB.__name__} has no serial number "
-                            f"but {WriteoffDeviceDB.__name__} has "
-                            f"serial_number={writeoff_device.serial_number}"
-                        )
-                raw_data = self.update_tg.callback_query.data
-                try:
-                    received_callback_data = CallbackData(raw_data)
-                    if received_callback_data in expected_callback_data:
-                        logger.info(
-                            f"{self.log_prefix}Got expected "
-                            f"{CallbackData.__name__} "
-                            f"'{received_callback_data.value}'."
-                        )
-                        if (
-                            received_callback_data
-                            == CallbackData.EDIT_WRITEOFF_DEVICE_TYPE
-                        ):
-                            methods_tg_list.append(
-                                self._build_edit_to_callback_button_text()
-                            )
-                            self.next_state.action = Action.EDIT_WRITEOFF_DEVICE_TYPE
-                            methods_tg_list.append(
-                                await self._build_pick_writeoff_device_type_message(
-                                    f"{String.PICK_NEW_WRITEOFF_DEVICE_TYPE}."
-                                )
-                            )
-                        elif (
-                            received_callback_data
-                            == CallbackData.EDIT_WRITEOFF_DEVICE_SERIAL_NUMBER
-                        ):
-                            methods_tg_list.append(
-                                self._build_edit_to_text_message(
-                                    f"{String.EDIT_SERIAL_NUMBER}."
-                                )
-                            )
-                            self.next_state.action = (
-                                Action.EDIT_WRITEOFF_DEVICE_SERIAL_NUMBER
-                            )
-                            methods_tg_list.append(
-                                self._build_new_text_message(
-                                    f"{String.ENTER_NEW_SERIAL_NUMBER}."
-                                )
-                            )
-                        elif (
-                            received_callback_data == CallbackData.WRITEOFF_DEVICES_BTN
-                        ):
-                            methods_tg_list.append(
-                                self._build_edit_to_text_message(
-                                    f"{String.RETURNING_TO_WRITEOFF_DEVICES}."
-                                )
-                            )
-                            self.next_state.action = Action.WRITEOFF_DEVICES
-                            methods_tg_list.append(
-                                await self._build_stateless_writeoffs_devices(
-                                    f"{String.YOU_LEFT_WRITEOFF_DEVICE}. {String.PICK_WRITEOFFS_ACTION}."
-                                ),
-                            )
-                        elif (
-                            received_callback_data
-                            == CallbackData.DELETE_WRITEOFF_DEVICE_BTN
-                        ):
-                            await self.session.delete(writeoff_device)
-                            await self.session.flush()
-                            methods_tg_list.append(
-                                self._build_edit_to_text_message(
-                                    f"{String.DEVICE_WAS_DELETED_FROM_WRITEOFF}."
-                                )
-                            )
-                            self.next_state.action = Action.WRITEOFF_DEVICES
-                            self.next_state.writeoff_device_id = 0
-                            self.next_state.writeoff_devices_dict = {}
-                            methods_tg_list.append(
-                                await self._build_stateless_writeoffs_devices(
-                                    f"{String.PICK_WRITEOFFS_ACTION}."
-                                )
-                            )
-                    else:
-                        logger.info(
-                            f"{self.log_prefix}Got unexpected "
-                            f"{CallbackData.__name__} "
-                            f"'{received_callback_data.value}'."
-                        )
-                        raise ValueError
-                except ValueError:
-                    logger.info(
-                        f"{self.log_prefix}Got invalid callback data "
-                        f"'{raw_data}' for current writeoff device "
-                        "menu selection."
-                    )
-                    methods_tg_list.append(
-                        self._build_edit_to_text_message(
-                            f"{String.GOT_UNEXPECTED_DATA}."
-                        )
-                    )
-                    self.next_state.action = Action.PICK_WRITEOFF_DEVICE_ACTION
-                    self.next_state.writeoff_device_id = writeoff_device_id
-                    methods_tg_list.append(
-                        await self._build_pick_writeoff_device_action_message(
-                            f"{String.GOT_UNEXPECTED_DATA}. "
-                            f"{String.PICK_WRITEOFF_DEVICE_ACTION}."
-                        )
-                    )
-        elif isinstance(self.update_tg, MessageUpdateTG):
-            logger.info(f"{self.log_prefix}Got message instead of callback data.")
-            methods_tg_list.append(
-                await self._build_pick_writeoff_device_action_message(
-                    f"{String.WRITEOFF_DEVICE_ACTION_WAS_NOT_PICKED}. "
-                    f"{String.PICK_WRITEOFF_DEVICE_ACTION}."
-                )
-            )
-        return methods_tg_list
-
-    def _build_stateless_mainmenu_message(self, text: str) -> SendMessageTG:
-        mainmenu_keyboard_rows = self._helper_mainmenu_keyboard_rows()
-        if mainmenu_keyboard_rows:
-            text = text
-            reply_markup = InlineKeyboardMarkupTG(
-                inline_keyboard=mainmenu_keyboard_rows
-            )
-        else:
-            text = f"{String.NO_FUNCTIONS_ARE_AVAILABLE}."
-            reply_markup = None
-        method_tg = SendMessageTG(
-            chat_id=self.user_db.telegram_uid,
-            text=text,
-            reply_markup=reply_markup,
-        )
-        return method_tg
-
-    async def _build_stateless_writeoffs_devices(
-        self, text: str = f"{String.PICK_WRITEOFFS_ACTION}.", page_index: int = 0
+    async def _build_stateless_writeoff_devices(
+        self, text: str = f"{String.PICK_WRITEOFF_DEVICES_ACTION}."
     ) -> SendMessageTG:
-        # if self.next_state is None:
-        #     error_msg = "'self.next_state' cannot be None at this point."
-        #     logger.error(error_msg)
-        #     raise ValueError(error_msg)
-        await self.session.refresh(self.user_db, attribute_names=["writeoff_devices"])
+        if self.next_state is None and self.state is None:
+            error_msg = (
+                f"{self.log_prefix}As a fallback option, "
+                "'self.state' cannot be None if "
+                "'self.next_state' is None."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        writeoffs_per_page = settings.writeoffs_per_page
+        if writeoffs_per_page <= 0:
+            error_msg = (
+                f"{self.log_prefix}CRITICAL: 'writeoffs_per_page' setting "
+                f"must be a positive integer, but is {writeoffs_per_page}."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        await self.session.refresh(
+            self.user_db,
+            attribute_names=["writeoff_devices"],
+        )
+        total_writeoff_devices = len(self.user_db.writeoff_devices)
+        total_pages = max(
+            1,
+            (total_writeoff_devices + writeoffs_per_page - 1) // writeoffs_per_page,
+        )
+        last_page_index = total_pages - 1
+        if self.next_state:
+            page_index = self.next_state.writeoff_devices_page
+        elif self.state:
+            page_index = self.state.writeoff_devices_page
+        else:
+            error_msg = (
+                f"{self.log_prefix}As a fallback option, "
+                "'self.state' cannot be None if "
+                "'self.next_state' is None."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        logger.info(
+            f"{self.log_prefix}The user is on page {page_index + 1} of {total_pages}."
+        )
+        logger.debug(
+            f"page_index={page_index}, "
+            f"last_page_index={last_page_index}, "
+            f"total_pages={total_pages}."
+        )
         inline_keyboard_rows: list[list[InlineKeyboardButtonTG]] = []
         add_writeoff_device_button_row: list[InlineKeyboardButtonTG] = [
             InlineKeyboardButtonTG(
@@ -3328,32 +3379,12 @@ class Conversation:
             ),
         ]
         inline_keyboard_rows.append(add_writeoff_device_button_row)
-        writeoff_devices = sorted(
+        existing_writeoff_devices_button_rows: list[list[InlineKeyboardButtonTG]] = []
+        writeoff_device_index_offset = page_index * settings.writeoffs_per_page
+        sorted_writeoff_devices = sorted(
             self.user_db.writeoff_devices, key=lambda device: device.id, reverse=True
         )
-        total_writeoff_devices = len(writeoff_devices)
-        if total_writeoff_devices % settings.writeoffs_per_page == 0:
-            total_pages = total_writeoff_devices // settings.writeoffs_per_page
-        else:
-            total_pages = total_writeoff_devices // settings.writeoffs_per_page + 1
-        if total_pages > 0:
-            last_page_index = total_pages - 1
-        elif total_pages == 0:
-            last_page_index = 0
-        else:
-            error_msg = (
-                f"{self.log_prefix}CRITICAL: Current total number "
-                "of pages cannot be negative."
-            )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        existing_writeoff_devices_button_rows: list[list[InlineKeyboardButtonTG]] = []
-        if self.next_state:
-            page_index = self.next_state.writeoff_devices_page
-        elif self.state:
-            page_index = self.state.writeoff_devices_page
-        writeoff_device_index_offset = page_index * settings.writeoffs_per_page
-        current_page_writeoff_devices = writeoff_devices[
+        current_page_writeoff_devices = sorted_writeoff_devices[
             writeoff_device_index_offset : writeoff_device_index_offset
             + settings.writeoffs_per_page
         ]
@@ -3440,6 +3471,74 @@ class Conversation:
             reply_markup=InlineKeyboardMarkupTG(inline_keyboard=inline_keyboard_rows),
         )
 
+    def _helper_mainmenu_keyboard_rows(self) -> list[list[InlineKeyboardButtonTG]]:
+        inline_keyboard_rows = []
+        if self.user_db.is_engineer:
+            inline_keyboard_rows.append(
+                [
+                    InlineKeyboardButtonTG(
+                        text=String.CLOSE_TICKET_BTN,
+                        callback_data=CallbackData.ENTER_TICKET_NUMBER,
+                    )
+                ],
+            )
+            inline_keyboard_rows.append(
+                [
+                    InlineKeyboardButtonTG(
+                        text=String.TICKETS_HISTORY_BTN,
+                        callback_data=CallbackData.TICKETS_HISTORY_BTN,
+                    ),
+                    InlineKeyboardButtonTG(
+                        text=String.WRITEOFF_DEVICES_BTN,
+                        callback_data=CallbackData.WRITEOFF_DEVICES_BTN,
+                    ),
+                ],
+            )
+        if self.user_db.is_manager:
+            inline_keyboard_rows.append(
+                [
+                    InlineKeyboardButtonTG(
+                        text=String.FORM_REPORT_BTN,
+                        callback_data=CallbackData.FORM_REPORT_BTN,
+                    )
+                ],
+            )
+            if self.user_db.is_hiring:
+                inline_keyboard_rows.append(
+                    [
+                        InlineKeyboardButtonTG(
+                            text=String.DISABLE_HIRING_BTN,
+                            callback_data=CallbackData.DISABLE_HIRING_BTN,
+                        )
+                    ],
+                )
+            else:
+                inline_keyboard_rows.append(
+                    [
+                        InlineKeyboardButtonTG(
+                            text=String.ENABLE_HIRING_BTN,
+                            callback_data=CallbackData.ENABLE_HIRING_BTN,
+                        )
+                    ],
+                )
+        return inline_keyboard_rows
+
+    def _build_stateless_mainmenu_message(self, text: str) -> SendMessageTG:
+        mainmenu_keyboard_rows = self._helper_mainmenu_keyboard_rows()
+        if mainmenu_keyboard_rows:
+            text = text
+            reply_markup = InlineKeyboardMarkupTG(
+                inline_keyboard=mainmenu_keyboard_rows
+            )
+        else:
+            text = f"{String.NO_FUNCTIONS_ARE_AVAILABLE}."
+            reply_markup = None
+        return SendMessageTG(
+            chat_id=self.user_db.telegram_uid,
+            text=text,
+            reply_markup=reply_markup,
+        )
+
     def _build_edit_to_callback_button_text(
         self, prefix_text: str = ""
     ) -> EditMessageTextTG:
@@ -3450,12 +3549,12 @@ class Conversation:
                 f"{CallbackQueryUpdateTG.__name__} update type only."
             )
         if self.update_tg.callback_query.message.reply_markup is None:
-            error_msg = "This method only works with inline keyboard attached."
+            error_msg = f"{self.log_prefix}This method only works with inline keyboard attached."
             logger.error(error_msg)
             raise ValueError(error_msg)
         chat_id = self.update_tg.callback_query.message.chat.id
         message_id = self.update_tg.callback_query.message.message_id
-        button_text = self._helper_extract_callback_button_text()
+        button_text = self._get_callback_button_text()
         logger.info(
             f"{self.log_prefix}Editing message id={message_id} text "
             f"to button text '{button_text}'."
@@ -3633,8 +3732,9 @@ class Conversation:
             raise ValueError(error_msg)
         if not current_ticket.contract:
             error_msg = (
-                "The ticket menu only works with ticket number and "
-                "contract number already being filled in."
+                f"{self.log_prefix}The ticket menu only works "
+                "with ticket number and contract number "
+                "already being filled in."
             )
             logger.error(error_msg)
             raise ValueError(error_msg)
@@ -3706,10 +3806,10 @@ class Conversation:
         inline_keyboard_rows.append(ticket_number_button)
         inline_keyboard_rows.append(contract_number_button)
         inline_keyboard_rows.extend(device_button_rows)
-        device_list_length = len(devices_list)
-        if device_list_length < settings.devices_per_ticket:
+        total_devices = len(devices_list)
+        if total_devices < settings.devices_per_ticket:
             inline_keyboard_rows.append(add_device_button)
-        if device_list_length > 0:
+        if total_devices > 0:
             inline_keyboard_rows.append(close_ticket_button)
         inline_keyboard_rows.append(quit_without_saving_button)
         return SendMessageTG(
@@ -3739,18 +3839,16 @@ class Conversation:
             logger.error(error_msg)
             raise ValueError(error_msg)
         devices_list = current_ticket.devices
-        device_list_length = len(devices_list)
-        if (
-            self.next_state is not None
-            and device_list_length > self.next_state.device_index
-        ):
+        total_devices = len(devices_list)
+        if self.next_state is not None and total_devices > self.next_state.device_index:
             device_index = self.next_state.device_index
-        elif self.state is not None and device_list_length > self.state.device_index:
+        elif self.state is not None and total_devices > self.state.device_index:
             device_index = self.state.device_index
         else:
             error_msg = (
-                "The device menu only works with next_state/state "
-                "having at least one device being filled in."
+                f"{self.log_prefix}The device menu only works "
+                "with next_state/state having at least one device "
+                "being filled in."
             )
             logger.error(error_msg)
             raise ValueError(error_msg)
@@ -3824,8 +3922,9 @@ class Conversation:
             writeoff_device_id = self.state.writeoff_device_id
         else:
             error_msg = (
-                "The writeoff device menu only works with next_state/"
-                "state having writeoff_device_id being filled in."
+                f"{self.log_prefix}The writeoff device menu only works "
+                "with next_state/state having writeoff_device_id "
+                "being filled in."
             )
             logger.error(error_msg)
             raise ValueError(error_msg)
@@ -3842,34 +3941,29 @@ class Conversation:
                 "was not found in the database."
             )
             logger.info(f"{self.log_prefix}Going back to the writeoff devices menu.")
-            self.next_state = StateJS(
-                action=Action.WRITEOFF_DEVICES,
-                script=Script.INITIAL_DATA,
-            )
-            method_tg = await self._build_stateless_writeoffs_devices(
+            self.next_state = StateJS(action=Action.WRITEOFF_DEVICES)
+            method_tg = await self._build_stateless_writeoff_devices(
                 f"{String.WRITEOFF_DEVICE_WAS_NOT_FOUND}. "
-                f"{String.PICK_WRITEOFFS_ACTION}."
+                f"{String.PICK_WRITEOFF_DEVICES_ACTION}."
             )
         else:
             device_type_name = String[writeoff_device.type.name.name]
             if writeoff_device.type.is_disposable:
                 error_msg = (
                     f"{self.log_prefix}Configuration error: "
-                    f"The device type '{device_type_name}' is not "
-                    "an eligible writeoff device type as it is "
-                    "disposable. You shouldn't be seeing this ever."
+                    f"{DeviceTypeDB.__name__} '{device_type_name}' "
+                    "is not an eligible writeoff device type "
+                    "as it is disposable. You shouldn't be seeing "
+                    "this ever."
                 )
                 logger.error(error_msg)
                 logger.info(
                     f"{self.log_prefix}Going back to the writeoff devices menu."
                 )
-                self.next_state = StateJS(
-                    action=Action.WRITEOFF_DEVICES,
-                    script=Script.INITIAL_DATA,
-                )
-                method_tg = await self._build_stateless_writeoffs_devices(
+                self.next_state = StateJS(action=Action.WRITEOFF_DEVICES)
+                method_tg = await self._build_stateless_writeoff_devices(
                     f"{String.WRITEOFF_DEVICE_IS_INCORRECT}. "
-                    f"{String.PICK_WRITEOFFS_ACTION}."
+                    f"{String.PICK_WRITEOFF_DEVICES_ACTION}."
                 )
             else:
                 device_serial_number_text = (
@@ -3936,7 +4030,7 @@ class Conversation:
 
     async def close_ticket(self) -> bool:
         if self.state is None:
-            error_msg = "'self.state' cannot be None at this point."
+            error_msg = f"{self.log_prefix}'self.state' cannot be None at this point."
             logger.error(error_msg)
             raise ValueError(error_msg)
         current_ticket = self.user_db.current_ticket
@@ -4022,11 +4116,11 @@ class Conversation:
 
     async def drop_current_ticket(self) -> bool:
         if self.state is None:
-            error_msg = "'self.state' cannot be None at this point."
+            error_msg = f"{self.log_prefix}'self.state' cannot be None at this point."
             logger.error(error_msg)
             raise ValueError(error_msg)
         if self.user_db.current_ticket is None:
-            error_msg = "'user_db.current_ticket' cannot be None at this point."
+            error_msg = f"{self.log_prefix}'user_db.current_ticket' cannot be None at this point."
             logger.error(error_msg)
             raise ValueError(error_msg)
         current_ticket = self.user_db.current_ticket
@@ -4109,59 +4203,55 @@ class Conversation:
             ),
         )
 
-    def _helper_mainmenu_keyboard_rows(self) -> list[list[InlineKeyboardButtonTG]]:
-        inline_keyboard_rows = []
-        if self.user_db.is_engineer:
-            inline_keyboard_rows.append(
-                [
-                    InlineKeyboardButtonTG(
-                        text=String.CLOSE_TICKET_BTN,
-                        callback_data=CallbackData.ENTER_TICKET_NUMBER,
-                    )
-                ],
-            )
-            inline_keyboard_rows.append(
-                [
-                    InlineKeyboardButtonTG(
-                        text=String.TICKETS_HISTORY_BTN,
-                        callback_data=CallbackData.TICKETS_HISTORY_BTN,
-                    ),
-                    InlineKeyboardButtonTG(
-                        text=String.WRITEOFF_DEVICES_BTN,
-                        callback_data=CallbackData.WRITEOFF_DEVICES_BTN,
-                    ),
-                ],
-            )
-        if self.user_db.is_manager:
-            inline_keyboard_rows.append(
-                [
-                    InlineKeyboardButtonTG(
-                        text=String.FORM_REPORT_BTN,
-                        callback_data=CallbackData.FORM_REPORT_BTN,
-                    )
-                ],
-            )
-            if self.user_db.is_hiring:
-                inline_keyboard_rows.append(
-                    [
-                        InlineKeyboardButtonTG(
-                            text=String.DISABLE_HIRING_BTN,
-                            callback_data=CallbackData.DISABLE_HIRING_BTN,
-                        )
-                    ],
-                )
-            else:
-                inline_keyboard_rows.append(
-                    [
-                        InlineKeyboardButtonTG(
-                            text=String.ENABLE_HIRING_BTN,
-                            callback_data=CallbackData.ENABLE_HIRING_BTN,
-                        )
-                    ],
-                )
-        return inline_keyboard_rows
+    def _get_device_type_name_from_callback_data(
+        self, callback_data: CallbackData
+    ) -> DeviceTypeName:
+        """
+        Validates that a CallbackData member name exists in DeviceTypeName
+        and returns the corresponding DeviceTypeName member.
 
-    def _helper_extract_callback_button_text(self) -> str:
+        Raises:
+            ValueError: If the name does not exist in DeviceTypeName, allowing
+                        the calling function to handle it as a generic
+                        "invalid data" error.
+        """
+        try:
+            device_type_name = DeviceTypeName[callback_data.name]
+            logger.info(
+                f"{self.log_prefix}{CallbackData.__name__} "
+                f"'{callback_data.value}' "
+                f"matches {DeviceTypeName.__name__} "
+                f"'{device_type_name.name}'."
+            )
+            return device_type_name
+        except KeyError:
+            logger.info(
+                f"{self.log_prefix}{CallbackData.__name__} "
+                f"'{callback_data.value}' "
+                "doesn't match any "
+                f"{DeviceTypeName.__name__}."
+            )
+            raise ValueError(
+                "Callback data does not correspond to a device type"
+            )  # from None
+
+    def _get_callback_data_ending_as_integer(self, callback_data: CallbackData) -> int:
+        assert isinstance(callback_data.value, str)
+        pattern = r"(\d+)$"
+        match = re.search(pattern, callback_data.value)
+        if not match:
+            error_msg = (
+                f"{self.log_prefix}"
+                f"{CallbackData.__name__} "
+                f"'{callback_data.value}' "
+                "doesn't end with an integer."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        number_as_string = match.group(1)
+        return int(number_as_string)
+
+    def _get_callback_button_text(self) -> str:
         """Returns text of a button with matching callback data."""
         if not isinstance(self.update_tg, CallbackQueryUpdateTG):
             raise TypeError(
@@ -4169,7 +4259,7 @@ class Conversation:
                 f"{CallbackQueryUpdateTG.__name__} update type only."
             )
         if self.update_tg.callback_query.message.reply_markup is None:
-            error_msg = "This method only works with inline keyboard attached."
+            error_msg = f"{self.log_prefix}This method only works with inline keyboard attached."
             logger.error(error_msg)
             raise ValueError(error_msg)
         callback_data = self.update_tg.callback_query.data
@@ -4190,6 +4280,3 @@ class Conversation:
                 continue
             break
         return button_text
-
-    # async def _handle_pick_writeoff_device(self, state: StateJS) -> list[MethodTG]:
-    #     pass
