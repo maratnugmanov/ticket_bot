@@ -2421,11 +2421,6 @@ class Conversation:
                 )
                 logger.error(error_msg)
                 raise ValueError(error_msg)
-            # await self.session.refresh(
-            #     self.user_db,
-            #     attribute_names=["writeoff_devices"],
-            # )
-            # total_writeoff_devices = len(self.user_db.writeoff_devices)
             total_writeoff_devices = (
                 await self.session.scalar(
                     select(func.count())
@@ -4120,7 +4115,10 @@ class Conversation:
             logger.error(error_msg)
             raise ValueError(error_msg)
         if self.user_db.current_ticket is None:
-            error_msg = f"{self.log_prefix}'user_db.current_ticket' cannot be None at this point."
+            error_msg = (
+                f"{self.log_prefix}'user_db.current_ticket' "
+                "cannot be None at this point."
+            )
             logger.error(error_msg)
             raise ValueError(error_msg)
         current_ticket = self.user_db.current_ticket
@@ -4207,13 +4205,14 @@ class Conversation:
         self, callback_data: CallbackData
     ) -> DeviceTypeName:
         """
-        Validates that a CallbackData member name exists in DeviceTypeName
-        and returns the corresponding DeviceTypeName member.
+        Validates that a CallbackData member name exists in
+        DeviceTypeName and returns the corresponding
+        DeviceTypeName member.
 
         Raises:
-            ValueError: If the name does not exist in DeviceTypeName, allowing
-                        the calling function to handle it as a generic
-                        "invalid data" error.
+            ValueError: If the name does not exist in DeviceTypeName,
+                        allowing the calling function to handle it
+                        as a generic "invalid data" error.
         """
         try:
             device_type_name = DeviceTypeName[callback_data.name]
@@ -4259,7 +4258,10 @@ class Conversation:
                 f"{CallbackQueryUpdateTG.__name__} update type only."
             )
         if self.update_tg.callback_query.message.reply_markup is None:
-            error_msg = f"{self.log_prefix}This method only works with inline keyboard attached."
+            error_msg = (
+                f"{self.log_prefix}This method only works with "
+                "inline keyboard attached."
+            )
             logger.error(error_msg)
             raise ValueError(error_msg)
         callback_data = self.update_tg.callback_query.data
@@ -4272,8 +4274,8 @@ class Conversation:
                 if button.callback_data == callback_data:
                     button_text = button.text
                     logger.info(
-                        f"{self.log_prefix}Button text '{button_text}' found "
-                        f"for callback data '{callback_data}'."
+                        f"{self.log_prefix}Button text '{button_text}' "
+                        f"found for callback data '{callback_data}'."
                     )
                     break
             else:
