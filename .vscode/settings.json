@@ -5,6 +5,7 @@
         "autoflush",
         "fastapi",
         "httpx",
+        "lookback",
         "maratnugmanov",
         "mypy",
         "Nugmanov",

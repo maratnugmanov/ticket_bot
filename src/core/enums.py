@@ -71,6 +71,23 @@ class CallbackData(enum.StrEnum):
     DEVICE_14 = enum.auto()
     DEVICE_15 = enum.auto()
 
+    TICKET_0 = enum.auto()
+    TICKET_1 = enum.auto()
+    TICKET_2 = enum.auto()
+    TICKET_3 = enum.auto()
+    TICKET_4 = enum.auto()
+    TICKET_5 = enum.auto()
+    TICKET_6 = enum.auto()
+    TICKET_7 = enum.auto()
+    TICKET_8 = enum.auto()
+    TICKET_9 = enum.auto()
+    TICKET_10 = enum.auto()
+    TICKET_11 = enum.auto()
+    TICKET_12 = enum.auto()
+    TICKET_13 = enum.auto()
+    TICKET_14 = enum.auto()
+    TICKET_15 = enum.auto()
+
     ADD_DEVICE_BTN = enum.auto()
     CLOSE_TICKET_BTN = enum.auto()
     QUIT_WITHOUT_SAVING_BTN = enum.auto()
@@ -99,6 +116,19 @@ class String(enum.StrEnum):
     TVE_DEVICE = "TVE-приставка"
     POWER_UNIT = "Блок питания"
     NETWORK_HUB = "Свитч"
+
+    JAN = "янв"
+    FEB = "фев"
+    MAR = "мар"
+    APR = "апр"
+    MAY = "май"
+    JUN = "июн"
+    JUL = "июл"
+    AUG = "авг"
+    SEP = "сен"
+    OCT = "окт"
+    NOV = "ноя"
+    DEC = "дек"
 
     INSTALL_DEVICE_BTN = "✅ Установка"
     RETURN_DEVICE_BTN = "↪️ Возврат"
@@ -131,6 +161,7 @@ class String(enum.StrEnum):
     CONTRACT_NUMBER_REMAINS_THE_SAME = "Номер договора остался прежним"
 
     EDIT_DEVICE = "✏️ Изменить устройство"
+    EDIT_CLOSED_TICKET = "✏️ Изменить закрытую заявку"
     EDIT_WRITEOFF_DEVICE = "✏️ Изменить бракованное устройство"
 
     RETURNING_TO_TICKET = "<< Возвращаемся в заявку"
@@ -185,6 +216,7 @@ class String(enum.StrEnum):
     DEVICE_ACTION_WAS_CHANGED_FOR = "Тип действия с устройством изменен на"
     PICK_TICKET_ACTION = "Возможные действия: изменение номера текущей заявки/договора, изменение/добавление/удаление устройств, закрытие заявки и выход без сохранения"
     PICK_DEVICE_ACTION = "Возможные действия: изменение серийного номера и типа устройства, смена производимого над ним действия, возврат в предыдущее меню или удаление устройства из данной заявки"
+    PICK_TICKETS_HISTORY_ACTION = "Возможные действия: изменение/удаление закрытых заявок или возврат в предыдущее меню"
     PICK_WRITEOFF_DEVICE_ACTION = "Возможные действия: изменение серийного номера и типа бракованного устройства, возврат в предыдущее меню или удаление устройства из брака"
     PICK_WRITEOFF_DEVICES_ACTION = "Возможные действия: добавление/изменение/удаление брака или возврат в предыдущее меню"
     DELETE_DEVICE_FROM_WRITEOFF = "🗑 Удалить устройство из брака"
@@ -212,6 +244,7 @@ class String(enum.StrEnum):
     YOU_ADDED_WRITEOFF_DEVICE = "Вы успешно добавили бракованное устройство"
     NUMBER_SYMBOL = "№"
     WITH_X = "с"
+    FROM_X = "от"
     X_DEVICE = "устройством"
     X_DEVICES = "устройствами"
     DELETE_DEVICE_FROM_TICKET = "🗑 Удалить устройство из заявки"
@@ -253,6 +286,7 @@ class Action(enum.StrEnum):
     PICK_DEVICE_ACTION = enum.auto()
     CONFIRM_CLOSE_TICKET = enum.auto()
     CONFIRM_QUIT_WITHOUT_SAVING = enum.auto()
+    TICKETS_HISTORY = enum.auto()
     WRITEOFF_DEVICES = enum.auto()
     PICK_WRITEOFF_DEVICE_TYPE = enum.auto()
     ENTER_WRITEOFF_DEVICE_SERIAL_NUMBER = enum.auto()

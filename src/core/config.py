@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     contract_number_regex: str = Field(alias="CONTRACT_NUMBER_REGEX")
     serial_number_regex: str = Field(alias="SERIAL_NUMBER_REGEX")
     devices_per_ticket: int = Field(alias="DEVICES_PER_TICKET")
+    tickets_per_page: int = Field(alias="TICKETS_PER_PAGE")
+    tickets_history_lookback_days: int = Field(alias="TICKETS_HISTORY_LOOKBACK_DAYS")
     writeoffs_per_page: int = Field(alias="WRITEOFFS_PER_PAGE")
 
     user_default_timezone: str = Field(alias="USER_DEFAULT_TIMEZONE")
