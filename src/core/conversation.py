@@ -2715,7 +2715,7 @@ class Conversation:
                         )
                         self.next_state = StateJS(
                             action=Action.PICK_WRITEOFF_DEVICE_ACTION,
-                            ticket_id=writeoff_device_id,
+                            writeoff_device_id=writeoff_device_id,
                         )
                         methods_tg_list.append(
                             await self._build_pick_writeoff_device_action_message(
@@ -2863,7 +2863,7 @@ class Conversation:
                         )
                         self.next_state = StateJS(
                             action=Action.ENTER_WRITEOFF_DEVICE_SERIAL_NUMBER,
-                            ticket_id=writeoff_device.id,
+                            writeoff_device_id=writeoff_device.id,
                         )
                         methods_tg_list.append(
                             self._build_new_text_message(
@@ -2919,7 +2919,7 @@ class Conversation:
     ) -> list[MethodTG]:
         assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting writeoff device serial number.")
-        if self.state.ticket_id == 0:
+        if self.state.writeoff_device_id == 0:
             error_msg = (
                 f"{self.log_prefix}'writeoff_device_id' cannot be 0 at this point."
             )
@@ -2938,7 +2938,7 @@ class Conversation:
                         "serial number (forced uppercase): "
                         f"'{message_text}'."
                     )
-                    writeoff_device_id = self.state.ticket_id
+                    writeoff_device_id = self.state.writeoff_device_id
                     writeoff_device = await self.session.scalar(
                         select(WriteoffDeviceDB).where(
                             WriteoffDeviceDB.id == writeoff_device_id
@@ -3019,7 +3019,7 @@ class Conversation:
         logger.info(
             f"{self.log_prefix}Awaiting writeoff device menu choice to be made."
         )
-        if self.state.ticket_id == 0:
+        if self.state.writeoff_device_id == 0:
             error_msg = (
                 f"{self.log_prefix}'writeoff_device_id' cannot be 0 at this point."
             )
@@ -3031,7 +3031,7 @@ class Conversation:
                 CallbackData.EDIT_WRITEOFF_DEVICE_TYPE,
                 CallbackData.DELETE_WRITEOFF_DEVICE_BTN,
             ]
-            writeoff_device_id = self.state.ticket_id
+            writeoff_device_id = self.state.writeoff_device_id
             writeoff_device = await self.session.scalar(
                 select(WriteoffDeviceDB)
                 .where(WriteoffDeviceDB.id == writeoff_device_id)
@@ -3118,7 +3118,7 @@ class Conversation:
                                 )
                                 self.next_state = StateJS(
                                     action=Action.EDIT_WRITEOFF_DEVICE_TYPE,
-                                    ticket_id=writeoff_device_id,
+                                    writeoff_device_id=writeoff_device_id,
                                 )
                                 methods_tg_list.append(
                                     await self._build_pick_writeoff_device_type_message(
@@ -3136,7 +3136,7 @@ class Conversation:
                                 )
                                 self.next_state = StateJS(
                                     action=Action.EDIT_WRITEOFF_DEVICE_SERIAL_NUMBER,
-                                    ticket_id=writeoff_device_id,
+                                    writeoff_device_id=writeoff_device_id,
                                 )
                                 methods_tg_list.append(
                                     self._build_new_text_message(
@@ -3219,7 +3219,7 @@ class Conversation:
         logger.info(
             f"{self.log_prefix}Awaiting new writeoff device type choice to be made."
         )
-        if self.state.ticket_id == 0:
+        if self.state.writeoff_device_id == 0:
             error_msg = (
                 f"{self.log_prefix}'writeoff_device_id' cannot be 0 at this point."
             )
@@ -3272,7 +3272,7 @@ class Conversation:
                         f"name='{device_type.name.name}' "
                         f"id={device_type.id}."
                     )
-                    writeoff_device_id = self.state.ticket_id
+                    writeoff_device_id = self.state.writeoff_device_id
                     writeoff_device = await self.session.scalar(
                         select(WriteoffDeviceDB)
                         .where(WriteoffDeviceDB.id == writeoff_device_id)
@@ -3325,7 +3325,7 @@ class Conversation:
                         await self.session.flush()
                         self.next_state = StateJS(
                             action=Action.PICK_WRITEOFF_DEVICE_ACTION,
-                            ticket_id=writeoff_device_id,
+                            writeoff_device_id=writeoff_device_id,
                         )
                         methods_tg_list.append(
                             await self._build_pick_writeoff_device_action_message(
@@ -3345,7 +3345,7 @@ class Conversation:
                         )
                         self.next_state = StateJS(
                             action=Action.PICK_WRITEOFF_DEVICE_ACTION,
-                            ticket_id=writeoff_device_id,
+                            writeoff_device_id=writeoff_device_id,
                         )
                         methods_tg_list.append(
                             await self._build_pick_writeoff_device_action_message(
@@ -3408,7 +3408,7 @@ class Conversation:
     async def _handle_action_edit_writeoff_device_serial_number(self) -> list[MethodTG]:
         assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting new writeoff device serial number.")
-        if self.state.ticket_id == 0:
+        if self.state.writeoff_device_id == 0:
             error_msg = (
                 f"{self.log_prefix}'writeoff_device_id' cannot be 0 at this point."
             )
@@ -3427,7 +3427,7 @@ class Conversation:
                         "device serial number (forced uppercase): "
                         f"'{message_text}'."
                     )
-                    writeoff_device_id = self.state.ticket_id
+                    writeoff_device_id = self.state.writeoff_device_id
                     writeoff_device = await self.session.scalar(
                         select(WriteoffDeviceDB).where(
                             WriteoffDeviceDB.id == writeoff_device_id
@@ -3466,7 +3466,7 @@ class Conversation:
                             await self.session.flush()
                             self.next_state = StateJS(
                                 action=Action.PICK_WRITEOFF_DEVICE_ACTION,
-                                ticket_id=writeoff_device_id,
+                                writeoff_device_id=writeoff_device_id,
                             )
                             methods_tg_list.append(
                                 await self._build_pick_writeoff_device_action_message(
@@ -3484,7 +3484,7 @@ class Conversation:
                             )
                             self.next_state = StateJS(
                                 action=Action.PICK_WRITEOFF_DEVICE_ACTION,
-                                ticket_id=writeoff_device_id,
+                                writeoff_device_id=writeoff_device_id,
                             )
                             methods_tg_list.append(
                                 await self._build_pick_writeoff_device_action_message(
@@ -4266,10 +4266,10 @@ class Conversation:
     async def _build_pick_writeoff_device_action_message(
         self, text: str = f"{String.PICK_WRITEOFF_DEVICE_ACTION}."
     ) -> SendMessageTG:
-        if self.next_state is not None and self.next_state.ticket_id != 0:
-            writeoff_device_id = self.next_state.ticket_id
-        elif self.state is not None and self.state.ticket_id != 0:
-            writeoff_device_id = self.state.ticket_id
+        if self.next_state is not None and self.next_state.writeoff_device_id != 0:
+            writeoff_device_id = self.next_state.writeoff_device_id
+        elif self.state is not None and self.state.writeoff_device_id != 0:
+            writeoff_device_id = self.state.writeoff_device_id
         else:
             error_msg = (
                 f"{self.log_prefix}The writeoff device menu only works "
