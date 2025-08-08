@@ -76,7 +76,7 @@ class Conversation:
             | Callable[[int, int], list[MethodTG]],
         ] = {
             CallbackData.ENTER_TICKET_NUMBER: self._handle_stateless_cb_enter_ticket_number,
-            CallbackData.TICKETS_HISTORY_BTN: self._handle_stateless_cb_tickets_history,
+            CallbackData.EXISTING_TICKETS_BTN: self._handle_stateless_cb_existing_tickets,
             CallbackData.ENABLE_HIRING_BTN: self._handle_stateless_cb_enable_hiring,
             CallbackData.DISABLE_HIRING_BTN: self._handle_stateless_cb_disable_hiring,
             CallbackData.WRITEOFF_DEVICES_BTN: self._handle_stateless_cb_writeoff_devices,
@@ -102,7 +102,7 @@ class Conversation:
             Action.CONFIRM_CLOSE_TICKET: self._handle_pick_confirm_close_ticket,
             Action.CONFIRM_QUIT_WITHOUT_SAVING: self._handle_pick_confirm_quit_ticket_without_saving,
             # Ticket History Scenario
-            Action.TICKETS_HISTORY: self._handle_action_tickets_history,
+            Action.EXISTING_TICKETS: self._handle_action_existing_tickets,
             # Writeoff Scenario
             Action.WRITEOFF_DEVICES: self._handle_action_writeoff_devices,
             Action.PICK_WRITEOFF_DEVICE_TYPE: self._handle_action_pick_writeoff_device_type,
@@ -560,22 +560,22 @@ class Conversation:
         )
         return methods_tg_list
 
-    async def _handle_stateless_cb_tickets_history(
+    async def _handle_stateless_cb_existing_tickets(
         self, chat_id: int, message_id: int
     ) -> list[MethodTG]:
-        """Handles CallbackData.TICKETS_HISTORY_BTN in a stateless
+        """Handles CallbackData.EXISTING_TICKETS_BTN in a stateless
         conversation."""
         # chat_id, message_id are part of the uniform signature but
         # might not be used directly by all handlers.
-        logger.info(f"{self.log_prefix}Initiating tickets history scenario.")
+        logger.info(f"{self.log_prefix}Initiating existing tickets scenario.")
         methods_tg_list: list[MethodTG] = []
-        self.next_state = StateJS(action=Action.TICKETS_HISTORY)
+        self.next_state = StateJS(action=Action.EXISTING_TICKETS)
         methods_tg_list.append(
             self._build_edit_to_callback_button_text(),
         )
         methods_tg_list.append(
-            await self._build_pick_tickets_history(
-                f"{String.PICK_TICKETS_HISTORY_ACTION}."
+            await self._build_pick_existing_tickets(
+                f"{String.PICK_EXISTING_TICKETS_ACTION}."
             ),
         )
         return methods_tg_list
@@ -583,7 +583,7 @@ class Conversation:
     async def _handle_stateless_cb_writeoff_devices(
         self, chat_id: int, message_id: int
     ) -> list[MethodTG]:
-        """Handles CallbackData.WRITEOFF_DEVICES in a stateless
+        """Handles CallbackData.WRITEOFF_DEVICES_BTN in a stateless
         conversation."""
         # chat_id, message_id are part of the uniform signature but
         # might not be used directly by all handlers.
@@ -670,19 +670,26 @@ class Conversation:
     async def _handle_action_enter_ticket_number(self) -> list[MethodTG]:
         assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting ticket number.")
-        current_ticket = self.user_db.current_ticket
-        if current_ticket:
-            error_msg = (
+        methods_tg_list: list[MethodTG] = []
+        current_ticket_id = self.state.ticket_id
+        if current_ticket_id:  # Both None and 0 are covered this way.
+            logger.error(
                 f"{self.log_prefix}"
                 f"{self.user_db.full_name} "
                 "is already working on a ticket "
-                f"number={current_ticket.number} "
-                f"id={current_ticket.id}. "
+                f"under id={current_ticket_id}. "
                 "Cannot create a new ticket."
             )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        methods_tg_list: list[MethodTG] = []
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.INCONSISTENT_STATE_DETECTED} "
+                "(current_ticket_id exist). "
+                f"{String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
         if isinstance(self.update_tg, MessageUpdateTG):
             if self.update_tg.message.text is not None:
                 message_text = self.update_tg.message.text
@@ -697,11 +704,13 @@ class Conversation:
                     new_ticket = TicketDB(
                         number=ticket_number,
                         user_id=self.user_db.id,
-                        locked_by_user_id=self.user_db.id,
                     )
-                    self.user_db.current_ticket = new_ticket
+                    self.session.add(new_ticket)
                     await self.session.flush()
-                    self.next_state = StateJS(action=Action.ENTER_CONTRACT_NUMBER)
+                    self.next_state = StateJS(
+                        action=Action.ENTER_CONTRACT_NUMBER,
+                        ticket_id=new_ticket.id,
+                    )
                     methods_tg_list.append(
                         self._build_new_text_message(f"{String.ENTER_CONTRACT_NUMBER}.")
                     )
@@ -740,15 +749,40 @@ class Conversation:
     async def _handle_action_enter_contract_number(self) -> list[MethodTG]:
         assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting contract number.")
-        current_ticket = self.user_db.current_ticket
-        if current_ticket is None:
-            error_msg = (
+        methods_tg_list: list[MethodTG] = []
+        current_ticket_id = self.state.ticket_id
+        if not current_ticket_id:  # Both None and 0 are covered this way.
+            logger.error(
                 f"{self.log_prefix}{self.user_db.full_name} "
                 "is not working on any ticket."
             )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        methods_tg_list: list[MethodTG] = []
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.INCONSISTENT_STATE_DETECTED} "
+                "(missing current_ticket_id). "
+                f"{String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
+        current_ticket = await self.session.scalar(
+            select(TicketDB).where(TicketDB.id == current_ticket_id)
+        )
+        if not current_ticket:
+            logger.warning(
+                f"{self.log_prefix}Current ticket "
+                f" was not found in the database under "
+                f"id={current_ticket_id}."
+            )
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.TICKET_WAS_NOT_FOUND}. {String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
         if isinstance(self.update_tg, MessageUpdateTG):
             if self.update_tg.message.text is not None:
                 message_text = self.update_tg.message.text
@@ -769,9 +803,9 @@ class Conversation:
                             f"{self.log_prefix}Contract "
                             f"number={contract_number} was found "
                             "in the database under "
-                            f"id={contract_exist.id}."
+                            f"id={contract_exist}."
                         )
-                        current_ticket.contract = contract_exist
+                        current_ticket_contract = contract_exist
                     else:
                         logger.info(
                             f"{self.log_prefix}Contract "
@@ -779,9 +813,14 @@ class Conversation:
                             "in the database and will be added."
                         )
                         new_contract = ContractDB(number=contract_number)
-                        current_ticket.contract = new_contract
+                        current_ticket_contract = new_contract
+                        await self.session.flush()
+                    current_ticket.contract_id = current_ticket_contract.id
                     await self.session.flush()
-                    self.next_state = StateJS(action=Action.PICK_DEVICE_TYPE)
+                    self.next_state = StateJS(
+                        action=Action.PICK_DEVICE_TYPE,
+                        ticket_id=current_ticket_id,
+                    )
                     methods_tg_list.append(
                         await self._build_pick_device_type_message(
                             f"{String.PICK_DEVICE_TYPE}."
@@ -824,15 +863,63 @@ class Conversation:
     async def _handle_action_pick_device_type(self) -> list[MethodTG]:
         assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting device type choice to be made.")
-        current_ticket = self.user_db.current_ticket
-        if current_ticket is None:
-            error_msg = (
+        methods_tg_list: list[MethodTG] = []
+        current_ticket_id = self.state.ticket_id
+        if not current_ticket_id:  # Both None and 0 are covered this way.
+            logger.error(
                 f"{self.log_prefix}{self.user_db.full_name} "
                 "is not working on any ticket."
             )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        methods_tg_list: list[MethodTG] = []
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.INCONSISTENT_STATE_DETECTED} "
+                "(missing current_ticket_id). "
+                f"{String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
+        current_ticket = await self.session.scalar(
+            select(TicketDB)
+            .where(TicketDB.id == current_ticket_id)
+            .options(selectinload(TicketDB.devices))
+        )
+        if not current_ticket:
+            logger.warning(
+                f"{self.log_prefix}Current ticket "
+                f" was not found in the database under "
+                f"id={current_ticket_id}."
+            )
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.TICKET_WAS_NOT_FOUND}. {String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
+        device_index = self.state.ticket_device_index
+        devices_list = current_ticket.devices
+        total_devices = len(devices_list)
+        if device_index is not None and not (0 <= device_index <= total_devices):
+            logger.error(
+                f"{self.log_prefix}Error: "
+                f"device_index={device_index} and "
+                f"total_devices={total_devices}. "
+                "Expected: "
+                "0 <= device_index <= total_devices."
+            )
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.INCONSISTENT_STATE_DETECTED} "
+                "(incorrect device_index). "
+                f"{String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
         if isinstance(self.update_tg, CallbackQueryUpdateTG):
             raw_data = self.update_tg.callback_query.data
             try:
@@ -881,9 +968,8 @@ class Conversation:
                         f"name='{device_type.name.name}' "
                         f"id={device_type.id}."
                     )
-                    devices_list = current_ticket.devices
-                    device_index = self.state.device_index
-                    total_devices = len(devices_list)
+                    if device_index is None:
+                        device_index = 0
                     if device_index == total_devices:
                         logger.info(
                             f"{self.log_prefix}No existing "
@@ -899,7 +985,8 @@ class Conversation:
                         )
                         device.type = device_type
                         devices_list.append(device)
-                    elif 0 <= device_index < total_devices:
+
+                    else:  # 0 <= device_index < total_devices
                         logger.info(
                             f"{self.log_prefix}Working with existing "
                             f"{DeviceDB.__name__} at "
@@ -910,16 +997,6 @@ class Conversation:
                         device = devices_list[device_index]
                         device.type_id = device_type.id
                         device.type = device_type
-                    else:
-                        error_msg = (
-                            f"{self.log_prefix}Error: "
-                            f"device_index={device_index} and "
-                            f"total_devices={total_devices}. "
-                            "Expected: "
-                            "0 <= device_index <= total_devices."
-                        )
-                        logger.error(error_msg)
-                        raise IndexError(error_msg)
                     if device_type.is_disposable:
                         logger.info(
                             f"{self.log_prefix}{DeviceTypeDB.__name__} "
@@ -938,7 +1015,8 @@ class Conversation:
                             )
                             self.next_state = StateJS(
                                 action=Action.ENTER_DEVICE_SERIAL_NUMBER,
-                                device_index=device_index,
+                                ticket_id=current_ticket_id,
+                                ticket_device_index=device_index,
                             )
                             methods_tg_list.append(
                                 self._build_new_text_message(
@@ -954,7 +1032,10 @@ class Conversation:
                                 "Serial number step will be skipped. "
                                 "Next step is ticket menu."
                             )
-                            self.next_state = StateJS(action=Action.PICK_TICKET_ACTION)
+                            self.next_state = StateJS(
+                                action=Action.PICK_TICKET_ACTION,
+                                ticket_id=current_ticket_id,
+                            )
                             methods_tg_list.append(
                                 self._build_pick_ticket_action_message(
                                     f"{String.PICK_TICKET_ACTION}."
@@ -969,7 +1050,8 @@ class Conversation:
                         )
                         self.next_state = StateJS(
                             action=Action.PICK_INSTALL_OR_RETURN,
-                            device_index=device_index,
+                            ticket_id=current_ticket_id,
+                            ticket_device_index=device_index,
                         )
                         methods_tg_list.append(
                             self._build_pick_install_or_return_message(
@@ -1006,16 +1088,64 @@ class Conversation:
     async def _handle_action_pick_install_or_return(self) -> list[MethodTG]:
         assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting install or return choice to be made.")
-        current_ticket = self.user_db.current_ticket
-        if current_ticket is None:
-            error_msg = (
+        methods_tg_list: list[MethodTG] = []
+        current_ticket_id = self.state.ticket_id
+        if not current_ticket_id:  # Both None and 0 are covered this way.
+            logger.error(
                 f"{self.log_prefix}{self.user_db.full_name} "
                 "is not working on any ticket."
             )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        methods_tg_list: list[MethodTG] = []
-        if isinstance(self.update_tg, CallbackQueryUpdateTG):
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.INCONSISTENT_STATE_DETECTED} "
+                "(missing current_ticket_id). "
+                f"{String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
+        current_ticket = await self.session.scalar(
+            select(TicketDB)
+            .where(TicketDB.id == current_ticket_id)
+            .options(selectinload(TicketDB.devices).selectinload(DeviceDB.type))
+        )
+        if not current_ticket:
+            logger.warning(
+                f"{self.log_prefix}Current ticket "
+                f" was not found in the database under "
+                f"id={current_ticket_id}."
+            )
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.TICKET_WAS_NOT_FOUND}. {String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
+        device_index = self.state.ticket_device_index
+        devices_list = current_ticket.devices
+        total_devices = len(devices_list)
+        if device_index is None or not (0 <= device_index < total_devices):
+            logger.error(
+                f"{self.log_prefix}Error: "
+                f"device_index={device_index} and "
+                f"total_devices={total_devices}. "
+                "Expected: "
+                "0 <= device_index < total_devices."
+            )
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.INCONSISTENT_STATE_DETECTED} "
+                "(incorrect device_index). "
+                f"{String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
+        elif isinstance(self.update_tg, CallbackQueryUpdateTG):
             expected_callback_data = [
                 CallbackData.INSTALL_DEVICE_BTN,
                 CallbackData.RETURN_DEVICE_BTN,
@@ -1055,29 +1185,15 @@ class Conversation:
                         logger.error(error_msg)
                         raise ValueError(error_msg)
                     methods_tg_list.append(self._build_edit_to_callback_button_text())
-                    devices_list = current_ticket.devices
-                    device_index = self.state.device_index
-                    total_devices = len(devices_list)
-                    if 0 <= device_index < total_devices:
-                        logger.info(
-                            f"{self.log_prefix}Working with "
-                            f"{DeviceDB.__name__} "
-                            f"at devices[{device_index}]. Setting "
-                            f"'removal' flag to '{removal}'."
-                        )
-                        device = devices_list[device_index]
-                        device.removal = removal
-                        await self.session.flush()
-                    else:
-                        error_msg = (
-                            f"{self.log_prefix}Error: "
-                            f"device_index={device_index} and "
-                            f"total_devices={total_devices}. "
-                            "Expected: "
-                            "0 <= device_index < total_devices."
-                        )
-                        logger.error(error_msg)
-                        raise IndexError(error_msg)
+                    logger.info(
+                        f"{self.log_prefix}Working with "
+                        f"{DeviceDB.__name__} "
+                        f"at devices[{device_index}]. Setting "
+                        f"'removal' flag to '{removal}'."
+                    )
+                    device = devices_list[device_index]
+                    device.removal = removal
+                    await self.session.flush()
                     device_type = device.type
                     if device_type.has_serial_number:
                         logger.info(
@@ -1088,7 +1204,8 @@ class Conversation:
                         )
                         self.next_state = StateJS(
                             action=Action.ENTER_DEVICE_SERIAL_NUMBER,
-                            device_index=device_index,
+                            ticket_id=current_ticket_id,
+                            ticket_device_index=device_index,
                         )
                         methods_tg_list.append(
                             self._build_new_text_message(
@@ -1103,7 +1220,10 @@ class Conversation:
                             "Serial number step will be skipped. "
                             "Next step is ticket menu."
                         )
-                        self.next_state = StateJS(action=Action.PICK_TICKET_ACTION)
+                        self.next_state = StateJS(
+                            action=Action.PICK_TICKET_ACTION,
+                            ticket_id=current_ticket_id,
+                        )
                         methods_tg_list.append(
                             self._build_pick_ticket_action_message(
                                 f"{String.PICK_TICKET_ACTION}."
@@ -1140,18 +1260,66 @@ class Conversation:
             )
         return methods_tg_list
 
-    def _handle_action_enter_device_serial_number(self) -> list[MethodTG]:
+    async def _handle_action_enter_device_serial_number(self) -> list[MethodTG]:
         assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting device serial number.")
-        current_ticket = self.user_db.current_ticket
-        if current_ticket is None:
-            error_msg = (
+        methods_tg_list: list[MethodTG] = []
+        current_ticket_id = self.state.ticket_id
+        if not current_ticket_id:  # Both None and 0 are covered this way.
+            logger.error(
                 f"{self.log_prefix}{self.user_db.full_name} "
                 "is not working on any ticket."
             )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        methods_tg_list: list[MethodTG] = []
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.INCONSISTENT_STATE_DETECTED} "
+                "(missing current_ticket_id). "
+                f"{String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
+        current_ticket = await self.session.scalar(
+            select(TicketDB)
+            .where(TicketDB.id == current_ticket_id)
+            .options(selectinload(TicketDB.devices))
+        )
+        if not current_ticket:
+            logger.warning(
+                f"{self.log_prefix}Current ticket "
+                f" was not found in the database under "
+                f"id={current_ticket_id}."
+            )
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.TICKET_WAS_NOT_FOUND}. {String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
+        device_index = self.state.ticket_device_index
+        devices_list = current_ticket.devices
+        total_devices = len(devices_list)
+        if device_index is None or not (0 <= device_index < total_devices):
+            logger.error(
+                f"{self.log_prefix}Error: "
+                f"device_index={device_index} and "
+                f"total_devices={total_devices}. "
+                "Expected: "
+                "0 <= device_index < total_devices."
+            )
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.INCONSISTENT_STATE_DETECTED} "
+                "(incorrect device_index). "
+                f"{String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
         if isinstance(self.update_tg, MessageUpdateTG):
             if self.update_tg.message.text is not None:
                 message_text = self.update_tg.message.text.upper()
@@ -1164,29 +1332,18 @@ class Conversation:
                         "serial number (forced uppercase): "
                         f"'{message_text}'."
                     )
-                    devices_list = current_ticket.devices
-                    device_index = self.state.device_index
-                    total_devices = len(devices_list)
-                    if 0 <= device_index < total_devices:
-                        logger.info(
-                            f"{self.log_prefix}Working with "
-                            f"{DeviceDB.__name__} "
-                            f"at devices[{device_index}]. Setting "
-                            f"serial number to '{message_text}'."
-                        )
-                        device = devices_list[device_index]
-                        device.serial_number = message_text
-                    else:
-                        error_msg = (
-                            f"{self.log_prefix}Error: "
-                            f"device_index={device_index} and "
-                            f"total_devices={total_devices}. "
-                            "Expected: "
-                            "0 <= device_index < total_devices."
-                        )
-                        logger.error(error_msg)
-                        raise IndexError(error_msg)
-                    self.next_state = StateJS(action=Action.PICK_TICKET_ACTION)
+                    logger.info(
+                        f"{self.log_prefix}Working with "
+                        f"{DeviceDB.__name__} "
+                        f"at devices[{device_index}]. Setting "
+                        f"serial number to '{message_text}'."
+                    )
+                    device = devices_list[device_index]
+                    device.serial_number = message_text
+                    self.next_state = StateJS(
+                        action=Action.PICK_TICKET_ACTION,
+                        ticket_id=current_ticket_id,
+                    )
                     methods_tg_list.append(
                         self._build_pick_ticket_action_message(
                             f"{String.PICK_TICKET_ACTION}."
@@ -1230,15 +1387,42 @@ class Conversation:
     async def _handle_action_pick_ticket_action(self) -> list[MethodTG]:
         assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting ticket menu choice to be made.")
-        current_ticket = self.user_db.current_ticket
-        if current_ticket is None:
-            error_msg = (
+        methods_tg_list: list[MethodTG] = []
+        current_ticket_id = self.state.ticket_id
+        if not current_ticket_id:  # Both None and 0 are covered this way.
+            logger.error(
                 f"{self.log_prefix}{self.user_db.full_name} "
                 "is not working on any ticket."
             )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        methods_tg_list: list[MethodTG] = []
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.INCONSISTENT_STATE_DETECTED} "
+                "(missing current_ticket_id). "
+                f"{String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
+        current_ticket = await self.session.scalar(
+            select(TicketDB)
+            .where(TicketDB.id == current_ticket_id)
+            .options(selectinload(TicketDB.devices))
+        )
+        if not current_ticket:
+            logger.warning(
+                f"{self.log_prefix}Current ticket "
+                f" was not found in the database under "
+                f"id={current_ticket_id}."
+            )
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.TICKET_WAS_NOT_FOUND}. {String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
         if isinstance(self.update_tg, CallbackQueryUpdateTG):
             expected_callback_data = [
                 CallbackData.EDIT_TICKET_NUMBER,
@@ -1270,7 +1454,10 @@ class Conversation:
                                 f"{String.EDIT_TICKET_NUMBER}."
                             )
                         )
-                        self.next_state = StateJS(action=Action.EDIT_TICKET_NUMBER)
+                        self.next_state = StateJS(
+                            action=Action.EDIT_TICKET_NUMBER,
+                            ticket_id=current_ticket_id,
+                        )
                         methods_tg_list.append(
                             self._build_new_text_message(
                                 f"{String.ENTER_NEW_TICKET_NUMBER}."
@@ -1282,7 +1469,10 @@ class Conversation:
                                 f"{String.EDIT_CONTRACT_NUMBER}."
                             )
                         )
-                        self.next_state = StateJS(action=Action.EDIT_CONTRACT_NUMBER)
+                        self.next_state = StateJS(
+                            action=Action.EDIT_CONTRACT_NUMBER,
+                            ticket_id=current_ticket_id,
+                        )
                         methods_tg_list.append(
                             self._build_new_text_message(
                                 f"{String.ENTER_NEW_CONTRACT_NUMBER}."
@@ -1301,7 +1491,8 @@ class Conversation:
                         )
                         self.next_state = StateJS(
                             action=Action.PICK_DEVICE_ACTION,
-                            device_index=callback_device_index,
+                            ticket_id=current_ticket_id,
+                            ticket_device_index=callback_device_index,
                         )
                         methods_tg_list.append(
                             self._build_pick_device_action_message(
@@ -1314,7 +1505,8 @@ class Conversation:
                         )
                         self.next_state = StateJS(
                             action=Action.PICK_DEVICE_TYPE,
-                            device_index=total_devices,
+                            ticket_id=current_ticket_id,
+                            ticket_device_index=total_devices,
                         )
                         methods_tg_list.append(
                             await self._build_pick_device_type_message(
@@ -1325,7 +1517,10 @@ class Conversation:
                         methods_tg_list.append(
                             self._build_edit_to_callback_button_text()
                         )
-                        self.next_state = StateJS(action=Action.CONFIRM_CLOSE_TICKET)
+                        self.next_state = StateJS(
+                            action=Action.CONFIRM_CLOSE_TICKET,
+                            ticket_id=current_ticket_id,
+                        )
                         methods_tg_list.append(
                             self._build_pick_confirm_close_ticket_message(
                                 f"{String.CONFIRM_YOU_WANT_TO_CLOSE_TICKET}."
@@ -1336,7 +1531,8 @@ class Conversation:
                             self._build_edit_to_callback_button_text()
                         )
                         self.next_state = StateJS(
-                            action=Action.CONFIRM_QUIT_WITHOUT_SAVING
+                            action=Action.CONFIRM_QUIT_WITHOUT_SAVING,
+                            ticket_id=current_ticket_id,
                         )
                         methods_tg_list.append(
                             self._build_pick_confirm_quit_without_saving(
@@ -1373,18 +1569,43 @@ class Conversation:
             )
         return methods_tg_list
 
-    def _handle_action_edit_ticket_number(self) -> list[MethodTG]:
+    async def _handle_action_edit_ticket_number(self) -> list[MethodTG]:
         assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting new ticket number.")
-        current_ticket = self.user_db.current_ticket
-        if current_ticket is None:
-            error_msg = (
+        methods_tg_list: list[MethodTG] = []
+        current_ticket_id = self.state.ticket_id
+        if not current_ticket_id:  # Both None and 0 are covered this way.
+            logger.error(
                 f"{self.log_prefix}{self.user_db.full_name} "
                 "is not working on any ticket."
             )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        methods_tg_list: list[MethodTG] = []
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.INCONSISTENT_STATE_DETECTED} "
+                "(missing current_ticket_id). "
+                f"{String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
+        current_ticket = await self.session.scalar(
+            select(TicketDB).where(TicketDB.id == current_ticket_id)
+        )
+        if not current_ticket:
+            logger.warning(
+                f"{self.log_prefix}Current ticket "
+                f" was not found in the database under "
+                f"id={current_ticket_id}."
+            )
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.TICKET_WAS_NOT_FOUND}. {String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
         if isinstance(self.update_tg, MessageUpdateTG):
             if self.update_tg.message.text is not None:
                 message_text = self.update_tg.message.text
@@ -1406,7 +1627,10 @@ class Conversation:
                             "Applying change."
                         )
                         current_ticket.number = new_ticket_number
-                        self.next_state = StateJS(action=Action.PICK_TICKET_ACTION)
+                        self.next_state = StateJS(
+                            action=Action.PICK_TICKET_ACTION,
+                            ticket_id=current_ticket_id,
+                        )
                         methods_tg_list.append(
                             self._build_pick_ticket_action_message(
                                 f"{String.TICKET_NUMBER_WAS_EDITED}. "
@@ -1421,7 +1645,10 @@ class Conversation:
                             f"number={current_ticket.number}. "
                             "No change needed."
                         )
-                        self.next_state = StateJS(action=Action.PICK_TICKET_ACTION)
+                        self.next_state = StateJS(
+                            action=Action.PICK_TICKET_ACTION,
+                            ticket_id=current_ticket_id,
+                        )
                         methods_tg_list.append(
                             self._build_pick_ticket_action_message(
                                 f"{String.TICKET_NUMBER_REMAINS_THE_SAME}. "
@@ -1465,24 +1692,59 @@ class Conversation:
     async def _handle_action_edit_contract_number(self) -> list[MethodTG]:
         assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting new contract number.")
-        current_ticket = self.user_db.current_ticket
-        if current_ticket is None:
-            error_msg = (
+        methods_tg_list: list[MethodTG] = []
+        current_ticket_id = self.state.ticket_id
+        if not current_ticket_id:  # Both None and 0 are covered this way.
+            logger.error(
                 f"{self.log_prefix}{self.user_db.full_name} "
                 "is not working on any ticket."
             )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        if current_ticket.contract is None:
-            error_msg = (
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.INCONSISTENT_STATE_DETECTED} "
+                "(missing current_ticket_id). "
+                f"{String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
+        current_ticket = await self.session.scalar(
+            select(TicketDB)
+            .where(TicketDB.id == current_ticket_id)
+            .options(selectinload(TicketDB.contract))
+        )
+        if not current_ticket:
+            logger.warning(
+                f"{self.log_prefix}Current ticket "
+                f" was not found in the database under "
+                f"id={current_ticket_id}."
+            )
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.TICKET_WAS_NOT_FOUND}. {String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
+        if not current_ticket.contract:
+            logger.warning(
                 f"{self.log_prefix}Ticket "
                 f"number={current_ticket.number} "
                 f"id={current_ticket.id} is missing "
                 "a contract to work with."
             )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        methods_tg_list: list[MethodTG] = []
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.INCONSISTENT_STATE_DETECTED} "
+                "(missing current_ticket.contract). "
+                f"{String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
         if isinstance(self.update_tg, MessageUpdateTG):
             if self.update_tg.message.text is not None:
                 message_text = self.update_tg.message.text
@@ -1564,7 +1826,10 @@ class Conversation:
                                 f"id={old_contract_id} "
                                 "was not found in the database."
                             )
-                        self.next_state = StateJS(action=Action.PICK_TICKET_ACTION)
+                        self.next_state = StateJS(
+                            action=Action.PICK_TICKET_ACTION,
+                            ticket_id=current_ticket_id,
+                        )
                         methods_tg_list.append(
                             self._build_pick_ticket_action_message(
                                 f"{String.CONTRACT_NUMBER_WAS_EDITED}. "
@@ -1579,7 +1844,10 @@ class Conversation:
                             f"number={current_ticket.contract.number}. "
                             "No change needed."
                         )
-                        self.next_state = StateJS(action=Action.PICK_TICKET_ACTION)
+                        self.next_state = StateJS(
+                            action=Action.PICK_TICKET_ACTION,
+                            ticket_id=current_ticket_id,
+                        )
                         methods_tg_list.append(
                             self._build_pick_ticket_action_message(
                                 f"{String.CONTRACT_NUMBER_REMAINS_THE_SAME}. "
@@ -1623,39 +1891,74 @@ class Conversation:
     async def _handle_action_pick_device_action(self) -> list[MethodTG]:
         assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting device menu choice to be made.")
-        current_ticket = self.user_db.current_ticket
-        if current_ticket is None:
-            error_msg = (
+        methods_tg_list: list[MethodTG] = []
+        current_ticket_id = self.state.ticket_id
+        if not current_ticket_id:  # Both None and 0 are covered this way.
+            logger.error(
                 f"{self.log_prefix}{self.user_db.full_name} "
                 "is not working on any ticket."
             )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        methods_tg_list: list[MethodTG] = []
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.INCONSISTENT_STATE_DETECTED} "
+                "(missing current_ticket_id). "
+                f"{String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
+        current_ticket = await self.session.scalar(
+            select(TicketDB)
+            .where(TicketDB.id == current_ticket_id)
+            .options(selectinload(TicketDB.devices).selectinload(DeviceDB.type))
+        )
+        if not current_ticket:
+            logger.warning(
+                f"{self.log_prefix}Current ticket "
+                f" was not found in the database under "
+                f"id={current_ticket_id}."
+            )
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.TICKET_WAS_NOT_FOUND}. {String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
+        device_index = self.state.ticket_device_index
+        devices_list = current_ticket.devices
+        total_devices = len(devices_list)
+        if device_index is None or not (0 <= device_index < total_devices):
+            logger.error(
+                f"{self.log_prefix}Error: "
+                f"device_index={device_index} and "
+                f"total_devices={total_devices}. "
+                "Expected: "
+                "0 <= device_index < total_devices."
+            )
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.INCONSISTENT_STATE_DETECTED} "
+                "(incorrect device_index). "
+                f"{String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
         if isinstance(self.update_tg, CallbackQueryUpdateTG):
             expected_callback_data = [
                 CallbackData.EDIT_DEVICE_TYPE,
                 CallbackData.DELETE_DEVICE_BTN,
             ]
-            devices_list = current_ticket.devices
-            device_index = self.state.device_index
-            total_devices = len(devices_list)
-            if 0 <= device_index < total_devices:
-                logger.info(
-                    f"{self.log_prefix}Working with "
-                    f"{DeviceDB.__name__} "
-                    f"at devices[{device_index}]."
-                )
-                device = devices_list[device_index]
-            else:
-                error_msg = (
-                    f"{self.log_prefix}Error: "
-                    f"device_index={device_index} and "
-                    f"total_devices={total_devices}. "
-                    "Expected: 0 <= device_index < total_devices."
-                )
-                logger.error(error_msg)
-                raise IndexError(error_msg)
+            logger.info(
+                f"{self.log_prefix}Working with "
+                f"{DeviceDB.__name__} "
+                f"at devices[{device_index}]."
+            )
+            device = devices_list[device_index]
             if not device.type.is_disposable:
                 if device.removal is True:
                     expected_callback_data.append(CallbackData.RETURN_DEVICE_BTN)
@@ -1694,7 +1997,8 @@ class Conversation:
                         )
                         self.next_state = StateJS(
                             action=Action.EDIT_DEVICE_TYPE,
-                            device_index=device_index,
+                            ticket_id=current_ticket_id,
+                            ticket_device_index=device_index,
                         )
                         methods_tg_list.append(
                             await self._build_pick_device_type_message(
@@ -1712,7 +2016,8 @@ class Conversation:
                         )
                         self.next_state = StateJS(
                             action=Action.EDIT_INSTALL_OR_RETURN,
-                            device_index=device_index,
+                            ticket_id=current_ticket_id,
+                            ticket_device_index=device_index,
                         )
                         methods_tg_list.append(
                             self._build_pick_install_or_return_message(
@@ -1729,7 +2034,8 @@ class Conversation:
                         )
                         self.next_state = StateJS(
                             action=Action.EDIT_DEVICE_SERIAL_NUMBER,
-                            device_index=device_index,
+                            ticket_id=current_ticket_id,
+                            ticket_device_index=device_index,
                         )
                         methods_tg_list.append(
                             self._build_new_text_message(
@@ -1742,7 +2048,10 @@ class Conversation:
                                 f"{String.RETURNING_TO_TICKET}."
                             )
                         )
-                        self.next_state = StateJS(action=Action.PICK_TICKET_ACTION)
+                        self.next_state = StateJS(
+                            action=Action.PICK_TICKET_ACTION,
+                            ticket_id=current_ticket_id,
+                        )
                         methods_tg_list.append(
                             self._build_pick_ticket_action_message(
                                 f"{String.PICK_TICKET_ACTION}."
@@ -1762,7 +2071,10 @@ class Conversation:
                                 f"{String.DEVICE_WAS_DELETED_FROM_TICKET}."
                             )
                         )
-                        self.next_state = StateJS(action=Action.PICK_TICKET_ACTION)
+                        self.next_state = StateJS(
+                            action=Action.PICK_TICKET_ACTION,
+                            ticket_id=current_ticket_id,
+                        )
                         methods_tg_list.append(
                             self._build_pick_ticket_action_message(
                                 f"{String.PICK_TICKET_ACTION}."
@@ -1801,15 +2113,63 @@ class Conversation:
     async def _handle_action_edit_device_type(self) -> list[MethodTG]:
         assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting new device type choice to be made.")
-        current_ticket = self.user_db.current_ticket
-        if current_ticket is None:
-            error_msg = (
+        methods_tg_list: list[MethodTG] = []
+        current_ticket_id = self.state.ticket_id
+        if not current_ticket_id:  # Both None and 0 are covered this way.
+            logger.error(
                 f"{self.log_prefix}{self.user_db.full_name} "
                 "is not working on any ticket."
             )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        methods_tg_list: list[MethodTG] = []
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.INCONSISTENT_STATE_DETECTED} "
+                "(missing current_ticket_id). "
+                f"{String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
+        current_ticket = await self.session.scalar(
+            select(TicketDB)
+            .where(TicketDB.id == current_ticket_id)
+            .options(selectinload(TicketDB.devices).selectinload(DeviceDB.type))
+        )
+        if not current_ticket:
+            logger.warning(
+                f"{self.log_prefix}Current ticket "
+                f" was not found in the database under "
+                f"id={current_ticket_id}."
+            )
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.TICKET_WAS_NOT_FOUND}. {String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
+        device_index = self.state.ticket_device_index
+        devices_list = current_ticket.devices
+        total_devices = len(devices_list)
+        if device_index is None or not (0 <= device_index < total_devices):
+            logger.error(
+                f"{self.log_prefix}Error: "
+                f"device_index={device_index} and "
+                f"total_devices={total_devices}. "
+                "Expected: "
+                "0 <= device_index < total_devices."
+            )
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.INCONSISTENT_STATE_DETECTED} "
+                "(incorrect device_index). "
+                f"{String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
         if isinstance(self.update_tg, CallbackQueryUpdateTG):
             raw_data = self.update_tg.callback_query.data
             try:
@@ -1856,26 +2216,12 @@ class Conversation:
                         f"name='{device_type.name.name}' "
                         f"id={device_type.id}."
                     )
-                    devices_list = current_ticket.devices
-                    device_index = self.state.device_index
-                    total_devices = len(devices_list)
-                    if 0 <= device_index < total_devices:
-                        logger.info(
-                            f"{self.log_prefix}Working with "
-                            f"{DeviceDB.__name__} at "
-                            f"devices[{device_index}]."
-                        )
-                        device = devices_list[device_index]
-                    else:
-                        error_msg = (
-                            f"{self.log_prefix}Error: "
-                            f"device_index={device_index} and "
-                            f"total_devices={total_devices}. "
-                            "Expected: "
-                            "0 <= device_index < total_devices."
-                        )
-                        logger.error(error_msg)
-                        raise IndexError(error_msg)
+                    logger.info(
+                        f"{self.log_prefix}Working with "
+                        f"{DeviceDB.__name__} at "
+                        f"devices[{device_index}]."
+                    )
+                    device = devices_list[device_index]
                     if device.type.name.name != device_type.name.name:
                         logger.info(
                             f"{self.log_prefix}New "
@@ -1923,7 +2269,8 @@ class Conversation:
                             device.serial_number = None
                         self.next_state = StateJS(
                             action=Action.PICK_DEVICE_ACTION,
-                            device_index=device_index,
+                            ticket_id=current_ticket_id,
+                            ticket_device_index=device_index,
                         )
                         methods_tg_list.append(
                             self._build_pick_device_action_message(
@@ -1943,7 +2290,8 @@ class Conversation:
                         )
                         self.next_state = StateJS(
                             action=Action.PICK_DEVICE_ACTION,
-                            device_index=device_index,
+                            ticket_id=current_ticket_id,
+                            ticket_device_index=device_index,
                         )
                         methods_tg_list.append(
                             self._build_pick_device_action_message(
@@ -1982,15 +2330,63 @@ class Conversation:
         logger.info(
             f"{self.log_prefix}Awaiting new install or return choice to be made."
         )
-        current_ticket = self.user_db.current_ticket
-        if current_ticket is None:
-            error_msg = (
+        methods_tg_list: list[MethodTG] = []
+        current_ticket_id = self.state.ticket_id
+        if not current_ticket_id:  # Both None and 0 are covered this way.
+            logger.error(
                 f"{self.log_prefix}{self.user_db.full_name} "
                 "is not working on any ticket."
             )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        methods_tg_list: list[MethodTG] = []
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.INCONSISTENT_STATE_DETECTED} "
+                "(missing current_ticket_id). "
+                f"{String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
+        current_ticket = await self.session.scalar(
+            select(TicketDB)
+            .where(TicketDB.id == current_ticket_id)
+            .options(selectinload(TicketDB.devices).selectinload(DeviceDB.type))
+        )
+        if not current_ticket:
+            logger.warning(
+                f"{self.log_prefix}Current ticket "
+                f" was not found in the database under "
+                f"id={current_ticket_id}."
+            )
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.TICKET_WAS_NOT_FOUND}. {String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
+        device_index = self.state.ticket_device_index
+        devices_list = current_ticket.devices
+        total_devices = len(devices_list)
+        if device_index is None or not (0 <= device_index < total_devices):
+            logger.error(
+                f"{self.log_prefix}Error: "
+                f"device_index={device_index} and "
+                f"total_devices={total_devices}. "
+                "Expected: "
+                "0 <= device_index < total_devices."
+            )
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.INCONSISTENT_STATE_DETECTED} "
+                "(incorrect device_index). "
+                f"{String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
         if isinstance(self.update_tg, CallbackQueryUpdateTG):
             expected_callback_data = [
                 CallbackData.INSTALL_DEVICE_BTN,
@@ -2031,26 +2427,12 @@ class Conversation:
                         logger.error(error_msg)
                         raise ValueError(error_msg)
                     methods_tg_list.append(self._build_edit_to_callback_button_text())
-                    devices_list = current_ticket.devices
-                    device_index = self.state.device_index
-                    total_devices = len(devices_list)
-                    if 0 <= device_index < total_devices:
-                        logger.info(
-                            f"{self.log_prefix}Working with "
-                            f"{DeviceDB.__name__} "
-                            f"at devices[{device_index}]."
-                        )
-                        device = devices_list[device_index]
-                    else:
-                        error_msg = (
-                            f"{self.log_prefix}Error: "
-                            f"device_index={device_index} and "
-                            f"total_devices={total_devices}. "
-                            "Expected: "
-                            "0 <= device_index < total_devices."
-                        )
-                        logger.error(error_msg)
-                        raise IndexError(error_msg)
+                    logger.info(
+                        f"{self.log_prefix}Working with "
+                        f"{DeviceDB.__name__} "
+                        f"at devices[{device_index}]."
+                    )
+                    device = devices_list[device_index]
                     if device.removal != removal:
                         logger.info(
                             f"{self.log_prefix}{DeviceDB.__name__} "
@@ -2073,7 +2455,8 @@ class Conversation:
                             raise ValueError(error_msg)
                         self.next_state = StateJS(
                             action=Action.PICK_DEVICE_ACTION,
-                            device_index=device_index,
+                            ticket_id=current_ticket_id,
+                            ticket_device_index=device_index,
                         )
                         methods_tg_list.append(
                             self._build_pick_device_action_message(
@@ -2091,7 +2474,8 @@ class Conversation:
                         )
                         self.next_state = StateJS(
                             action=Action.PICK_DEVICE_ACTION,
-                            device_index=device_index,
+                            ticket_id=current_ticket_id,
+                            ticket_device_index=device_index,
                         )
                         methods_tg_list.append(
                             self._build_pick_device_action_message(
@@ -2130,18 +2514,66 @@ class Conversation:
             )
         return methods_tg_list
 
-    def _handle_action_edit_device_serial_number(self) -> list[MethodTG]:
+    async def _handle_action_edit_device_serial_number(self) -> list[MethodTG]:
         assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting new device serial number.")
-        current_ticket = self.user_db.current_ticket
-        if current_ticket is None:
-            error_msg = (
+        methods_tg_list: list[MethodTG] = []
+        current_ticket_id = self.state.ticket_id
+        if not current_ticket_id:  # Both None and 0 are covered this way.
+            logger.error(
                 f"{self.log_prefix}{self.user_db.full_name} "
                 "is not working on any ticket."
             )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        methods_tg_list: list[MethodTG] = []
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.INCONSISTENT_STATE_DETECTED} "
+                "(missing current_ticket_id). "
+                f"{String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
+        current_ticket = await self.session.scalar(
+            select(TicketDB)
+            .where(TicketDB.id == current_ticket_id)
+            .options(selectinload(TicketDB.devices))
+        )
+        if not current_ticket:
+            logger.warning(
+                f"{self.log_prefix}Current ticket "
+                f" was not found in the database under "
+                f"id={current_ticket_id}."
+            )
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.TICKET_WAS_NOT_FOUND}. {String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
+        device_index = self.state.ticket_device_index
+        devices_list = current_ticket.devices
+        total_devices = len(devices_list)
+        if device_index is None or not (0 <= device_index < total_devices):
+            logger.error(
+                f"{self.log_prefix}Error: "
+                f"device_index={device_index} and "
+                f"total_devices={total_devices}. "
+                "Expected: "
+                "0 <= device_index < total_devices."
+            )
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.INCONSISTENT_STATE_DETECTED} "
+                "(incorrect device_index). "
+                f"{String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
         if isinstance(self.update_tg, MessageUpdateTG):
             if self.update_tg.message.text is not None:
                 message_text = self.update_tg.message.text.upper()
@@ -2154,26 +2586,12 @@ class Conversation:
                         "serial number (forced uppercase): "
                         f"'{message_text}'."
                     )
-                    devices_list = current_ticket.devices
-                    device_index = self.state.device_index
-                    total_devices = len(devices_list)
-                    if 0 <= device_index < total_devices:
-                        logger.info(
-                            f"{self.log_prefix}Working with "
-                            f"{DeviceDB.__name__} "
-                            f"at devices[{device_index}]."
-                        )
-                        device = devices_list[device_index]
-                    else:
-                        error_msg = (
-                            f"{self.log_prefix}Error: "
-                            f"device_index={device_index} and "
-                            f"total_devices={total_devices}. "
-                            "Expected: "
-                            "0 <= device_index < total_devices."
-                        )
-                        logger.error(error_msg)
-                        raise IndexError(error_msg)
+                    logger.info(
+                        f"{self.log_prefix}Working with "
+                        f"{DeviceDB.__name__} "
+                        f"at devices[{device_index}]."
+                    )
+                    device = devices_list[device_index]
                     if device.serial_number != message_text:
                         logger.info(
                             f"{self.log_prefix}Device new "
@@ -2185,7 +2603,8 @@ class Conversation:
                         device.serial_number = message_text
                         self.next_state = StateJS(
                             action=Action.PICK_DEVICE_ACTION,
-                            device_index=device_index,
+                            ticket_id=current_ticket_id,
+                            ticket_device_index=device_index,
                         )
                         methods_tg_list.append(
                             self._build_pick_device_action_message(
@@ -2203,7 +2622,8 @@ class Conversation:
                         )
                         self.next_state = StateJS(
                             action=Action.PICK_DEVICE_ACTION,
-                            device_index=device_index,
+                            ticket_id=current_ticket_id,
+                            ticket_device_index=device_index,
                         )
                         methods_tg_list.append(
                             self._build_pick_device_action_message(
@@ -2249,15 +2669,42 @@ class Conversation:
     async def _handle_pick_confirm_close_ticket(self) -> list[MethodTG]:
         assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting close ticket confirmation.")
-        current_ticket = self.user_db.current_ticket
-        if current_ticket is None:
-            error_msg = (
+        methods_tg_list: list[MethodTG] = []
+        current_ticket_id = self.state.ticket_id
+        if not current_ticket_id:  # Both None and 0 are covered this way.
+            logger.error(
                 f"{self.log_prefix}{self.user_db.full_name} "
                 "is not working on any ticket."
             )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        methods_tg_list: list[MethodTG] = []
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.INCONSISTENT_STATE_DETECTED} "
+                "(missing current_ticket_id). "
+                f"{String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
+        current_ticket = await self.session.scalar(
+            select(TicketDB)
+            .where(TicketDB.id == current_ticket_id)
+            .options(selectinload(TicketDB.devices))
+        )
+        if not current_ticket:
+            logger.warning(
+                f"{self.log_prefix}Current ticket "
+                f" was not found in the database under "
+                f"id={current_ticket_id}."
+            )
+            logger.info(f"{self.log_prefix}Going back to the main menu.")
+            self.next_state = None
+            self.user_db.state_json = None
+            method_tg = self._build_stateless_mainmenu_message(
+                f"{String.TICKET_WAS_NOT_FOUND}. {String.PICK_A_FUNCTION}."
+            )
+            methods_tg_list.append(method_tg)
+            return methods_tg_list
         if isinstance(self.update_tg, CallbackQueryUpdateTG):
             expected_callback_data = [
                 CallbackData.CONFIRM_CLOSE_TICKET_BTN,
@@ -2302,7 +2749,10 @@ class Conversation:
                                 )
                             )
                         else:
-                            self.next_state = StateJS(action=Action.PICK_TICKET_ACTION)
+                            self.next_state = StateJS(
+                                action=Action.PICK_TICKET_ACTION,
+                                ticket_id=current_ticket_id,
+                            )
                             methods_tg_list.append(
                                 self._build_pick_ticket_action_message(
                                     f"{String.TICKET_CLOSE_FAILED}. "
@@ -2313,7 +2763,10 @@ class Conversation:
                         methods_tg_list.append(
                             self._build_edit_to_callback_button_text()
                         )
-                        self.next_state = StateJS(action=Action.PICK_TICKET_ACTION)
+                        self.next_state = StateJS(
+                            action=Action.PICK_TICKET_ACTION,
+                            ticket_id=current_ticket_id,
+                        )
                         methods_tg_list.append(
                             self._build_pick_ticket_action_message(
                                 f"{String.PICK_TICKET_ACTION}."
@@ -2433,7 +2886,7 @@ class Conversation:
             )
         return methods_tg_list
 
-    async def _handle_action_tickets_history(self) -> list[MethodTG]:
+    async def _handle_action_existing_tickets(self) -> list[MethodTG]:
         assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting tickets history choice to be made.")
         methods_tg_list: list[MethodTG] = []
@@ -3530,8 +3983,8 @@ class Conversation:
             )
         return methods_tg_list
 
-    async def _build_pick_tickets_history(
-        self, text: str = f"{String.PICK_TICKETS_HISTORY_ACTION}."
+    async def _build_pick_existing_tickets(
+        self, text: str = f"{String.PICK_EXISTING_TICKETS_ACTION}."
     ) -> SendMessageTG:
         if self.next_state is None and self.state is None:
             error_msg = (
@@ -3836,7 +4289,7 @@ class Conversation:
                 [
                     InlineKeyboardButtonTG(
                         text=String.TICKETS_HISTORY_BTN,
-                        callback_data=CallbackData.TICKETS_HISTORY_BTN,
+                        callback_data=CallbackData.EXISTING_TICKETS_BTN,
                     ),
                     InlineKeyboardButtonTG(
                         text=String.WRITEOFF_DEVICES_BTN,
@@ -4190,10 +4643,13 @@ class Conversation:
             raise ValueError(error_msg)
         devices_list = current_ticket.devices
         total_devices = len(devices_list)
-        if self.next_state is not None and total_devices > self.next_state.device_index:
-            device_index = self.next_state.device_index
-        elif self.state is not None and total_devices > self.state.device_index:
-            device_index = self.state.device_index
+        if (
+            self.next_state is not None
+            and total_devices > self.next_state.ticket_device_index
+        ):
+            device_index = self.next_state.ticket_device_index
+        elif self.state is not None and total_devices > self.state.ticket_device_index:
+            device_index = self.state.ticket_device_index
         else:
             error_msg = (
                 f"{self.log_prefix}The device menu only works "
@@ -4454,8 +4910,8 @@ class Conversation:
                 device.is_draft = False
         ticket_id = current_ticket.id
         ticket_number = current_ticket.number
-        if current_ticket.is_draft is True:
-            current_ticket.is_draft = False
+        if current_ticket.is_closed is True:
+            current_ticket.is_closed = False
         self.user_db.current_ticket = None
         logger.info(
             f"{self.log_prefix}Successfully closed and saved "
@@ -4491,7 +4947,7 @@ class Conversation:
                     f"id={current_ticket_id}."
                 )
                 await self.session.delete(device)
-        if current_ticket.is_draft:
+        if current_ticket.is_closed:
             logger.info(
                 f"{self.log_prefix}Marking draft ticket "
                 f"number={current_ticket_number} "

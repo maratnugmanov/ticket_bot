@@ -99,10 +99,10 @@ class TicketDB(BaseDB, TimestampMixinDB):
     user: Mapped[UserDB] = relationship(back_populates="tickets", foreign_keys=[user_id], init=False)
     contract_id: Mapped[int | None] = mapped_column(ForeignKey("contracts.id", ondelete="CASCADE"), default=None, index=True)
     contract: Mapped[ContractDB | None] = relationship(back_populates="tickets", init=False)
-    locked_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), default=None, index=True)
-    locked_by_user: Mapped[UserDB | None] = relationship(back_populates="current_ticket", foreign_keys=[locked_by_user_id], init=False)
+    # locked_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), default=None, index=True)
+    # locked_by_user: Mapped[UserDB | None] = relationship(back_populates="current_ticket", foreign_keys=[locked_by_user_id], init=False)
     devices: Mapped[list[DeviceDB]] = relationship(default_factory=list, back_populates="ticket", cascade="all, delete-orphan", passive_deletes=True, init=False)
-    is_draft: Mapped[bool] = mapped_column(default=True, index=True)
+    is_closed: Mapped[bool] = mapped_column(default=True, index=True)
 
 
 class UserDB(BaseDB, TimestampMixinDB):
@@ -111,7 +111,7 @@ class UserDB(BaseDB, TimestampMixinDB):
     telegram_uid: Mapped[int] = mapped_column(unique=True, index=True)
     first_name: Mapped[str] = mapped_column()
     last_name: Mapped[str | None] = mapped_column()
-    current_ticket: Mapped[TicketDB | None] = relationship(back_populates="locked_by_user", foreign_keys=TicketDB.locked_by_user_id, uselist=False, init=False)
+    # current_ticket: Mapped[TicketDB | None] = relationship(back_populates="locked_by_user", foreign_keys=TicketDB.locked_by_user_id, uselist=False, init=False)
     state_json: Mapped[str | None] = mapped_column(default=None)
     timezone: Mapped[str] = mapped_column(default=settings.user_default_timezone)
     is_hiring: Mapped[bool] = mapped_column(default=False, index=True)
@@ -155,7 +155,7 @@ class WriteoffDeviceDB(BaseDB, TimestampMixinDB):
     type_id: Mapped[int] = mapped_column(ForeignKey("device_types.id", ondelete="RESTRICT"), index=True)
     type: Mapped[DeviceTypeDB] = relationship(back_populates="writeoff_devices", init=False)
     serial_number: Mapped[str | None] = mapped_column(default=None, index=True)
-    is_draft: Mapped[bool] = mapped_column(default=True, index=True)
+    # is_draft: Mapped[bool] = mapped_column(default=True, index=True)
 
     # __table_args__ = (UniqueConstraint("device_id", "user_id", name="unique_device_user_pair"),)
 
@@ -169,7 +169,7 @@ class DeviceDB(BaseDB, TimestampMixinDB):
     type: Mapped[DeviceTypeDB] = relationship(back_populates="devices", init=False)
     serial_number: Mapped[str | None] = mapped_column(default=None, index=True)
     removal: Mapped[bool | None] = mapped_column(default=None, index=True)
-    is_draft: Mapped[bool] = mapped_column(default=True, index=True)
+    # is_draft: Mapped[bool] = mapped_column(default=True, index=True)
 
 
 class DeviceTypeDB(BaseDB, TimestampMixinDB):

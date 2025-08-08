@@ -43,8 +43,8 @@ class StateJS(BaseModel):
     action: Action
     # script: Script
     # devices_list: list[DeviceJS] = []
-    device_index: int = 0
-    ticket_id: int = 0
+    ticket_id: int | None = None
+    ticket_device_index: int | None = None
     tickets_page: int = 0
     tickets_dict: dict[int, int] = {}
     writeoff_device_id: int = 0
