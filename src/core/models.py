@@ -45,11 +45,11 @@ class StateJS(BaseModel):
     # devices_list: list[DeviceJS] = []
     ticket_id: int | None = None
     ticket_device_index: int | None = None
-    tickets_page: int = 0
-    tickets_dict: dict[int, int] = {}
-    writeoff_device_id: int = 0
-    writeoff_devices_page: int = 0
-    writeoff_devices_dict: dict[int, int] = {}
+    tickets_page: int | None = None
+    tickets_dict: dict[int, int] | None = None
+    writeoff_device_id: int | None = None
+    writeoff_devices_page: int | None = None
+    writeoff_devices_dict: dict[int, int] | None = None
     # ticket_number: int | None = None
     # contract_number: int | None = None
     # device_type: DeviceTypeName | None = None

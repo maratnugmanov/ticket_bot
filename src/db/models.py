@@ -102,7 +102,7 @@ class TicketDB(BaseDB, TimestampMixinDB):
     # locked_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), default=None, index=True)
     # locked_by_user: Mapped[UserDB | None] = relationship(back_populates="current_ticket", foreign_keys=[locked_by_user_id], init=False)
     devices: Mapped[list[DeviceDB]] = relationship(default_factory=list, back_populates="ticket", cascade="all, delete-orphan", passive_deletes=True, init=False)
-    is_closed: Mapped[bool] = mapped_column(default=True, index=True)
+    is_closed: Mapped[bool] = mapped_column(default=False, index=True)
 
 
 class UserDB(BaseDB, TimestampMixinDB):
