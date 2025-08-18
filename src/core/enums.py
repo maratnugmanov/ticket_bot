@@ -29,31 +29,39 @@ class CallbackData(enum.StrEnum):
     POWER_UNIT = enum.auto()
     NETWORK_HUB = enum.auto()
 
-    INSTALL_DEVICE_BTN = enum.auto()
-    RETURN_DEVICE_BTN = enum.auto()
-    INSTALL_RETURN_BTN = enum.auto()
-    DELETE_DEVICE_BTN = enum.auto()
-    DELETE_WRITEOFF_DEVICE_BTN = enum.auto()
+    ADD_DEVICE = enum.auto()
+    INSTALL_DEVICE = enum.auto()
+    RETURN_DEVICE = enum.auto()
+    INSTALL_RETURN = enum.auto()
+    DELETE_DEVICE = enum.auto()
+    DELETE_WRITEOFF_DEVICE = enum.auto()
 
     # ENABLE_HIRING = enum.auto()
     # DISABLE_HIRING = enum.auto()
-    ADD_TICKET_BTN = enum.auto()
+    ADD_TICKET = enum.auto()
+    EDIT_TICKET = enum.auto()
     EDIT_TICKET_NUMBER = enum.auto()
     ENTER_CONTRACT_NUMBER = enum.auto()
     EDIT_CONTRACT_NUMBER = enum.auto()
-
+    CLOSE_TICKET = enum.auto()
+    REOPEN_TICKET = enum.auto()
+    DELETE_TICKET = enum.auto()
+    CONFIRM_DELETE_TICKET = enum.auto()
+    CHANGED_MY_MIND = enum.auto()
+    RETURN_TO_TICKETS = enum.auto()
+    RETURN_TO_MAIN_MENU = enum.auto()
     EDIT_DEVICE_SERIAL_NUMBER = enum.auto()
     EDIT_DEVICE_TYPE = enum.auto()
-    EDIT_TICKET = enum.auto()
 
+    ADD_WRITEOFF_DEVICE = enum.auto()
     EDIT_WRITEOFF_DEVICE_TYPE = enum.auto()
     EDIT_WRITEOFF_DEVICE_SERIAL_NUMBER = enum.auto()
 
-    TICKETS_BTN = enum.auto()
-    WRITEOFF_DEVICES_BTN = enum.auto()
-    FORM_REPORT_BTN = enum.auto()
-    DISABLE_HIRING_BTN = enum.auto()
-    ENABLE_HIRING_BTN = enum.auto()
+    TICKETS = enum.auto()
+    WRITEOFF_DEVICES = enum.auto()
+    FORM_REPORT = enum.auto()
+    DISABLE_HIRING = enum.auto()
+    ENABLE_HIRING = enum.auto()
 
     DEVICE_0 = enum.auto()
     DEVICE_1 = enum.auto()
@@ -89,22 +97,58 @@ class CallbackData(enum.StrEnum):
     TICKET_14 = enum.auto()
     TICKET_15 = enum.auto()
 
-    ADD_DEVICE_BTN = enum.auto()
-    CLOSE_TICKET_BTN = enum.auto()
-    REOPEN_TICKET_BTN = enum.auto()
-    QUIT_WITHOUT_SAVING_BTN = enum.auto()
-    CONFIRM_QUIT_BTN = enum.auto()
-    CHANGED_MY_MIND_BTN = enum.auto()
-    CONFIRM_CLOSE_TICKET_BTN = enum.auto()
-    RETURN_TO_TICKETS = enum.auto()
-    RETURN_TO_MAIN_MENU = enum.auto()
+    # QUIT_WITHOUT_SAVING = enum.auto()
+    # CONFIRM_QUIT = enum.auto()
+    # CHANGED_MY_MIND_BTN = enum.auto()
+    # CONFIRM_CLOSE_TICKET_BTN = enum.auto()
 
-    ADD_WRITEOFF_DEVICE_BTN = enum.auto()
     PREV_ONES = enum.auto()
     NEXT_ONES = enum.auto()
 
 
-# icons: ✏️
+class Action(enum.StrEnum):
+    @staticmethod
+    def _generate_next_value_(name, start, count, last_values):
+        return "ac_" + name.lower()
+
+    TICKETS = enum.auto()
+    ENTER_TICKET_NUMBER = enum.auto()
+    EDIT_TICKET_NUMBER = enum.auto()
+    ENTER_CONTRACT_NUMBER = enum.auto()
+    EDIT_CONTRACT_NUMBER = enum.auto()
+    PICK_DEVICE_TYPE = enum.auto()
+    EDIT_DEVICE_TYPE = enum.auto()
+    PICK_INSTALL_OR_RETURN = enum.auto()
+    EDIT_INSTALL_OR_RETURN = enum.auto()
+    ENTER_DEVICE_SERIAL_NUMBER = enum.auto()
+    EDIT_DEVICE_SERIAL_NUMBER = enum.auto()
+    PICK_TICKET_ACTION = enum.auto()
+    CONFIRM_DELETE_TICKET = enum.auto()
+    PICK_DEVICE_ACTION = enum.auto()
+    WRITEOFF_DEVICES = enum.auto()
+    PICK_WRITEOFF_DEVICE_TYPE = enum.auto()
+    EDIT_WRITEOFF_DEVICE_TYPE = enum.auto()
+    ENTER_WRITEOFF_DEVICE_SERIAL_NUMBER = enum.auto()
+    EDIT_WRITEOFF_DEVICE_SERIAL_NUMBER = enum.auto()
+    PICK_WRITEOFF_DEVICE_ACTION = enum.auto()
+    # CLOSE_TICKET = enum.auto()
+    # CONFIRM_QUIT_WITHOUT_SAVING = enum.auto()
+    # ENABLE_HIRING = enum.auto()
+    # DISABLE_HIRING = enum.auto()
+    # INTRODUCTION_MAINMENU_BUTTONS = enum.auto()
+    # TICKETS_HISTORY_MENU_BUTTONS = enum.auto()
+    # WRITEOFF_DEVICES_LIST = enum.auto()
+    # FORM_REPORT = enum.auto()
+    # INITIAL_TICKET_NUMBER_INPUT = enum.auto()
+    # INITIAL_DEVICE_TYPE_BUTTONS = enum.auto()
+    # INITIAL_SERIAL_NUMBER_INPUT = enum.auto()
+    # INITIAL_INSTALL_OR_RETURN_BUTTONS = enum.auto()
+    # DEVICE_REMOVE_DEVICE_BUTTONS = enum.auto()
+    # NEXT_DEVICE_TYPE_BUTTONS = enum.auto()
+    # NEXT_SERIAL_NUMBER_INPUT = enum.auto()
+    # NEXT_INSTALL_OR_RETURN_BUTTONS = enum.auto()
+    # CLOSE_TICKET_CONFIRM_BUTTONS = enum.auto()
+    # QUIT_WITHOUT_SAVING_BUTTONS = enum.auto()
 
 
 class String(enum.StrEnum):
@@ -133,45 +177,88 @@ class String(enum.StrEnum):
     NOV = "ноя"
     DEC = "дек"
 
-    INCONSISTENT_STATE_DETECTED = "Обнаружена несогласованность диалога"
-    CONFIGURATION_ERROR_DETECTED = "Обнаружена ошибка конфигурации"
-    CONTACT_THE_ADMINISTRATOR = "Пожалуйста обратитесь к администратору"
-
-    INSTALL_DEVICE_BTN = "✅ Установка"
-    RETURN_DEVICE_BTN = "↪️ Возврат"
-    INSTALL_RETURN_BTN = "Установка/Возврат"
-    EDIT = "[ Ред ]"
-    ERROR = "[ Ошибка ]"
-    DISPOSABLE = "[ Расходник ]"
-
-    CLOSE_TICKET_BTN = "⚙ Закрыть заявку"
+    # Main Menu Buttons
     ADD_TICKET_BTN = "➕ Добавить заявку"
     TICKETS_BTN = "🗓 Заявки"
     WRITEOFF_DEVICES_BTN = "💩 Брак"
     FORM_REPORT_BTN = "🖨 Сформировать отчет"
-    ENABLE_HIRING_BTN = "🙋‍♀️ Открыть найм"
     DISABLE_HIRING_BTN = "🙅‍♀️ Закрыть найм"
-
-    ENTER_TICKET_NUMBER = "Введите номер заявки"  # New ticket creation entry point
-    INCORRECT_TICKET_NUMBER = "Номер заявки должен состоять из цифр и не может быть равен нулю, попробуйте снова"
-    GOT_DATA_NOT_TICKET_NUMBER = "Вы нажали кнопку, а должны были ввести номер заявки"
-    TICKET_WAS_NOT_FOUND = (
-        "Текущая заявка не найдена в базе данных, возможно она была удалена"
-    )
+    ENABLE_HIRING_BTN = "🙋‍♀️ Открыть найм"
+    # Main Menu Texts
+    PICK_A_FUNCTION = "Выберите функцию"
+    NO_FUNCTIONS_ARE_AVAILABLE = "У вас нет доступа к каким-либо функциям"
+    # Error Related
+    CONFIGURATION_ERROR_DETECTED = "Обнаружена ошибка конфигурации"
+    INCONSISTENT_STATE_DETECTED = "Обнаружена несогласованность диалога"
+    CONTACT_THE_ADMINISTRATOR = "Пожалуйста обратитесь к администратору"
+    # Common Phrases
+    GOT_UNEXPECTED_DATA = "Ваш выбор не распознан"
+    FROM_OPTIONS_BELOW = "из предложенных ниже вариантов"
+    # Menus Strings
+    PICK_TICKET_ACTION = "Возможные действия: изменение номера текущей заявки/договора, изменение/добавление/удаление устройств, закрытие заявки и выход без сохранения"
+    PICK_DEVICE_ACTION = "Возможные действия: изменение серийного номера и типа устройства, смена производимого над ним действия, возврат в предыдущее меню или удаление устройства из данной заявки"
+    PICK_TICKETS_ACTION = "Возможные действия: добавление новых заявок, изменение/удаление старых заявок или возврат в предыдущее меню"
+    PICK_WRITEOFF_DEVICE_ACTION = "Возможные действия: изменение серийного номера и типа бракованного устройства, возврат в предыдущее меню или удаление устройства из брака"
+    PICK_WRITEOFF_DEVICES_ACTION = "Возможные действия: добавление/изменение/удаление брака или возврат в предыдущее меню"
+    # Ticket Strings
+    ENTER_TICKET_NUMBER = "Введите номер заявки"  # Ticket creation entry point
     EDIT_TICKET_NUMBER = "✏️ Изменить номер заявки"
     ENTER_NEW_TICKET_NUMBER = "Введите новый номер заявки"
     TICKET_NUMBER_WAS_EDITED = "Номер заявки был скорректирован"
     TICKET_NUMBER_REMAINS_THE_SAME = "Номер заявки остался прежним"
-
+    INCORRECT_TICKET_NUMBER = "Номер заявки должен состоять из цифр и не может быть равен нулю, попробуйте снова"
     ENTER_CONTRACT_NUMBER = "Введите номер договора"
-    INCORRECT_CONTRACT_NUMBER = "Номер договора должен состоять из цифр и не может быть равен нулю, попробуйте снова"
-    GOT_DATA_NOT_CONTRACT_NUMBER = (
-        "Вы нажали кнопку, а должны были ввести номер договора"
-    )
     EDIT_CONTRACT_NUMBER = "✏️ Изменить номер договора"
     ENTER_NEW_CONTRACT_NUMBER = "Введите новый номер договора"
     CONTRACT_NUMBER_WAS_EDITED = "Номер договора был скорректирован"
     CONTRACT_NUMBER_REMAINS_THE_SAME = "Номер договора остался прежним"
+    INCORRECT_CONTRACT_NUMBER = "Номер договора должен состоять из цифр и не может быть равен нулю, попробуйте снова"
+    TICKET_REOPENED = "Заявка возвращена в работу"
+    TICKET_CLOSED = "Заявка закрыта"
+    CLOSE_TICKET_NUMBER = "Удалить заявку №"
+    CONFIRM_TICKET_DELETION = "Подтвердите удаление текущей заявки"
+    DELETE_TICKET_ACTION_WAS_NOT_PICKED = (
+        "Вы не выбрали удаление заявки или возврат к работе с ней"
+    )
+    TICKET_DELETED = "Заявка удалена"
+    TICKET_DELETION_CANCELLED = "Удаление заявки отменено"
+    # Ticket Error Strings
+    TICKET_WAS_NOT_FOUND = (
+        "Текущая заявка не найдена в базе данных, возможно она была удалена"
+    )
+    GOT_DATA_NOT_TICKET_NUMBER = "Вы нажали кнопку, а должны были ввести номер заявки"
+    GOT_DATA_NOT_CONTRACT_NUMBER = (
+        "Вы нажали кнопку, а должны были ввести номер договора"
+    )
+    # Common Icons
+    ATTENTION_ICON = "❗"
+    TRASHCAN_ICON = "🗑"
+    # Device Buttons
+    INSTALL_DEVICE_ICON = "✅"
+    RETURN_DEVICE_ICON = "↪️"
+    UNSET_DEVICE_ICON = "❓"
+    INSTALL_DEVICE_BTN = "✅ Установка"
+    RETURN_DEVICE_BTN = "↪️ Возврат"
+    INSTALL_RETURN_BTN = "Установка/Возврат"
+    # Common Tags
+    EDIT = "[ Ред ]"
+    ERROR = "[ Ошибка ]"
+    DISPOSABLE = "[ Расходник ]"
+    # Ticket Buttons
+    CLOSED_TICKET_ICON = "✔"  # Former icon ⚙
+    OPEN_TICKET_ICON = "🧰"
+    TICKET_NUMBER_BTN = "Заявка №"
+    CONTRACT_NUMBER_BTN = "Договор №"
+    ADD_DEVICE_BTN = "➕ Добавить устройство"
+    CLOSE_TICKET_BTN = "Закрыть заявку"
+    REOPEN_TICKET_BTN = "Вернуть заявку в работу"
+    DELETE_TICKET_BTN = "Удалить заявку (необратимо)"
+    RETURN_TO_TICKETS = "<< К заявкам"
+    RETURN_TO_MAIN_MENU = "В главное меню"
+    # Common Buttons
+    PREV_ONES = "< Предыдущие"
+    NEXT_ONES = "Следующие >"
+    DONE_BTN = "Готово"
 
     EDIT_DEVICE = "✏️ Изменить устройство"
     EDIT_TICKET = "✏️ Изменить имеющуюся заявку"
@@ -192,7 +279,7 @@ class String(enum.StrEnum):
     WRITEOFF_DEVICE_IS_INCORRECT = "Бракованное устройство содержит ошибку"
     EDIT_DEVICE_TYPE = "✏️ Изменить тип устройства"
     PICK_NEW_DEVICE_TYPE = "Выберите новый тип устройства"
-    FROM_OPTIONS_BELOW = "из предложенных ниже вариантов"
+
     DEVICE_TYPE_WAS_CHANGED_FOR = "Тип устройства изменен на"
     DEVICE_TYPE_WAS_NOT_PICKED = "Вы не выбрали тип устройства"
     DEVICE_TYPE_IS_DISABLED = "Выбранный тип устройства в данный момент не используется"
@@ -223,34 +310,20 @@ class String(enum.StrEnum):
     )
     TICKET_ACTION_WAS_NOT_PICKED = "Вы не выбрали действие с текущей заявкой"
     ACTION_WAS_NOT_PICKED = "Вы не выбрали действие"
-    GOT_UNEXPECTED_DATA = "Ваш выбор не распознан"
     MESSAGE_HAS_EXPIRED = "Сообщение устарело"
     DEVICE_ACTION_WAS_CHANGED_FOR = "Тип действия с устройством изменен на"
-    PICK_TICKET_ACTION = "Возможные действия: изменение номера текущей заявки/договора, изменение/добавление/удаление устройств, закрытие заявки и выход без сохранения"
-    PICK_DEVICE_ACTION = "Возможные действия: изменение серийного номера и типа устройства, смена производимого над ним действия, возврат в предыдущее меню или удаление устройства из данной заявки"
-    PICK_TICKETS_ACTION = "Возможные действия: добавление новых заявок, изменение/удаление старых заявок или возврат в предыдущее меню"
-    PICK_WRITEOFF_DEVICE_ACTION = "Возможные действия: изменение серийного номера и типа бракованного устройства, возврат в предыдущее меню или удаление устройства из брака"
-    PICK_WRITEOFF_DEVICES_ACTION = "Возможные действия: добавление/изменение/удаление брака или возврат в предыдущее меню"
     DELETE_DEVICE_FROM_WRITEOFF = "🗑 Удалить устройство из брака"
     DEVICE_WAS_DELETED_FROM_WRITEOFF = "🗑 Устройство удалено из брака"
-    TICKET_NUMBER_BTN = "Заявка №"
     TICKET_NUMBER_TIP = "[ Изменить номер заявки ]"
-    CONTRACT_NUMBER_BTN = "Договор №"
     CONTRACT_NUMBER_TIP = "[ Изменить номер договора ]"
-    ADD_DEVICE_BTN = "➕ Добавить устройство"
-    REOPEN_TICKET_BTN = "🧰 Вернуть заявку в работу"
-    TICKET_REOPENED = "🧰 Заявка возвращена в работу"
-    TICKET_CLOSED = "⚙ Заявка закрыта"
-    RETURN_TO_TICKETS = "<< К заявкам"
-    RETURN_TO_MAIN_MENU_BTN = "В главное меню"
     QUIT_WITHOUT_SAVING_BTN = "🗑 Выйти без сохранения"
     ARE_YOU_SURE_YOU_WANT_TO_QUIT_WITHOUT_SAVING = "‼ВНИМАНИЕ‼: Все несохраненные данные будут потеряны, вы уверены что хотите выйти без сохранения"
     QUIT_WITHOUT_SAVING_ACTION_WAS_NOT_PICKED = "Вы не выбрали выйти или остаться"
-    CONFIRM_QUIT_BTN = "❌ Да, выйти"
-    CHANGED_MY_MIND_BTN = "Я передумал"
+    CONFIRM_DELETE_TICKET = "❌ Да, удалить заявку"
+    CHANGED_MY_MIND = "Я передумал"
     YOU_QUIT_WITHOUT_SAVING = "Вы вышли без сохранения текущей заявки"
     YOU_LEFT_TICKET = "Вы закончили работу с заявкой"
-    YOU_LEFT_TICKETS = "Вы закончили работу с историей заявок"
+    YOU_LEFT_TICKETS = "Вы закончили работу с заявками"
     YOU_LEFT_WRITEOFF_DEVICES = "Вы закончили работу с бракованными устройствами"
     YOU_LEFT_WRITEOFF_DEVICE = "Вы закончили работу с бракованным устройством"
     CONFIRM_YOU_WANT_TO_CLOSE_TICKET = "Подтвердите что вы произвели все необходимые действия по заявке и уверены что готовы ее закрыть"
@@ -268,8 +341,6 @@ class String(enum.StrEnum):
     X_DEVICES = "устройствами"
     DELETE_DEVICE_FROM_TICKET = "🗑 Удалить устройство из заявки"
     DEVICE_WAS_DELETED_FROM_TICKET = "🗑 Устройство удалено из заявки"
-    PICK_A_FUNCTION = "Выберите функцию"
-    NO_FUNCTIONS_ARE_AVAILABLE = "У вас нет доступа к каким-либо функциям"
     HIRING_ENABLED_TIP = (
         "Соискателям необходимо отправить любое сообщение со своего Телеграм аккаунта."
     )
@@ -281,54 +352,6 @@ class String(enum.StrEnum):
     # YOU_HAVE_PICKED = "Вы выбрали"
 
     ADD_WRITEOFF_DEVICE_BTN = "➕ Добавить брак"
-    PREV_ONES = "< Предыдущие"
-    NEXT_ONES = "Следующие >"
-    DONE_BTN = "Готово"
-
-
-class Action(enum.StrEnum):
-    @staticmethod
-    def _generate_next_value_(name, start, count, last_values):
-        return "ac_" + name.lower()
-
-    ENTER_TICKET_NUMBER = enum.auto()
-    EDIT_TICKET_NUMBER = enum.auto()
-    ENTER_CONTRACT_NUMBER = enum.auto()
-    EDIT_CONTRACT_NUMBER = enum.auto()
-    PICK_DEVICE_TYPE = enum.auto()
-    EDIT_DEVICE_TYPE = enum.auto()
-    ENTER_DEVICE_SERIAL_NUMBER = enum.auto()
-    EDIT_DEVICE_SERIAL_NUMBER = enum.auto()
-    PICK_INSTALL_OR_RETURN = enum.auto()
-    EDIT_INSTALL_OR_RETURN = enum.auto()
-    PICK_TICKET_ACTION = enum.auto()
-    PICK_DEVICE_ACTION = enum.auto()
-    # CLOSE_TICKET = enum.auto()
-    # CONFIRM_QUIT_WITHOUT_SAVING = enum.auto()
-    TICKETS = enum.auto()
-    WRITEOFF_DEVICES = enum.auto()
-    PICK_WRITEOFF_DEVICE_TYPE = enum.auto()
-    ENTER_WRITEOFF_DEVICE_SERIAL_NUMBER = enum.auto()
-    PICK_WRITEOFF_DEVICE_ACTION = enum.auto()
-    EDIT_WRITEOFF_DEVICE_TYPE = enum.auto()
-    EDIT_WRITEOFF_DEVICE_SERIAL_NUMBER = enum.auto()
-
-    # ENABLE_HIRING = enum.auto()
-    # DISABLE_HIRING = enum.auto()
-    # INTRODUCTION_MAINMENU_BUTTONS = enum.auto()
-    # TICKETS_HISTORY_MENU_BUTTONS = enum.auto()
-    # WRITEOFF_DEVICES_LIST = enum.auto()
-    # FORM_REPORT = enum.auto()
-    # INITIAL_TICKET_NUMBER_INPUT = enum.auto()
-    # INITIAL_DEVICE_TYPE_BUTTONS = enum.auto()
-    # INITIAL_SERIAL_NUMBER_INPUT = enum.auto()
-    # INITIAL_INSTALL_OR_RETURN_BUTTONS = enum.auto()
-    # DEVICE_REMOVE_DEVICE_BUTTONS = enum.auto()
-    # NEXT_DEVICE_TYPE_BUTTONS = enum.auto()
-    # NEXT_SERIAL_NUMBER_INPUT = enum.auto()
-    # NEXT_INSTALL_OR_RETURN_BUTTONS = enum.auto()
-    # CLOSE_TICKET_CONFIRM_BUTTONS = enum.auto()
-    # QUIT_WITHOUT_SAVING_BUTTONS = enum.auto()
 
 
 class Script(enum.StrEnum):

@@ -31,6 +31,7 @@ async def handle_telegram_webhook(
         )
     update_tg: UpdateTG | None = None
     validated_model_name: str | None = None
+    validation_errors = {}
     for model in VALIDATION_MODELS:
         try:
             update_tg = model.model_validate(request_data)
@@ -40,9 +41,7 @@ async def handle_telegram_webhook(
             )
             break
         except ValidationError as e:
-            logger.info(
-                f"Failed validation against pydantic model {model.__name__}: {e.errors()}."
-            )
+            validation_errors[model.__name__] = e.errors()
     if update_tg and validated_model_name:
         logger.info(
             f"{update_tg._log}Received and validated the update as {validated_model_name}."
@@ -79,5 +78,7 @@ async def handle_telegram_webhook(
         logger.error(
             "Failed to validate incoming webhook data against any known model."
         )
+        for model_name, errors in validation_errors.items():
+            logger.debug(f"Validation against {model_name} failed: {errors}")
         logger.debug(f"Raw JSON: {request_data}")
     return None

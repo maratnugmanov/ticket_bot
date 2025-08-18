@@ -117,8 +117,8 @@ class UserDB(BaseDB, TimestampMixinDB):
     is_hiring: Mapped[bool] = mapped_column(default=False, index=True)
     is_active: Mapped[bool] = mapped_column(default=True, index=True)
     roles: Mapped[list[RoleDB]] = relationship(default_factory=list, secondary="users_roles_link", back_populates="users", init=False)
-    tickets: Mapped[list[TicketDB]] = relationship(default_factory=list, back_populates="user", foreign_keys=TicketDB.user_id, passive_deletes=True, init=False)
-    writeoff_devices: Mapped[list[WriteoffDeviceDB]] = relationship(default_factory=list, back_populates="user", passive_deletes=True, init=False)
+    tickets: Mapped[list[TicketDB]] = relationship(default_factory=list, back_populates="user", foreign_keys=TicketDB.user_id, init=False)
+    writeoff_devices: Mapped[list[WriteoffDeviceDB]] = relationship(default_factory=list, back_populates="user", init=False)
 
     @property
     def full_name(self) -> str:
