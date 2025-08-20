@@ -36,8 +36,6 @@ class CallbackData(enum.StrEnum):
     DELETE_DEVICE = enum.auto()
     DELETE_WRITEOFF_DEVICE = enum.auto()
 
-    # ENABLE_HIRING = enum.auto()
-    # DISABLE_HIRING = enum.auto()
     ADD_TICKET = enum.auto()
     EDIT_TICKET = enum.auto()
     EDIT_TICKET_NUMBER = enum.auto()
@@ -202,20 +200,20 @@ class String(enum.StrEnum):
     PICK_WRITEOFF_DEVICES_ACTION = "Возможные действия: добавление/изменение/удаление брака или возврат в предыдущее меню"
     # Ticket Strings
     ENTER_TICKET_NUMBER = "Введите номер заявки"  # Ticket creation entry point
-    EDIT_TICKET_NUMBER = "✏️ Изменить номер заявки"
+    EDIT_TICKET_NUMBER = "Изменить номер заявки"
     ENTER_NEW_TICKET_NUMBER = "Введите новый номер заявки"
     TICKET_NUMBER_WAS_EDITED = "Номер заявки был скорректирован"
     TICKET_NUMBER_REMAINS_THE_SAME = "Номер заявки остался прежним"
     INCORRECT_TICKET_NUMBER = "Номер заявки должен состоять из цифр и не может быть равен нулю, попробуйте снова"
     ENTER_CONTRACT_NUMBER = "Введите номер договора"
-    EDIT_CONTRACT_NUMBER = "✏️ Изменить номер договора"
+    EDIT_CONTRACT_NUMBER = "Изменить номер договора"
     ENTER_NEW_CONTRACT_NUMBER = "Введите новый номер договора"
     CONTRACT_NUMBER_WAS_EDITED = "Номер договора был скорректирован"
     CONTRACT_NUMBER_REMAINS_THE_SAME = "Номер договора остался прежним"
     INCORRECT_CONTRACT_NUMBER = "Номер договора должен состоять из цифр и не может быть равен нулю, попробуйте снова"
     TICKET_REOPENED = "Заявка возвращена в работу"
     TICKET_CLOSED = "Заявка закрыта"
-    CLOSE_TICKET_NUMBER = "Удалить заявку №"
+    CLOSE_TICKET_NUMBER_X = "Удалить заявку №"
     CONFIRM_TICKET_DELETION = "Подтвердите удаление текущей заявки"
     DELETE_TICKET_ACTION_WAS_NOT_PICKED = (
         "Вы не выбрали удаление заявки или возврат к работе с ней"
@@ -231,14 +229,15 @@ class String(enum.StrEnum):
         "Вы нажали кнопку, а должны были ввести номер договора"
     )
     # Common Icons
+    EDIT_ICON = "✏️"
     ATTENTION_ICON = "❗"
     TRASHCAN_ICON = "🗑"
     # Device Buttons
     INSTALL_DEVICE_ICON = "✅"
     RETURN_DEVICE_ICON = "↪️"
     UNSET_DEVICE_ICON = "❓"
-    INSTALL_DEVICE_BTN = "✅ Установка"
-    RETURN_DEVICE_BTN = "↪️ Возврат"
+    INSTALL_DEVICE_BTN = "Установка"
+    RETURN_DEVICE_BTN = "Возврат"
     INSTALL_RETURN_BTN = "Установка/Возврат"
     # Common Tags
     EDIT = "[ Ред ]"
@@ -260,15 +259,15 @@ class String(enum.StrEnum):
     NEXT_ONES = "Следующие >"
     DONE_BTN = "Готово"
 
-    EDIT_DEVICE = "✏️ Изменить устройство"
-    EDIT_TICKET = "✏️ Изменить имеющуюся заявку"
-    EDIT_WRITEOFF_DEVICE = "✏️ Изменить бракованное устройство"
+    EDIT_DEVICE = "Изменить устройство"
+    EDIT_TICKET = "Изменить имеющуюся заявку"
+    EDIT_WRITEOFF_DEVICE = "Изменить брак"
 
+    RETURN_BTN = "<< Назад"
     RETURNING_TO_TICKET = "<< Возвращаемся в заявку"
     RETURNING_TO_TICKETS = "<< Возвращаемся в заявки"
     RETURNING_TO_MAIN_MENU = "<< Возвращаемся в главное меню"
     RETURNING_TO_WRITEOFF_DEVICES = "<< Возвращаемся к списку бракованных устройств"
-    RETURN_BTN = "<< Назад"
 
     PICK_DEVICE_TYPE = "Выберите тип устройства"
     PICK_WRITEOFF_DEVICE_TYPE = "Выберите тип бракованного устройства"
