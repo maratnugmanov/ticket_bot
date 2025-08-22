@@ -10,6 +10,8 @@ wheels/
 .venv
 
 # Custom
+src/*/*_old.*
+src/*/*_bak.*
 .mypy_cache/
 .env
 *.db
