@@ -4,7 +4,7 @@ from typing import Any, Callable, Coroutine, TYPE_CHECKING
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload, Load
 from src.core.logger import logger
-from src.core.enums import String, Action
+from src.core.enums import ValidationMode, String, Action
 from src.core.models import StateJS
 from src.db.models import TicketDB, WriteoffDeviceDB
 
@@ -12,7 +12,11 @@ if TYPE_CHECKING:
     from src.core.conversation import Conversation
 
 
-def require_ticket_context(*loader_options: Load, id_must_exist: bool = True):
+def require_ticket_context(
+    *loader_options: Load,
+    id_must_exist: bool = True,
+    validate_device_index: ValidationMode | None = None,
+):
     """
     A decorator for Conversation methods that require a valid ticket context.
 
@@ -33,6 +37,13 @@ def require_ticket_context(*loader_options: Load, id_must_exist: bool = True):
                        state.ticket_id does NOT exist.
         *loader_options: A list of SQLAlchemy loader options
                          (e.g., selectinload(TicketDB.contract)).
+        validate_device_index:
+            If ValidationMode.OPTIONAL_NEW, validates
+            `ticket_device_index` if it exists,
+            allowing for a new device index.
+            If ValidationMode.REQUIRED_EXISTING,
+            ensures `ticket_device_index` exists
+            and is a valid index for an existing device.
     """
 
     def decorator(
@@ -67,10 +78,58 @@ def require_ticket_context(*loader_options: Load, id_must_exist: bool = True):
                             f"{String.TICKET_WAS_NOT_FOUND}. {String.PICK_A_FUNCTION}."
                         )
                     ]
+                if validate_device_index:
+                    # This check requires devices to be loaded. We assume they are.
+                    device_index = self.state.ticket_device_index
+                    total_devices = len(ticket.devices)
+                    if validate_device_index == ValidationMode.OPTIONAL_NEW:
+                        if device_index is not None and not (
+                            0 <= device_index <= total_devices
+                        ):
+                            logger.error(
+                                f"{self.log_prefix}Error: "
+                                f"device_index={device_index} and "
+                                f"total_devices={total_devices}. "
+                                "Expected: "
+                                f"0 <= device_index <= total_devices."
+                            )
+                            return [
+                                self._drop_state_goto_mainmenu(
+                                    f"{String.INCONSISTENT_STATE_DETECTED} "
+                                    "(incorrect ticket_device_index). "
+                                    f"{String.PICK_A_FUNCTION}."
+                                )
+                            ]
+                    elif validate_device_index == ValidationMode.REQUIRED_EXISTING:
+                        if device_index is None:
+                            logger.error(
+                                f"{self.log_prefix}device_index is "
+                                "missing for a device-context action."
+                            )
+                            return [
+                                self._drop_state_goto_mainmenu(
+                                    f"{String.INCONSISTENT_STATE_DETECTED} "
+                                    "(missing ticket_device_index). "
+                                    f"{String.PICK_A_FUNCTION}."
+                                )
+                            ]
+                        if not (0 <= device_index < total_devices):
+                            logger.error(
+                                f"{self.log_prefix}Error: "
+                                f"device_index={device_index} and "
+                                f"total_devices={total_devices}. "
+                                f"Expected: 0 <= device_index < total_devices."
+                            )
+                            return [
+                                self._drop_state_goto_mainmenu(
+                                    f"{String.INCONSISTENT_STATE_DETECTED} "
+                                    "(incorrect ticket_device_index). "
+                                    f"{String.PICK_A_FUNCTION}."
+                                )
+                            ]
                 # Pass the fetched ticket to the handler
                 return await handler_func(self, ticket=ticket, *args, **kwargs)
             else:  # id_must_exist is False
-                logger.error("Testing decorator here")
                 if self.state.ticket_id:
                     logger.error(
                         f"{self.log_prefix}{self.user_db.full_name} "
@@ -117,7 +176,6 @@ def require_writeoff_context(*loader_options: Load, id_must_exist: bool = True):
                             f"{String.PICK_WRITEOFF_DEVICES_ACTION}."
                         )
                     ]
-
                 query = select(WriteoffDeviceDB).where(
                     WriteoffDeviceDB.id == self.state.writeoff_device_id
                 )

@@ -37,7 +37,7 @@ async def handle_telegram_webhook(
             update_tg = model.model_validate(request_data)
             validated_model_name = model.__name__
             logger.info(
-                f"Successful validation against pydantic model {validated_model_name}."
+                f"██████ Successful validation against pydantic model {validated_model_name}."
             )
             break
         except ValidationError as e:
@@ -70,8 +70,8 @@ async def handle_telegram_webhook(
                 )
         elif isinstance(update_tg, UpdateTG):
             logger.info(
-                f"{update_tg._log}Received a generic UpdateTG, which is "
-                "not a MessageUpdateTG or CallbackQueryUpdateTG. "
+                f"{update_tg._log}Received a generic UpdateTG, which "
+                "is not a MessageUpdateTG or CallbackQueryUpdateTG. "
                 "No conversation action taken."
             )
     else:

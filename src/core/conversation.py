@@ -11,9 +11,11 @@ from sqlalchemy.orm import selectinload
 from src.core.config import settings
 from src.core.logger import logger
 from src.core.decorators import require_ticket_context, require_writeoff_context
+from src.core.ticket_service import TicketService
 from src.core.enums import (
     RoleName,
     DeviceTypeName,
+    ValidationMode,
     CallbackData,
     String,
     Action,
@@ -669,12 +671,10 @@ class Conversation:
                         f"{self.log_prefix}Got correct ticket number: '{message_text}'."
                     )
                     ticket_number = int(message_text)
-                    new_ticket = TicketDB(
-                        number=ticket_number,
-                        user_id=self.user_db.id,
+                    ticket_service = TicketService(self.session, self.log_prefix)
+                    new_ticket = await ticket_service.create_ticket(
+                        user_id=self.user_db.id, ticket_number=ticket_number
                     )
-                    self.session.add(new_ticket)
-                    await self.session.flush()
                     self.next_state = StateJS(
                         action=Action.ENTER_CONTRACT_NUMBER,
                         ticket_id=new_ticket.id,
@@ -733,27 +733,10 @@ class Conversation:
                         f"contract number: '{message_text}'."
                     )
                     contract_number = int(message_text)
-                    existing_contract = await self.session.scalar(
-                        select(ContractDB).where(ContractDB.number == contract_number)
+                    ticket_service = TicketService(self.session, self.log_prefix)
+                    ticket = await ticket_service.set_contract_for_ticket(
+                        ticket=ticket, contract_number=contract_number
                     )
-                    if existing_contract:
-                        logger.info(
-                            f"{self.log_prefix}Contract "
-                            f"number={contract_number} was found "
-                            "in the database under "
-                            f"id={existing_contract.id}."
-                        )
-                        ticket.contract = existing_contract
-                    else:
-                        logger.info(
-                            f"{self.log_prefix}Contract "
-                            f"number={contract_number} was not found "
-                            "in the database and will be added."
-                        )
-                        new_contract = ContractDB(number=contract_number)
-                        self.session.add(new_contract)
-                        ticket.contract = new_contract
-                    await self.session.flush()
                     self.next_state = StateJS(
                         action=Action.PICK_DEVICE_TYPE,
                         ticket_id=ticket.id,
@@ -797,30 +780,16 @@ class Conversation:
             )
         return methods_tg_list
 
-    @require_ticket_context(selectinload(TicketDB.devices))
+    @require_ticket_context(
+        selectinload(TicketDB.devices),
+        validate_device_index=ValidationMode.OPTIONAL_NEW,
+    )
     async def _handle_ac_pick_device_type(self, ticket: TicketDB) -> list[MethodTG]:
         assert self.state is not None
         logger.info(f"{self.log_prefix}Awaiting device type choice to be made.")
         methods_tg_list: list[MethodTG] = []
         device_index = self.state.ticket_device_index
-        devices_list = ticket.devices
-        total_devices = len(devices_list)
-        if device_index is not None and not (0 <= device_index <= total_devices):
-            logger.error(
-                f"{self.log_prefix}Error: "
-                f"device_index={device_index} and "
-                f"total_devices={total_devices}. "
-                "Expected: "
-                "0 <= device_index <= total_devices."
-            )
-            methods_tg_list.append(
-                self._drop_state_goto_mainmenu(
-                    f"{String.INCONSISTENT_STATE_DETECTED} "
-                    "(incorrect device_index). "
-                    f"{String.PICK_A_FUNCTION}."
-                )
-            )
-            return methods_tg_list
+        total_devices = len(ticket.devices)
         if isinstance(self.update_tg, CallbackQueryUpdateTG):
             raw_data = self.update_tg.callback_query.data
             try:
@@ -885,7 +854,7 @@ class Conversation:
                             type_id=device_type.id,
                         )
                         device.type = device_type
-                        devices_list.append(device)
+                        ticket.devices.append(device)
 
                     else:  # 0 <= device_index < total_devices
                         logger.info(
@@ -895,7 +864,7 @@ class Conversation:
                             f"{DeviceTypeDB.__name__} to "
                             f"'{device_type_name.name}'."
                         )
-                        device = devices_list[device_index]
+                        device = ticket.devices[device_index]
                         device.type_id = device_type.id
                         device.type = device_type
                     if device_type.is_disposable:
@@ -985,33 +954,19 @@ class Conversation:
             )
         return methods_tg_list
 
-    @require_ticket_context(selectinload(TicketDB.devices).selectinload(DeviceDB.type))
+    @require_ticket_context(
+        selectinload(TicketDB.devices).selectinload(DeviceDB.type),
+        validate_device_index=ValidationMode.REQUIRED_EXISTING,
+    )
     async def _handle_ac_pick_install_or_return(
         self, ticket: TicketDB
     ) -> list[MethodTG]:
         assert self.state is not None
+        assert self.state.ticket_device_index is not None
         logger.info(f"{self.log_prefix}Awaiting install or return choice to be made.")
         methods_tg_list: list[MethodTG] = []
         device_index = self.state.ticket_device_index
-        devices_list = ticket.devices
-        total_devices = len(devices_list)
-        if device_index is None or not (0 <= device_index < total_devices):
-            logger.error(
-                f"{self.log_prefix}Error: "
-                f"device_index={device_index} and "
-                f"total_devices={total_devices}. "
-                "Expected: "
-                "0 <= device_index < total_devices."
-            )
-            methods_tg_list.append(
-                self._drop_state_goto_mainmenu(
-                    f"{String.INCONSISTENT_STATE_DETECTED} "
-                    "(incorrect device_index). "
-                    f"{String.PICK_A_FUNCTION}."
-                )
-            )
-            return methods_tg_list
-        elif isinstance(self.update_tg, CallbackQueryUpdateTG):
+        if isinstance(self.update_tg, CallbackQueryUpdateTG):
             expected_callback_data = [
                 CallbackData.INSTALL_DEVICE,
                 CallbackData.RETURN_DEVICE,
@@ -1048,7 +1003,7 @@ class Conversation:
                         f"at devices[{device_index}]. Setting "
                         f"'removal' flag to '{removal}'."
                     )
-                    device = devices_list[device_index]
+                    device = ticket.devices[device_index]
                     device.removal = removal
                     device_type = device.type
                     if device_type.has_serial_number:
@@ -1116,32 +1071,18 @@ class Conversation:
             )
         return methods_tg_list
 
-    @require_ticket_context(selectinload(TicketDB.devices))
+    @require_ticket_context(
+        selectinload(TicketDB.devices),
+        validate_device_index=ValidationMode.REQUIRED_EXISTING,
+    )
     async def _handle_ac_enter_device_serial_number(
         self, ticket: TicketDB
     ) -> list[MethodTG]:
         assert self.state is not None
+        assert self.state.ticket_device_index is not None
         logger.info(f"{self.log_prefix}Awaiting device serial number.")
         methods_tg_list: list[MethodTG] = []
         device_index = self.state.ticket_device_index
-        devices_list = ticket.devices
-        total_devices = len(devices_list)
-        if device_index is None or not (0 <= device_index < total_devices):
-            logger.error(
-                f"{self.log_prefix}Error: "
-                f"device_index={device_index} and "
-                f"total_devices={total_devices}. "
-                "Expected: "
-                "0 <= device_index < total_devices."
-            )
-            methods_tg_list.append(
-                self._drop_state_goto_mainmenu(
-                    f"{String.INCONSISTENT_STATE_DETECTED} "
-                    "(incorrect device_index). "
-                    f"{String.PICK_A_FUNCTION}."
-                )
-            )
-            return methods_tg_list
         if isinstance(self.update_tg, MessageUpdateTG):
             if self.update_tg.message.text is not None:
                 message_text = self.update_tg.message.text.upper()
@@ -1160,7 +1101,7 @@ class Conversation:
                         f"at devices[{device_index}]. Setting "
                         f"serial number to '{message_text}'."
                     )
-                    device = devices_list[device_index]
+                    device = ticket.devices[device_index]
                     device.serial_number = message_text
                     self.next_state = StateJS(
                         action=Action.PICK_TICKET_ACTION,
@@ -1825,30 +1766,16 @@ class Conversation:
             )
         return methods_tg_list
 
-    @require_ticket_context(selectinload(TicketDB.devices).selectinload(DeviceDB.type))
+    @require_ticket_context(
+        selectinload(TicketDB.devices).selectinload(DeviceDB.type),
+        validate_device_index=ValidationMode.REQUIRED_EXISTING,
+    )
     async def _handle_ac_pick_device_action(self, ticket: TicketDB) -> list[MethodTG]:
         assert self.state is not None
+        assert self.state.ticket_device_index is not None
         logger.info(f"{self.log_prefix}Awaiting device menu choice to be made.")
         methods_tg_list: list[MethodTG] = []
         device_index = self.state.ticket_device_index
-        devices_list = ticket.devices
-        total_devices = len(devices_list)
-        if device_index is None or not (0 <= device_index < total_devices):
-            logger.error(
-                f"{self.log_prefix}Error: "
-                f"device_index={device_index} and "
-                f"total_devices={total_devices}. "
-                "Expected: "
-                "0 <= device_index < total_devices."
-            )
-            methods_tg_list.append(
-                self._drop_state_goto_mainmenu(
-                    f"{String.INCONSISTENT_STATE_DETECTED} "
-                    "(incorrect device_index). "
-                    f"{String.PICK_A_FUNCTION}."
-                )
-            )
-            return methods_tg_list
         if isinstance(self.update_tg, CallbackQueryUpdateTG):
             expected_callback_data = [
                 CallbackData.EDIT_DEVICE_TYPE,
@@ -1859,7 +1786,7 @@ class Conversation:
                 f"{DeviceDB.__name__} "
                 f"at devices[{device_index}]."
             )
-            device = devices_list[device_index]
+            device = ticket.devices[device_index]
             if not device.type.is_disposable:
                 if device.removal is True:
                     expected_callback_data.append(CallbackData.RETURN_DEVICE)
@@ -2019,30 +1946,16 @@ class Conversation:
             )
         return methods_tg_list
 
-    @require_ticket_context(selectinload(TicketDB.devices).selectinload(DeviceDB.type))
+    @require_ticket_context(
+        selectinload(TicketDB.devices).selectinload(DeviceDB.type),
+        validate_device_index=ValidationMode.REQUIRED_EXISTING,
+    )
     async def _handle_ac_edit_device_type(self, ticket: TicketDB) -> list[MethodTG]:
         assert self.state is not None
+        assert self.state.ticket_device_index is not None
         logger.info(f"{self.log_prefix}Awaiting new device type choice to be made.")
         methods_tg_list: list[MethodTG] = []
         device_index = self.state.ticket_device_index
-        devices_list = ticket.devices
-        total_devices = len(devices_list)
-        if device_index is None or not (0 <= device_index < total_devices):
-            logger.error(
-                f"{self.log_prefix}Error: "
-                f"device_index={device_index} and "
-                f"total_devices={total_devices}. "
-                "Expected: "
-                "0 <= device_index < total_devices."
-            )
-            methods_tg_list.append(
-                self._drop_state_goto_mainmenu(
-                    f"{String.INCONSISTENT_STATE_DETECTED} "
-                    "(incorrect device_index). "
-                    f"{String.PICK_A_FUNCTION}."
-                )
-            )
-            return methods_tg_list
         if isinstance(self.update_tg, CallbackQueryUpdateTG):
             raw_data = self.update_tg.callback_query.data
             try:
@@ -2094,7 +2007,7 @@ class Conversation:
                         f"{DeviceDB.__name__} at "
                         f"devices[{device_index}]."
                     )
-                    device = devices_list[device_index]
+                    device = ticket.devices[device_index]
                     if device.type.name.name != device_type.name.name:
                         logger.info(
                             f"{self.log_prefix}New "
@@ -2198,34 +2111,20 @@ class Conversation:
             )
         return methods_tg_list
 
-    @require_ticket_context(selectinload(TicketDB.devices).selectinload(DeviceDB.type))
+    @require_ticket_context(
+        selectinload(TicketDB.devices).selectinload(DeviceDB.type),
+        validate_device_index=ValidationMode.REQUIRED_EXISTING,
+    )
     async def _handle_ac_edit_install_or_return(
         self, ticket: TicketDB
     ) -> list[MethodTG]:
         assert self.state is not None
+        assert self.state.ticket_device_index is not None
         logger.info(
             f"{self.log_prefix}Awaiting new install or return choice to be made."
         )
         methods_tg_list: list[MethodTG] = []
         device_index = self.state.ticket_device_index
-        devices_list = ticket.devices
-        total_devices = len(devices_list)
-        if device_index is None or not (0 <= device_index < total_devices):
-            logger.error(
-                f"{self.log_prefix}Error: "
-                f"device_index={device_index} and "
-                f"total_devices={total_devices}. "
-                "Expected: "
-                "0 <= device_index < total_devices."
-            )
-            methods_tg_list.append(
-                self._drop_state_goto_mainmenu(
-                    f"{String.INCONSISTENT_STATE_DETECTED} "
-                    "(incorrect device_index). "
-                    f"{String.PICK_A_FUNCTION}."
-                )
-            )
-            return methods_tg_list
         if isinstance(self.update_tg, CallbackQueryUpdateTG):
             expected_callback_data = [
                 CallbackData.INSTALL_DEVICE,
@@ -2271,7 +2170,7 @@ class Conversation:
                         f"{DeviceDB.__name__} "
                         f"at devices[{device_index}]."
                     )
-                    device = devices_list[device_index]
+                    device = ticket.devices[device_index]
                     if device.removal != removal:
                         logger.info(
                             f"{self.log_prefix}{DeviceDB.__name__} "
@@ -2353,32 +2252,18 @@ class Conversation:
             )
         return methods_tg_list
 
-    @require_ticket_context(selectinload(TicketDB.devices))
+    @require_ticket_context(
+        selectinload(TicketDB.devices),
+        validate_device_index=ValidationMode.REQUIRED_EXISTING,
+    )
     async def _handle_ac_edit_device_serial_number(
         self, ticket: TicketDB
     ) -> list[MethodTG]:
         assert self.state is not None
+        assert self.state.ticket_device_index is not None
         logger.info(f"{self.log_prefix}Awaiting new device serial number.")
         methods_tg_list: list[MethodTG] = []
         device_index = self.state.ticket_device_index
-        devices_list = ticket.devices
-        total_devices = len(devices_list)
-        if device_index is None or not (0 <= device_index < total_devices):
-            logger.error(
-                f"{self.log_prefix}Error: "
-                f"device_index={device_index} and "
-                f"total_devices={total_devices}. "
-                "Expected: "
-                "0 <= device_index < total_devices."
-            )
-            methods_tg_list.append(
-                self._drop_state_goto_mainmenu(
-                    f"{String.INCONSISTENT_STATE_DETECTED} "
-                    "(incorrect device_index). "
-                    f"{String.PICK_A_FUNCTION}."
-                )
-            )
-            return methods_tg_list
         if isinstance(self.update_tg, MessageUpdateTG):
             if self.update_tg.message.text is not None:
                 message_text = self.update_tg.message.text.upper()
@@ -2396,7 +2281,7 @@ class Conversation:
                         f"{DeviceDB.__name__} "
                         f"at devices[{device_index}]."
                     )
-                    device = devices_list[device_index]
+                    device = ticket.devices[device_index]
                     if device.serial_number != message_text:
                         logger.info(
                             f"{self.log_prefix}Device new "

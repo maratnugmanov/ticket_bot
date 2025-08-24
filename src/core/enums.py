@@ -17,6 +17,11 @@ class DeviceTypeName(enum.StrEnum):
     NETWORK_HUB = enum.auto()
 
 
+class ValidationMode(enum.StrEnum):
+    OPTIONAL_NEW = enum.auto()
+    REQUIRED_EXISTING = enum.auto()
+
+
 class CallbackData(enum.StrEnum):
     @staticmethod
     def _generate_next_value_(name, start, count, last_values):
