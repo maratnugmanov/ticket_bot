@@ -39,19 +39,14 @@ class DeviceTypeJS(BaseModel):
 
 
 class StateJS(BaseModel):
-    #  message_id: int
-    action: Action
+    # message_id: int
     # script: Script
-    # devices_list: list[DeviceJS] = []
-    ticket_id: int | None = None
-    ticket_device_index: int | None = None
+    # action: Action
+    # ticket_id: int | None = None
+    # ticket_device_index: int | None = None
+    pending_command_prefix: str | None = None
     tickets_page: int | None = None
     tickets_dict: dict[int, int] | None = None
-    writeoff_device_id: int | None = None
+    # writeoff_device_id: int | None = None
     writeoff_devices_page: int | None = None
     writeoff_devices_dict: dict[int, int] | None = None
-    # ticket_number: int | None = None
-    # contract_number: int | None = None
-    # device_type: DeviceTypeName | None = None
-    # device_serial_number: str | None = None
-    # writeoff_serial_number: int | None = None

@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
-
+import src.core.handlers  # noqa: F401, pylint: disable=unused-import
 from src.core.logger import logger
 from src.db.engine import AsyncSessionFactory, backup_db
 from src.db.seed import (
