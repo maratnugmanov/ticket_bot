@@ -385,7 +385,7 @@ class Conversation:
                     self._build_edit_to_text_message(f"{String.GOT_UNEXPECTED_DATA}.")
                 )
             methods_tg_list.append(
-                self._build_stateless_mainmenu(
+                self._build_main_menu(
                     f"{String.GOT_UNEXPECTED_DATA}. {String.PICK_A_FUNCTION}."
                 )
             )
@@ -402,66 +402,82 @@ class Conversation:
                 )
         return success
 
-    def _build_main_menu_keyboard_rows(self) -> list[list[InlineKeyboardButtonTG]]:
-        inline_keyboard_rows = []
-        if self.user_db.is_engineer:
-            inline_keyboard_rows.append(
-                [
-                    InlineKeyboardButtonTG(
-                        text=String.ADD_TICKET_BTN,
-                        callback_data=cb.ticket.create_start(),
-                    )
-                ],
-            )
-            inline_keyboard_rows.append(
-                [
-                    InlineKeyboardButtonTG(
-                        text=String.TICKETS_BTN,
-                        callback_data=cb.ticket.list_page(0),
-                    ),
-                    InlineKeyboardButtonTG(
-                        text=String.WRITEOFF_DEVICES_BTN,
-                        callback_data=cb.writeoff.list_page(0),
-                    ),
-                ],
-            )
-        if self.user_db.is_manager:
-            inline_keyboard_rows.append(
-                [
-                    InlineKeyboardButtonTG(
-                        text=String.FORM_REPORT_BTN,
-                        callback_data=cb.report.create_start(),
-                    )
-                ],
-            )
-            if self.user_db.is_hiring:
-                inline_keyboard_rows.append(
-                    [
-                        InlineKeyboardButtonTG(
-                            text=String.DISABLE_HIRING_BTN,
-                            callback_data=cb.user.disable_hiring(),
-                        )
-                    ],
-                )
-            else:
-                inline_keyboard_rows.append(
-                    [
-                        InlineKeyboardButtonTG(
-                            text=String.ENABLE_HIRING_BTN,
-                            callback_data=cb.user.enable_hiring(),
-                        )
-                    ],
-                )
-        return inline_keyboard_rows
+    async def _get_ticket_if_eligible(
+        self, ticket_id: int, loader_options: list | None = None
+    ) -> TicketDB | String:
+        ticket = await self.session.get(
+            TicketDB,
+            ticket_id,
+            options=loader_options,
+        )
+        if not ticket:
+            result = String.TICKET_WAS_NOT_FOUND
+        elif not (ticket.user_id == self.user_db.id or self.user_db.is_manager):
+            result = String.FOREIGN_TICKET
+        else:
+            result = ticket
+        return result
 
-    def _build_stateless_mainmenu(
+    def _build_main_menu(
         self, text: str = f"{String.PICK_A_FUNCTION}."
     ) -> SendMessageTG:
-        mainmenu_keyboard_rows = self._build_main_menu_keyboard_rows()
-        if mainmenu_keyboard_rows:
+        def _build_main_menu_keyboard_rows() -> list[list[InlineKeyboardButtonTG]]:
+            inline_keyboard_rows = []
+            if self.user_db.is_engineer:
+                inline_keyboard_rows.append(
+                    [
+                        InlineKeyboardButtonTG(
+                            text=String.ADD_TICKET_BTN,
+                            callback_data=cb.ticket.create_start(),
+                        )
+                    ],
+                )
+                inline_keyboard_rows.append(
+                    [
+                        InlineKeyboardButtonTG(
+                            text=String.TICKETS_BTN,
+                            callback_data=cb.ticket.list_page(0),
+                        ),
+                        InlineKeyboardButtonTG(
+                            text=String.WRITEOFF_DEVICES_BTN,
+                            callback_data=cb.writeoff.list_page(0),
+                        ),
+                    ],
+                )
+            if self.user_db.is_manager:
+                inline_keyboard_rows.append(
+                    [
+                        InlineKeyboardButtonTG(
+                            text=String.FORM_REPORT_BTN,
+                            callback_data=cb.report.create_start(),
+                        )
+                    ],
+                )
+                if self.user_db.is_hiring:
+                    inline_keyboard_rows.append(
+                        [
+                            InlineKeyboardButtonTG(
+                                text=String.DISABLE_HIRING_BTN,
+                                callback_data=cb.user.disable_hiring(),
+                            )
+                        ],
+                    )
+                else:
+                    inline_keyboard_rows.append(
+                        [
+                            InlineKeyboardButtonTG(
+                                text=String.ENABLE_HIRING_BTN,
+                                callback_data=cb.user.enable_hiring(),
+                            )
+                        ],
+                    )
+            return inline_keyboard_rows
+
+        main_menu_keyboard_rows = _build_main_menu_keyboard_rows()
+        if main_menu_keyboard_rows:
             text = text
             reply_markup = InlineKeyboardMarkupTG(
-                inline_keyboard=mainmenu_keyboard_rows
+                inline_keyboard=main_menu_keyboard_rows
             )
         else:
             text = f"{String.NO_FUNCTIONS_ARE_AVAILABLE}."
@@ -472,45 +488,16 @@ class Conversation:
             reply_markup=reply_markup,
         )
 
-    def _drop_state_goto_mainmenu(self, text: str | None = None) -> SendMessageTG:
+    def _drop_state_goto_main_menu(self, text: str | None = None) -> SendMessageTG:
         logger.info(f"{self.log_prefix}Going back to main menu.")
         self.next_state = None
-        self.user_db.state_json = None
         if text:
-            return self._build_stateless_mainmenu(text)
-        return self._build_stateless_mainmenu()
+            return self._build_main_menu(text)
+        return self._build_main_menu()
 
-    async def _build_pick_tickets(
-        self, text: str = f"{String.PICK_TICKETS_ACTION}."
+    async def _build_tickets_list(
+        self, page: int = 0, text: str = f"{String.PICK_TICKETS_ACTION}."
     ) -> SendMessageTG:
-        relevant_state = self._relevant_state
-        if not relevant_state:
-            logger.error(
-                f"{self.log_prefix}State is missing "
-                "for building tickets list. "
-                "Neither next_state nor state is available."
-            )
-            logger.info(f"{self.log_prefix}Going back to the main menu.")
-            return self._build_stateless_mainmenu(
-                f"{String.CONFIGURATION_ERROR_DETECTED} "
-                "(missing any state). "
-                f"{String.CONTACT_THE_ADMINISTRATOR}. "
-                f"{String.PICK_A_FUNCTION}."
-            )
-        page_index = relevant_state.tickets_page
-        if page_index is not None and page_index < 0:
-            logger.error(
-                f"{self.log_prefix}Configuration error: "
-                "Current tickets list page has negative index."
-            )
-            self.next_state = None
-            self.user_db.state_json = None
-            return self._build_stateless_mainmenu(
-                f"{String.CONFIGURATION_ERROR_DETECTED} "
-                "(negative tickets page_index). "
-                f"{String.CONTACT_THE_ADMINISTRATOR}. "
-                f"{String.PICK_A_FUNCTION}."
-            )
         lookback_days = settings.tickets_history_lookback_days
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=lookback_days)
         total_recent_tickets = (
@@ -529,19 +516,17 @@ class Conversation:
             1,
             (total_recent_tickets + tickets_per_page - 1) // tickets_per_page,
         )
-        last_page_index = total_pages - 1
-        if page_index is None:
-            page_index = 0
-        elif page_index > last_page_index:
-            page_index = last_page_index
-        logger.info(
-            f"{self.log_prefix}The user is on page {page_index + 1} of {total_pages}."
-        )
-        logger.debug(
-            f"page_index={page_index}, "
-            f"last_page_index={last_page_index}, "
-            f"total_pages={total_pages}."
-        )
+        last_page = total_pages - 1
+        if page < 0:
+            logger.warning(
+                f"{self.log_prefix}Current tickets list page "
+                f"is negative (page={page}). Setting it to 0. "
+            )
+            page = 0
+        elif page > last_page:
+            page = last_page
+        logger.info(f"{self.log_prefix}User is on page {page + 1} of {total_pages}.")
+        logger.debug(f"page={page}, last_page={last_page}, total_pages={total_pages}.")
         inline_keyboard_rows: list[list[InlineKeyboardButtonTG]] = []
         add_ticket_button_row: list[InlineKeyboardButtonTG] = [
             InlineKeyboardButtonTG(
@@ -551,7 +536,7 @@ class Conversation:
         ]
         inline_keyboard_rows.append(add_ticket_button_row)
         existing_tickets_button_rows: list[list[InlineKeyboardButtonTG]] = []
-        recent_ticket_index_offset = page_index * tickets_per_page
+        recent_ticket_index_offset = page * tickets_per_page
         current_page_tickets_result = await self.session.scalars(
             select(TicketDB)
             .where(
@@ -565,21 +550,20 @@ class Conversation:
         current_page_tickets = current_page_tickets_result.all()
         user_timezone = ZoneInfo(self.user_db.timezone)
         months = {
-            1: String.JAN.value,
-            2: String.FEB.value,
-            3: String.MAR.value,
-            4: String.APR.value,
-            5: String.MAY.value,
-            6: String.JUN.value,
-            7: String.JUL.value,
-            8: String.AUG.value,
-            9: String.SEP.value,
-            10: String.OCT.value,
-            11: String.NOV.value,
-            12: String.DEC.value,
+            1: String.JAN,
+            2: String.FEB,
+            3: String.MAR,
+            4: String.APR,
+            5: String.MAY,
+            6: String.JUN,
+            7: String.JUL,
+            8: String.AUG,
+            9: String.SEP,
+            10: String.OCT,
+            11: String.NOV,
+            12: String.DEC,
         }
-        tickets_dict: dict[int, int] = {}
-        for index, ticket in enumerate(current_page_tickets):
+        for ticket in current_page_tickets:
             closed_status = (
                 String.CLOSED_TICKET_ICON
                 if ticket.is_closed
@@ -599,38 +583,34 @@ class Conversation:
                         f"{String.NUMBER_SYMBOL} "  # nbsp
                         f"{ticket_number} {String.FROM_X.value} "
                         f"{day_number} {months[month_number]} "  # nbsp
-                        f"{hh_mm} >>"
+                        f"{hh_mm} >>"  # nbsp
                     ),
                     callback_data=cb.ticket.view(ticket.id),
                 ),
             ]
-            tickets_dict[index] = ticket.id
             existing_tickets_button_rows.append(ticket_button)
         inline_keyboard_rows.extend(existing_tickets_button_rows)
         prev_next_buttons_row: list[InlineKeyboardButtonTG] = []
         if total_recent_tickets > tickets_per_page:
             prev_button = InlineKeyboardButtonTG(
                 text=f"{String.PREV_ONES}",
-                callback_data=cb.ticket.list_page(page_index + 1),
+                callback_data=cb.ticket.list_page(page + 1),
             )
             next_button = InlineKeyboardButtonTG(
                 text=f"{String.NEXT_ONES}",
-                callback_data=cb.ticket.list_page(page_index - 1),
+                callback_data=cb.ticket.list_page(page - 1),
             )
-            if page_index < last_page_index:
+            if page < last_page:
                 prev_next_buttons_row.append(prev_button)
-            if page_index > 0:
+            if page > 0:
                 prev_next_buttons_row.append(next_button)
         if prev_next_buttons_row:
             inline_keyboard_rows.append(prev_next_buttons_row)
         return_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
-            text=String.DONE_BTN,
+            text=String.MAIN_MENU,
             callback_data=cb.menu.main(),
         )
         inline_keyboard_rows.append([return_button])
-        if self.next_state:
-            self.next_state.tickets_page = page_index
-            self.next_state.tickets_dict = tickets_dict
         return SendMessageTG(
             chat_id=self.user_db.telegram_uid,
             text=text,
@@ -651,7 +631,7 @@ class Conversation:
                 "'self.next_state' is None too."
             )
             logger.info(f"{self.log_prefix}Going back to the main menu.")
-            return self._build_stateless_mainmenu(
+            return self._build_main_menu(
                 f"{String.CONFIGURATION_ERROR_DETECTED} "
                 "(missing both self.next_state and self.state). "
                 f"{String.CONTACT_THE_ADMINISTRATOR}. "
@@ -665,7 +645,7 @@ class Conversation:
             )
             self.next_state = None
             self.user_db.state_json = None
-            return self._build_stateless_mainmenu(
+            return self._build_main_menu(
                 f"{String.CONFIGURATION_ERROR_DETECTED} "
                 "(negative writeoff devices page_index). "
                 f"{String.CONTACT_THE_ADMINISTRATOR}. "
@@ -781,159 +761,8 @@ class Conversation:
             reply_markup=InlineKeyboardMarkupTG(inline_keyboard=inline_keyboard_rows),
         )
 
-    async def _build_pick_writeoff_devices_BAK(
-        self, text: str = f"{String.PICK_WRITEOFF_DEVICES_ACTION}."
-    ) -> SendMessageTG:
-        if self.next_state:
-            current_state = self.next_state
-        elif self.state:
-            current_state = self.state
-        else:
-            logger.error(
-                f"{self.log_prefix}As a fallback option, "
-                "'self.state' cannot be None if "
-                "'self.next_state' is None too."
-            )
-            logger.info(f"{self.log_prefix}Going back to the main menu.")
-            return self._build_stateless_mainmenu(
-                f"{String.CONFIGURATION_ERROR_DETECTED} "
-                "(missing both self.next_state and self.state). "
-                f"{String.CONTACT_THE_ADMINISTRATOR}. "
-                f"{String.PICK_A_FUNCTION}."
-            )
-        page_index = current_state.writeoff_devices_page
-        if page_index is not None and page_index < 0:
-            logger.error(
-                f"{self.log_prefix}Configuration error: "
-                "Current writeoff devices list page has negative index."
-            )
-            self.next_state = None
-            self.user_db.state_json = None
-            return self._build_stateless_mainmenu(
-                f"{String.CONFIGURATION_ERROR_DETECTED} "
-                "(negative writeoff devices page_index). "
-                f"{String.CONTACT_THE_ADMINISTRATOR}. "
-                f"{String.PICK_A_FUNCTION}."
-            )
-        await self.session.refresh(
-            self.user_db,
-            attribute_names=[UserDB.writeoff_devices.key],
-        )
-        total_writeoff_devices = len(self.user_db.writeoff_devices)
-        writeoffs_per_page = settings.writeoffs_per_page
-        total_pages = max(
-            1,
-            (total_writeoff_devices + writeoffs_per_page - 1) // writeoffs_per_page,
-        )
-        last_page_index = total_pages - 1
-        if page_index is None:
-            page_index = 0
-        logger.info(
-            f"{self.log_prefix}The user is on page {page_index + 1} of {total_pages}."
-        )
-        logger.debug(
-            f"page_index={page_index}, "
-            f"last_page_index={last_page_index}, "
-            f"total_pages={total_pages}."
-        )
-        inline_keyboard_rows: list[list[InlineKeyboardButtonTG]] = []
-        add_writeoff_device_button_row: list[InlineKeyboardButtonTG] = [
-            InlineKeyboardButtonTG(
-                text=f"{String.ADD_WRITEOFF_DEVICE_BTN}",
-                callback_data=cb.writeoff.create_start(),
-            ),
-        ]
-        inline_keyboard_rows.append(add_writeoff_device_button_row)
-        existing_writeoff_devices_button_rows: list[list[InlineKeyboardButtonTG]] = []
-        writeoff_device_index_offset = page_index * settings.writeoffs_per_page
-        sorted_writeoff_devices = sorted(
-            self.user_db.writeoff_devices, key=lambda device: device.id, reverse=True
-        )
-        current_page_writeoff_devices = sorted_writeoff_devices[
-            writeoff_device_index_offset : writeoff_device_index_offset
-            + settings.writeoffs_per_page
-        ]
-        current_page_writeoff_devices_count = len(current_page_writeoff_devices)
-        if current_page_writeoff_devices:
-            await self.session.execute(
-                select(WriteoffDeviceDB)
-                .where(
-                    WriteoffDeviceDB.id.in_(
-                        (device.id for device in current_page_writeoff_devices)
-                    )
-                )
-                .options(selectinload(WriteoffDeviceDB.type)),
-                execution_options={"populate_existing": True},
-            )
-        writeoff_devices_dict: dict[int, int] = {}
-        for index, writeoff_device in enumerate(current_page_writeoff_devices):
-            writeoff_device_number = (
-                total_writeoff_devices - writeoff_device_index_offset - index
-            )
-            if (
-                writeoff_device.type.has_serial_number
-                and writeoff_device.serial_number is not None
-            ):
-                writeoff_device_serial_number_string = (
-                    f" {writeoff_device.serial_number}"
-                )
-            else:
-                writeoff_device_serial_number_string = ""
-            writeoff_device_icon = "💩"
-            device_type_name = String[writeoff_device.type.name.name]
-            if writeoff_device.type.is_disposable:
-                writeoff_device_is_disposable_check_string = f" {String.DISPOSABLE}"
-            else:
-                writeoff_device_is_disposable_check_string = " >>"
-            writeoff_device_button = [
-                InlineKeyboardButtonTG(
-                    text=(
-                        f"{writeoff_device_number}. "
-                        f"{writeoff_device_icon} "
-                        f"{device_type_name.value}"
-                        f"{writeoff_device_serial_number_string}"
-                        f"{writeoff_device_is_disposable_check_string}"
-                    ),
-                    callback_data=cb.writeoff.view(writeoff_device.id),
-                ),
-            ]
-            writeoff_devices_dict[index] = writeoff_device.id
-            existing_writeoff_devices_button_rows.append(writeoff_device_button)
-        inline_keyboard_rows.extend(existing_writeoff_devices_button_rows)
-        prev_next_buttons_row: list[InlineKeyboardButtonTG] = []
-        if total_writeoff_devices > current_page_writeoff_devices_count:
-            if page_index > last_page_index:
-                page_index = last_page_index
-            prev_button = InlineKeyboardButtonTG(
-                text=f"{String.PREV_ONES}",
-                callback_data=cb.writeoff.list_page(page_index + 1),
-            )
-            next_button = InlineKeyboardButtonTG(
-                text=f"{String.NEXT_ONES}",
-                callback_data=cb.writeoff.list_page(page_index - 1),
-            )
-            if page_index < last_page_index:
-                prev_next_buttons_row.append(prev_button)
-            if page_index > 0:
-                prev_next_buttons_row.append(next_button)
-        if prev_next_buttons_row:
-            inline_keyboard_rows.append(prev_next_buttons_row)
-        return_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
-            text=String.DONE_BTN,
-            callback_data=cb.menu.main(),
-        )
-        inline_keyboard_rows.append([return_button])
-        if self.next_state:
-            self.next_state.writeoff_devices_page = page_index
-            self.next_state.writeoff_devices_dict = writeoff_devices_dict
-        return SendMessageTG(
-            chat_id=self.user_db.telegram_uid,
-            text=text,
-            reply_markup=InlineKeyboardMarkupTG(inline_keyboard=inline_keyboard_rows),
-        )
-
     def _build_edit_to_callback_button_text(
-        self, prefix_text: str = ""
+        self, prefix_text: str = "", suffix_text: str = ""
     ) -> EditMessageTextTG:
         """Modifies callback message text to the string provided."""
         if not isinstance(self.update_tg, CallbackQueryUpdateTG):
@@ -955,7 +784,7 @@ class Conversation:
         method_tg = EditMessageTextTG(
             chat_id=chat_id,
             message_id=message_id,
-            text=f"{prefix_text}{button_text}",
+            text=f"{prefix_text} {button_text} {suffix_text}".strip(),
         )
         return method_tg
 
@@ -991,54 +820,34 @@ class Conversation:
             text=text,
         )
 
-    async def _build_pick_device_type(
-        self, text: str = f"{String.PICK_DEVICE_TYPE}."
+    def _build_pick_device_type(
+        self,
+        ticket: TicketDB,
+        device_types: list[DeviceTypeDB],
+        text: str = f"{String.PICK_DEVICE_TYPE}.",
     ) -> SendMessageTG:
-        device_types = await self.session.scalars(
-            select(DeviceTypeDB).where(DeviceTypeDB.is_active == True)  # noqa: E712
-        )
         inline_keyboard: list[list[InlineKeyboardButtonTG]] = []
         for device_type in device_types:
-            try:
-                button_text = String[device_type.name.name]
-                # button_callback_data = CallbackData[device_type.name.name]
-                inline_keyboard.append(
-                    [
-                        InlineKeyboardButtonTG(
-                            text=button_text,
-                            callback_data="placeholder",
-                        )
-                    ]
-                )
-            except KeyError as e:
-                missing_member_value = device_type.name.name
-                logger.error(
-                    f"{self.log_prefix}Configuration error: Missing "
-                    f"{String.__name__} or {CallbackData.__name__} "
-                    f"enum member for {DeviceTypeName.__name__} "
-                    f"'{missing_member_value}'. Original error: {e}"
-                )
-                logger.info(f"{self.log_prefix}Going back to the main menu.")
-                self.next_state = None
-                self.user_db.state_json = None
-                method_tg = self._build_stateless_mainmenu(
-                    f"{String.CONFIGURATION_ERROR_DETECTED} (missing "
-                    f"{String.__name__}.{missing_member_value}). "
-                    f"{String.CONTACT_THE_ADMINISTRATOR}. "
-                    f"{String.PICK_A_FUNCTION}."
-                )
-                return method_tg
+            button_text = String[device_type.name.name]
+            inline_keyboard.append(
+                [
+                    InlineKeyboardButtonTG(
+                        text=button_text,
+                        callback_data=cb.ticket.create_device(
+                            ticket.id, device_type.id
+                        ),
+                    )
+                ]
+            )
         if not inline_keyboard:
             logger.error(
-                f"{self.log_prefix}Configuration error: Not a single eligible "
-                f"(active) {DeviceTypeDB.__name__} was found in the "
-                f"database. Cannot build {DeviceTypeDB.__name__} "
+                f"{self.log_prefix}Configuration error: "
+                "Not a single eligible (active) "
+                f"{DeviceTypeDB.__name__} was found in the database. "
+                f"Cannot build {DeviceTypeDB.__name__} "
                 "selection keyboard. Investigate the logic."
             )
-            logger.info(f"{self.log_prefix}Going back to the main menu.")
-            self.next_state = None
-            self.user_db.state_json = None
-            method_tg = self._build_stateless_mainmenu(
+            method_tg = self._drop_state_goto_main_menu(
                 f"{String.CONFIGURATION_ERROR_DETECTED}. "
                 f"{String.NO_ACTIVE_DEVICE_TYPE_AVAILABLE}. "
                 f"{String.CONTACT_THE_ADMINISTRATOR}. "
@@ -1105,7 +914,7 @@ class Conversation:
                 logger.info(f"{self.log_prefix}Going back to the main menu.")
                 self.next_state = None
                 self.user_db.state_json = None
-                method_tg = self._build_stateless_mainmenu(
+                method_tg = self._build_main_menu(
                     f"{String.CONFIGURATION_ERROR_DETECTED} (missing "
                     f"{String.__name__}.{missing_member_value}). "
                     f"{String.CONTACT_THE_ADMINISTRATOR}. "
@@ -1122,7 +931,7 @@ class Conversation:
             logger.info(f"{self.log_prefix}Going back to the main menu.")
             self.next_state = None
             self.user_db.state_json = None
-            method_tg = self._build_stateless_mainmenu(
+            method_tg = self._build_main_menu(
                 f"{String.NO_WRITEOFF_DEVICE_TYPE_AVAILABLE}. "
                 f"{String.CONTACT_THE_ADMINISTRATOR}. "
                 f"{String.PICK_A_FUNCTION}."
@@ -1135,8 +944,8 @@ class Conversation:
             )
         return method_tg
 
-    def _build_pick_install_or_return_message(
-        self, text: str = f"{String.PICK_INSTALL_OR_RETURN}."
+    def _build_device_action_menu(
+        self, device_id: int, text: str = f"{String.PICK_INSTALL_OR_RETURN}."
     ) -> SendMessageTG:
         return SendMessageTG(
             chat_id=self.user_db.telegram_uid,
@@ -1149,54 +958,31 @@ class Conversation:
                                 f"{String.INSTALL_DEVICE_ICON} "  # nbsp
                                 f"{String.INSTALL_DEVICE_BTN}"
                             ),
-                            callback_data="placeholder",
+                            callback_data=cb.device.set_action_install(device_id),
                         ),
                         InlineKeyboardButtonTG(
                             text=(
                                 f"{String.RETURN_DEVICE_ICON} "  # nbsp
                                 f"{String.RETURN_DEVICE_BTN}"
                             ),
-                            callback_data="placeholder",
+                            callback_data=cb.device.set_action_return(device_id),
                         ),
                     ],
                 ]
             ),
         )
 
-    async def _build_pick_ticket_action(
+    def _build_ticket_view(
         self, ticket: TicketDB, text: str = f"{String.PICK_TICKET_ACTION}."
     ) -> SendMessageTG:
-        # This method no longer relies on self.state. It receives the ticket
-        # object directly, making it more reusable and easier to test.
-        ticket_id = ticket.id
-        await self.session.refresh(
-            # ticket, [TicketDB.contract.key, TicketDB.devices.type.key]
-            ticket,
-            ["contract", "devices.type"],
-        )
-        if not ticket:
-            logger.warning(
-                f"{self.log_prefix}Current ticket "
-                "was not found in the database under "
-                f"id={ticket_id}."
-            )
-            logger.info(f"{self.log_prefix}Going back to the main menu.")
-            self.next_state = None
-            self.user_db.state_json = None
-            return self._build_stateless_mainmenu(
-                f"{String.TICKET_WAS_NOT_FOUND}. {String.PICK_A_FUNCTION}."
-            )
-        ticket_number = ticket.number
         contract_text = (
             f"{String.CONTRACT_NUMBER_BTN} {ticket.contract.number}"  # nbsp
             if ticket.contract
             else f"{String.ATTENTION_ICON} {String.ENTER_CONTRACT_NUMBER}"  # nbsp
         )
-        devices_list = ticket.devices
-        inline_keyboard_rows: list[list[InlineKeyboardButtonTG]] = []
         ticket_number_button: list[InlineKeyboardButtonTG] = [
             InlineKeyboardButtonTG(
-                text=f"{String.TICKET_NUMBER_BTN} {ticket_number} {String.EDIT}",
+                text=f"{String.TICKET_NUMBER_BTN} {ticket.number} {String.EDIT}",
                 callback_data=cb.ticket.edit_number(ticket.id),
             ),
         ]
@@ -1207,7 +993,7 @@ class Conversation:
             ),
         ]
         device_button_rows: list[list[InlineKeyboardButtonTG]] = []
-        for index, device in enumerate(devices_list):
+        for index, device in enumerate(ticket.devices):
             device_number = index + 1
             device_icon = (
                 String.INSTALL_DEVICE_ICON
@@ -1244,6 +1030,11 @@ class Conversation:
                     )
                 ]
             )
+        inline_keyboard_rows: list[list[InlineKeyboardButtonTG]] = [
+            ticket_number_button,
+            contract_number_button,
+            *device_button_rows,
+        ]
         add_device_button: list[InlineKeyboardButtonTG] = [
             InlineKeyboardButtonTG(
                 text=String.ADD_DEVICE_BTN,
@@ -1270,18 +1061,15 @@ class Conversation:
         ]
         return_buttons_row: list[InlineKeyboardButtonTG] = [
             InlineKeyboardButtonTG(
-                text=String.RETURN_TO_TICKETS,
+                text=String.TICKETS,
                 callback_data=cb.ticket.list_page(0),
             ),
             InlineKeyboardButtonTG(
-                text=String.RETURN_TO_MAIN_MENU,
+                text=String.MAIN_MENU,
                 callback_data=cb.menu.main(),
             ),
         ]
-        inline_keyboard_rows.append(ticket_number_button)
-        inline_keyboard_rows.append(contract_number_button)
-        inline_keyboard_rows.extend(device_button_rows)
-        total_devices = len(devices_list)
+        total_devices = len(ticket.devices)
         if total_devices < settings.devices_per_ticket:
             inline_keyboard_rows.append(add_device_button)
         if ticket.is_closed:
@@ -1296,7 +1084,7 @@ class Conversation:
             reply_markup=InlineKeyboardMarkupTG(inline_keyboard=inline_keyboard_rows),
         )
 
-    async def _build_pick_device_action_message(
+    async def _build_device_menu(
         self, text: str = f"{String.PICK_DEVICE_ACTION}."
     ) -> SendMessageTG:
         if self.next_state:
@@ -1322,7 +1110,7 @@ class Conversation:
             logger.info(f"{self.log_prefix}Going back to the main menu.")
             self.next_state = None
             self.user_db.state_json = None
-            return self._build_stateless_mainmenu(
+            return self._build_main_menu(
                 f"{String.TICKET_WAS_NOT_FOUND}. {String.PICK_A_FUNCTION}."
             )
         device_index = current_state.ticket_device_index
@@ -1339,7 +1127,7 @@ class Conversation:
             logger.info(f"{self.log_prefix}Going back to the main menu.")
             self.next_state = None
             self.user_db.state_json = None
-            return self._build_stateless_mainmenu(
+            return self._build_main_menu(
                 f"{String.INCONSISTENT_STATE_DETECTED} "
                 "(incorrect device_index). "
                 f"{String.PICK_A_FUNCTION}."
@@ -1354,7 +1142,7 @@ class Conversation:
         )
         device_type_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
             text=f"{device_type_name} {String.EDIT}",
-            callback_data="placeholder",
+            callback_data=cb.device.edit_type(device.id),
         )
         if device.removal is True:
             device_action_text = (
@@ -1382,19 +1170,19 @@ class Conversation:
             # device_action_data = CallbackData.INSTALL_RETURN
         device_action_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
             text=device_action_text,
-            callback_data="placeholder",
+            callback_data=cb.device.edit_action(device.id),
         )
         serial_number_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
             text=f"{device_serial_number_text} {String.EDIT}",
-            callback_data="placeholder",
+            callback_data=cb.device.edit_serial_number(device.id),
         )
         return_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
             text=String.RETURN_BTN,
-            callback_data="placeholder",
+            callback_data=cb.ticket.view(current_ticket.id),
         )
         delete_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
             text=String.DELETE_DEVICE_FROM_TICKET,
-            callback_data="placeholder",
+            callback_data=cb.device.delete(device.id),
         )
         inline_keyboard_rows.append([device_type_button])
         if not device.type.is_disposable:
@@ -1450,7 +1238,7 @@ class Conversation:
             logger.info(f"{self.log_prefix}Going back to the writeoff devices menu.")
             self.next_state = StateJS(action=Action.WRITEOFF_DEVICES)
             return await self._build_pick_writeoff_devices(
-                f"{String.WRITEOFF_DEVICE_WAS_NOT_FOUND}. "
+                f"{String.WRITEOFF_DEVICE_NOT_FOUND}. "
                 f"{String.PICK_WRITEOFF_DEVICES_ACTION}."
             )
         inline_keyboard_rows: list[list[InlineKeyboardButtonTG]] = []

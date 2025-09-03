@@ -1,54 +1,43 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
-
 from src.core.router import router
+from src.core.callbacks import cb
 from src.core.enums import String
 from src.tg.models import (
-    EditMessageTextTG,
-    InlineKeyboardMarkupTG,
     CallbackQueryUpdateTG,
+    InlineKeyboardMarkupTG,
+    SendMessageTG,
+    EditMessageTextTG,
 )
 
 if TYPE_CHECKING:
     from src.core.conversation import Conversation
 
 
-@router.route("user:set:hiring")
-async def set_hiring(conversation: Conversation, enable_str: str) -> list:
+@router.route(cb.user.SET_HIRING)
+async def set_hiring(conv: Conversation, enable_str: str) -> list:
     """Handles the command to enable or disable hiring."""
-    if not conversation.user_db.is_manager:
+    if not conv.user_db.is_manager:
         return []
-
+    if not isinstance(conv.update_tg, CallbackQueryUpdateTG):
+        return [
+            conv._drop_state_goto_main_menu(
+                f"{String.ERROR_DETECTED} "
+                "(invalid callback data source). "
+                f"{String.CONTACT_THE_ADMINISTRATOR}. "
+                f"{String.PICK_A_FUNCTION}."
+            )
+        ]
     enable = bool(int(enable_str))
-
-    if conversation.user_db.is_hiring == enable:
-        text = (
-            f"{String.HIRING_ALREADY_ENABLED}. {String.PICK_A_FUNCTION}."
-            if enable
-            else f"{String.HIRING_ALREADY_DISABLED}. {String.PICK_A_FUNCTION}."
-        )
+    was_hiring = conv.user_db.is_hiring
+    if was_hiring != enable:
+        conv.user_db.is_hiring = enable
+    if enable:
+        text = String.HIRING_ALREADY_ENABLED if was_hiring else String.HIRING_ENABLED
     else:
-        conversation.user_db.is_hiring = enable
         text = (
-            f"{String.HIRING_ENABLED}. {String.PICK_A_FUNCTION}."
-            if enable
-            else f"{String.HIRING_DISABLED}. {String.PICK_A_FUNCTION}."
+            String.HIRING_ALREADY_DISABLED if not was_hiring else String.HIRING_DISABLED
         )
-
-    if not isinstance(conversation.update_tg, CallbackQueryUpdateTG):
-        return [conversation._drop_state_goto_mainmenu("Error: Invalid action.")]
-
-    chat_id = conversation.update_tg.callback_query.message.chat.id
-    message_id = conversation.update_tg.callback_query.message.message_id
-
-    method_tg = EditMessageTextTG(
-        chat_id=chat_id,
-        message_id=message_id,
-        text=text,
-        reply_markup=InlineKeyboardMarkupTG(
-            inline_keyboard=conversation._build_main_menu_keyboard_rows()
-        ),
-    )
-
-    conversation.next_state = None
-    return [method_tg]
+    method_tg = conv._build_main_menu(f"{text}. {String.PICK_A_FUNCTION}.")
+    conv.next_state = None
+    return [conv._build_edit_to_callback_button_text(), method_tg]

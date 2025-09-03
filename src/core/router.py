@@ -72,7 +72,7 @@ class Router:
                     exc_info=True,
                 )
                 return [
-                    conversation._drop_state_goto_mainmenu(
+                    conversation._drop_state_goto_main_menu(
                         f"{String.INCONSISTENT_STATE_DETECTED}. "
                         f"{String.CONTACT_THE_ADMINISTRATOR}."
                     )

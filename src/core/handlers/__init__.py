@@ -5,6 +5,7 @@ from __future__ import annotations
 # handlers in each file are registered with the central router when
 # the 'handlers' package is imported.
 
-from . import device_handlers
-from . import ticket_handlers
-from . import user_handlers
+from . import device_handlers  # noqa: F401
+from . import menu_handlers  # noqa: F401
+from . import ticket_handlers  # noqa: F401
+from . import user_handlers  # noqa: F401

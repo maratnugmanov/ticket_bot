@@ -59,7 +59,7 @@ def require_ticket_context(
                         " for a ticket-context action."
                     )
                     return [
-                        self._drop_state_goto_mainmenu(
+                        self._drop_state_goto_main_menu(
                             f"{String.INCONSISTENT_STATE_DETECTED} "
                             "(missing ticket_id). "
                             f"{String.PICK_A_FUNCTION}."
@@ -74,7 +74,7 @@ def require_ticket_context(
                         f"{self.log_prefix}Ticket with id={self.state.ticket_id} not found."
                     )
                     return [
-                        self._drop_state_goto_mainmenu(
+                        self._drop_state_goto_main_menu(
                             f"{String.TICKET_WAS_NOT_FOUND}. {String.PICK_A_FUNCTION}."
                         )
                     ]
@@ -94,7 +94,7 @@ def require_ticket_context(
                                 f"0 <= device_index <= total_devices."
                             )
                             return [
-                                self._drop_state_goto_mainmenu(
+                                self._drop_state_goto_main_menu(
                                     f"{String.INCONSISTENT_STATE_DETECTED} "
                                     "(incorrect ticket_device_index). "
                                     f"{String.PICK_A_FUNCTION}."
@@ -107,7 +107,7 @@ def require_ticket_context(
                                 "missing for a device-context action."
                             )
                             return [
-                                self._drop_state_goto_mainmenu(
+                                self._drop_state_goto_main_menu(
                                     f"{String.INCONSISTENT_STATE_DETECTED} "
                                     "(missing ticket_device_index). "
                                     f"{String.PICK_A_FUNCTION}."
@@ -121,7 +121,7 @@ def require_ticket_context(
                                 f"Expected: 0 <= device_index < total_devices."
                             )
                             return [
-                                self._drop_state_goto_mainmenu(
+                                self._drop_state_goto_main_menu(
                                     f"{String.INCONSISTENT_STATE_DETECTED} "
                                     "(incorrect ticket_device_index). "
                                     f"{String.PICK_A_FUNCTION}."
@@ -138,7 +138,7 @@ def require_ticket_context(
                         "Cannot create a new ticket."
                     )
                     return [
-                        self._drop_state_goto_mainmenu(
+                        self._drop_state_goto_main_menu(
                             f"{String.INCONSISTENT_STATE_DETECTED} "
                             "(ticket_id should not exist). "
                             f"{String.PICK_A_FUNCTION}."
@@ -193,7 +193,7 @@ def require_writeoff_context(*loader_options: Load, id_must_exist: bool = True):
                     self.next_state = StateJS(action=Action.WRITEOFF_DEVICES)
                     return [
                         await self._build_pick_writeoff_devices(
-                            f"{String.WRITEOFF_DEVICE_WAS_NOT_FOUND}. "
+                            f"{String.WRITEOFF_DEVICE_NOT_FOUND}. "
                             f"{String.PICK_WRITEOFF_DEVICES_ACTION}."
                         )
                     ]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 import enum
+from src.core.config import settings
 
 
 class RoleName(enum.StrEnum):
@@ -191,6 +192,7 @@ class String(enum.StrEnum):
     PICK_A_FUNCTION = "Выберите функцию"
     NO_FUNCTIONS_ARE_AVAILABLE = "У вас нет доступа к каким-либо функциям"
     # Error Related
+    ERROR_DETECTED = "Обнаружена ошибка"
     CONFIGURATION_ERROR_DETECTED = "Обнаружена ошибка конфигурации"
     INCONSISTENT_STATE_DETECTED = "Обнаружена несогласованность диалога"
     CONTACT_THE_ADMINISTRATOR = "Пожалуйста обратитесь к администратору"
@@ -198,24 +200,24 @@ class String(enum.StrEnum):
     GOT_UNEXPECTED_DATA = "Ваш выбор не распознан"
     FROM_OPTIONS_BELOW = "из предложенных ниже вариантов"
     # Menus Strings
-    PICK_TICKET_ACTION = "Возможные действия: изменение номера текущей заявки/договора, изменение/добавление/удаление устройств, закрытие заявки и выход без сохранения"
+    PICK_TICKET_ACTION = "Возможные действия: изменение номера текущей заявки/договора, изменение/добавление/удаление устройств, закрытие/открытие заявки и выход без сохранения"
     PICK_DEVICE_ACTION = "Возможные действия: изменение серийного номера и типа устройства, смена производимого над ним действия, возврат в предыдущее меню или удаление устройства из данной заявки"
-    PICK_TICKETS_ACTION = "Возможные действия: добавление новых заявок, изменение/удаление старых заявок или возврат в предыдущее меню"
+    PICK_TICKETS_ACTION = "Возможные действия: добавление новой заявки, изменение/удаление старых заявок и возврат в главное меню"
     PICK_WRITEOFF_DEVICE_ACTION = "Возможные действия: изменение серийного номера и типа бракованного устройства, возврат в предыдущее меню или удаление устройства из брака"
     PICK_WRITEOFF_DEVICES_ACTION = "Возможные действия: добавление/изменение/удаление брака или возврат в предыдущее меню"
     # Ticket Strings
     ENTER_TICKET_NUMBER = "Введите номер заявки"  # Ticket creation entry point
     EDIT_TICKET_NUMBER = "Изменить номер заявки"
     ENTER_NEW_TICKET_NUMBER = "Введите новый номер заявки"
-    TICKET_NUMBER_WAS_EDITED = "Номер заявки был скорректирован"
+    TICKET_NUMBER_WAS_EDITED = "Номер заявки был изменен"
     TICKET_NUMBER_REMAINS_THE_SAME = "Номер заявки остался прежним"
-    INCORRECT_TICKET_NUMBER = "Номер заявки должен состоять из цифр и не может быть равен нулю, попробуйте снова"
+    INCORRECT_TICKET_NUMBER = f"Номер заявки должен состоять из 1-{settings.ticket_number_max_length} цифр и не может быть равен нулю, попробуйте снова"
     ENTER_CONTRACT_NUMBER = "Введите номер договора"
     EDIT_CONTRACT_NUMBER = "Изменить номер договора"
     ENTER_NEW_CONTRACT_NUMBER = "Введите новый номер договора"
-    CONTRACT_NUMBER_WAS_EDITED = "Номер договора был скорректирован"
+    CONTRACT_NUMBER_WAS_EDITED = "Номер договора был изменен"
     CONTRACT_NUMBER_REMAINS_THE_SAME = "Номер договора остался прежним"
-    INCORRECT_CONTRACT_NUMBER = "Номер договора должен состоять из цифр и не может быть равен нулю, попробуйте снова"
+    INCORRECT_CONTRACT_NUMBER = f"Номер договора должен состоять из 1-{settings.contract_number_max_length} цифр и не может быть равен нулю, попробуйте снова"
     TICKET_REOPENED = "Заявка возвращена в работу"
     TICKET_CLOSED = "Заявка закрыта"
     CLOSE_TICKET_NUMBER_X = "Удалить заявку №"
@@ -226,9 +228,8 @@ class String(enum.StrEnum):
     TICKET_DELETED = "Заявка удалена"
     TICKET_DELETION_CANCELLED = "Удаление заявки отменено"
     # Ticket Error Strings
-    TICKET_WAS_NOT_FOUND = (
-        "Текущая заявка не найдена в базе данных, возможно она была удалена"
-    )
+    TICKET_WAS_NOT_FOUND = "Заявка не найдена, возможно она была удалена"
+    FOREIGN_TICKET = "Заявка принадлежит другому пользователю, доступ ограничен"
     GOT_DATA_NOT_TICKET_NUMBER = "Вы нажали кнопку, а должны были ввести номер заявки"
     GOT_DATA_NOT_CONTRACT_NUMBER = (
         "Вы нажали кнопку, а должны были ввести номер договора"
@@ -257,8 +258,10 @@ class String(enum.StrEnum):
     CLOSE_TICKET_BTN = "Закрыть заявку"
     REOPEN_TICKET_BTN = "Вернуть заявку в работу"
     DELETE_TICKET_BTN = "Удалить заявку (необратимо)"
-    RETURN_TO_TICKETS = "<< К заявкам"
-    RETURN_TO_MAIN_MENU = "В главное меню"
+    THE_LIMIT_OF = "Максимальный лимит в"
+    DEVICES_REACHED = "устройств был достигнут"
+    TICKETS = "Заявки"
+    MAIN_MENU = "Главное меню"
     # Common Buttons
     PREV_ONES = "< Предыдущие"
     NEXT_ONES = "Следующие >"
@@ -269,21 +272,25 @@ class String(enum.StrEnum):
     EDIT_WRITEOFF_DEVICE = "Изменить брак"
 
     RETURN_BTN = "<< Назад"
-    RETURNING_TO_TICKET = "<< Возвращаемся в заявку"
-    RETURNING_TO_TICKETS = "<< Возвращаемся в заявки"
-    RETURNING_TO_MAIN_MENU = "<< Возвращаемся в главное меню"
+    RETURNING_TO_TICKET = "Возвращаемся в заявку >>"
+    TO_MAIN_MENU = "В главное меню"
     RETURNING_TO_WRITEOFF_DEVICES = "<< Возвращаемся к списку бракованных устройств"
 
     PICK_DEVICE_TYPE = "Выберите тип устройства"
     PICK_WRITEOFF_DEVICE_TYPE = "Выберите тип бракованного устройства"
     PICK_NEW_WRITEOFF_DEVICE_TYPE = "Выберите новый тип бракованного устройства"
-    WRITEOFF_DEVICE_WAS_NOT_FOUND = (
-        "Бракованное устройство не найдено в базе данных, возможно оно было удалено"
+    WRITEOFF_DEVICE_NOT_FOUND = (
+        "Бракованное устройство не найдено, возможно оно было удалено"
     )
     WRITEOFF_DEVICE_IS_INCORRECT = "Бракованное устройство содержит ошибку"
     EDIT_DEVICE_TYPE = "✏️ Изменить тип устройства"
     PICK_NEW_DEVICE_TYPE = "Выберите новый тип устройства"
-
+    DEVICE_ADDED = "Устройство добавлено"
+    DEVICE_NOT_FOUND = "Устройство не найдено, возможно оно было удалено"
+    DEVICE_TYPE_NOT_FOUND = "Тип устройства не найден"
+    DEVICE_TYPE_HAS_NO_SERIAL_NUMBER = (
+        "Серийный номер для этого типа устройства не предусмотрен"
+    )
     DEVICE_TYPE_WAS_CHANGED_FOR = "Тип устройства изменен на"
     DEVICE_TYPE_WAS_NOT_PICKED = "Вы не выбрали тип устройства"
     DEVICE_TYPE_IS_DISABLED = "Выбранный тип устройства в данный момент не используется"
@@ -293,7 +300,7 @@ class String(enum.StrEnum):
     NO_ACTIVE_DEVICE_TYPE_AVAILABLE = "Ни один тип устройства в данный момент не активен, работа с новыми заявками невозможна"
     NO_WRITEOFF_DEVICE_TYPE_AVAILABLE = "Ни один тип бракованного устройства в данный момент не доступен, добавление брака невозможно"
     ENTER_SERIAL_NUMBER = "Введите серийный номер"
-    INCORRECT_SERIAL_NUMBER = "Серийный номер должен состоять из букв латинского алфавита и/или цифр и не может быть равен нулю, попробуйте снова"
+    INCORRECT_SERIAL_NUMBER = f"Серийный номер должен состоять из 1-{settings.serial_number_max_length} букв латинского алфавита и/или цифр и не может быть равен нулю, попробуйте снова"
     GOT_DATA_NOT_SERIAL_NUMBER = (
         "Вы нажали кнопку, а должны были ввести серийный номер устройства"
     )
@@ -350,7 +357,7 @@ class String(enum.StrEnum):
     )
     HIRING_ENABLED = f"Найм открыт. {HIRING_ENABLED_TIP}"
     HIRING_ALREADY_ENABLED = f"Найм уже открыт. {HIRING_ENABLED_TIP}"
-    HIRING_DISABLED_TIP = "Если найм закрыт у всех менеджеров, то все незарегистрированные пользователи будут удалены из базы данных"
+    HIRING_DISABLED_TIP = "Если найм закрыт у всех менеджеров, то все незарегистрированные соискатели будут удалены из базы данных"
     HIRING_DISABLED = f"Найм закрыт. {HIRING_DISABLED_TIP}"
     HIRING_ALREADY_DISABLED = f"Найм уже закрыт. {HIRING_DISABLED_TIP}"
     # YOU_HAVE_PICKED = "Вы выбрали"

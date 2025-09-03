@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     ticket_number_regex: str = Field(alias="TICKET_NUMBER_REGEX")
     contract_number_regex: str = Field(alias="CONTRACT_NUMBER_REGEX")
     serial_number_regex: str = Field(alias="SERIAL_NUMBER_REGEX")
+    ticket_number_max_length: PositiveInt = Field(alias="TICKET_NUMBER_MAX_LENGTH")
+    contract_number_max_length: PositiveInt = Field(alias="CONTRACT_NUMBER_MAX_LENGTH")
+    serial_number_max_length: PositiveInt = Field(alias="SERIAL_NUMBER_MAX_LENGTH")
     devices_per_ticket: PositiveInt = Field(alias="DEVICES_PER_TICKET")
     tickets_per_page: PositiveInt = Field(alias="TICKETS_PER_PAGE")
     tickets_history_lookback_days: PositiveInt = Field(
