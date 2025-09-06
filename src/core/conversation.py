@@ -418,6 +418,99 @@ class Conversation:
             result = ticket
         return result
 
+    def _build_new_text_message(self, text: str) -> SendMessageTG:
+        return SendMessageTG(
+            chat_id=self.user_db.telegram_uid,
+            text=text,
+        )
+
+    def _build_edit_to_text_message(
+        self, text: str, html_mode: bool = False
+    ) -> EditMessageTextTG:
+        """Modifies callback message text to the string provided."""
+        if not isinstance(self.update_tg, CallbackQueryUpdateTG):
+            raise TypeError(
+                "This method works with "
+                f"{CallbackQueryUpdateTG.__name__} update type only."
+            )
+        chat_id = self.update_tg.callback_query.message.chat.id
+        message_id = self.update_tg.callback_query.message.message_id
+        # old_text = self.update_tg.callback_query.message.text
+        logger.info(
+            f"{self.log_prefix}Editing message id={message_id} text to '{text}'."
+        )
+        method_tg = EditMessageTextTG(
+            chat_id=chat_id,
+            message_id=message_id,
+            # text=f"<s>{old_text}</s>\n\n{String.YOU_HAVE_CHOSEN}: {string}.",
+            text=text,
+            # parse_mode="HTML",
+        )
+        if html_mode:
+            method_tg.parse_mode = "HTML"
+        return method_tg
+
+    def _build_edit_to_callback_button_text(
+        self, prefix_text: str = "", suffix_text: str = ""
+    ) -> EditMessageTextTG:
+        """Modifies callback message text to the string provided."""
+
+        def _get_callback_button_text() -> str:
+            """Returns text of a button with matching callback data."""
+            if not isinstance(self.update_tg, CallbackQueryUpdateTG):
+                raise TypeError(
+                    "This method only works with "
+                    f"{CallbackQueryUpdateTG.__name__} update type only."
+                )
+            if self.update_tg.callback_query.message.reply_markup is None:
+                error_msg = (
+                    f"{self.log_prefix}This method only works with "
+                    "inline keyboard attached."
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+            callback_data = self.update_tg.callback_query.data
+            inline_keyboard = (
+                self.update_tg.callback_query.message.reply_markup.inline_keyboard
+            )
+            button_text: str = ""
+            for row in inline_keyboard:
+                for button in row:
+                    if button.callback_data == callback_data:
+                        button_text = button.text
+                        logger.info(
+                            f"{self.log_prefix}Button text '{button_text}' "
+                            f"found for callback data '{callback_data}'."
+                        )
+                        break
+                else:
+                    continue
+                break
+            return button_text
+
+        if not isinstance(self.update_tg, CallbackQueryUpdateTG):
+            raise TypeError(
+                "This method only works with "
+                f"{CallbackQueryUpdateTG.__name__} update type only."
+            )
+        if self.update_tg.callback_query.message.reply_markup is None:
+            error_msg = f"{self.log_prefix}This method only works with inline keyboard attached."
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        chat_id = self.update_tg.callback_query.message.chat.id
+        message_id = self.update_tg.callback_query.message.message_id
+        button_text = _get_callback_button_text()
+        logger.info(
+            f"{self.log_prefix}Editing message id={message_id} text "
+            f"to button text '{button_text}'."
+        )
+        method_tg = EditMessageTextTG(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=f"{prefix_text} {button_text} {suffix_text}".strip(),
+        )
+        return method_tg
+
     def _build_main_menu(
         self, text: str = f"{String.PICK_A_FUNCTION}."
     ) -> SendMessageTG:
@@ -496,7 +589,7 @@ class Conversation:
         return self._build_main_menu()
 
     async def _build_tickets_list(
-        self, page: int = 0, text: str = f"{String.PICK_TICKETS_ACTION}."
+        self, page: int = 0, text: str = f"{String.AVAILABLE_TICKETS_ACTIONS}."
     ) -> SendMessageTG:
         lookback_days = settings.tickets_history_lookback_days
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=lookback_days)
@@ -618,7 +711,7 @@ class Conversation:
         )
 
     async def _build_pick_writeoff_devices(
-        self, text: str = f"{String.PICK_WRITEOFF_DEVICES_ACTION}."
+        self, text: str = f"{String.AVAILABLE_WRITEOFF_DEVICES_ACTIONS}."
     ) -> SendMessageTG:
         if self.next_state:
             current_state = self.next_state
@@ -761,81 +854,26 @@ class Conversation:
             reply_markup=InlineKeyboardMarkupTG(inline_keyboard=inline_keyboard_rows),
         )
 
-    def _build_edit_to_callback_button_text(
-        self, prefix_text: str = "", suffix_text: str = ""
-    ) -> EditMessageTextTG:
-        """Modifies callback message text to the string provided."""
-        if not isinstance(self.update_tg, CallbackQueryUpdateTG):
-            raise TypeError(
-                "This method only works with "
-                f"{CallbackQueryUpdateTG.__name__} update type only."
-            )
-        if self.update_tg.callback_query.message.reply_markup is None:
-            error_msg = f"{self.log_prefix}This method only works with inline keyboard attached."
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        chat_id = self.update_tg.callback_query.message.chat.id
-        message_id = self.update_tg.callback_query.message.message_id
-        button_text = self._get_callback_button_text()
-        logger.info(
-            f"{self.log_prefix}Editing message id={message_id} text "
-            f"to button text '{button_text}'."
-        )
-        method_tg = EditMessageTextTG(
-            chat_id=chat_id,
-            message_id=message_id,
-            text=f"{prefix_text} {button_text} {suffix_text}".strip(),
-        )
-        return method_tg
-
-    def _build_edit_to_text_message(
-        self, text: str, html_mode: bool = False
-    ) -> EditMessageTextTG:
-        """Modifies callback message text to the string provided."""
-        if not isinstance(self.update_tg, CallbackQueryUpdateTG):
-            raise TypeError(
-                "This method works with "
-                f"{CallbackQueryUpdateTG.__name__} update type only."
-            )
-        chat_id = self.update_tg.callback_query.message.chat.id
-        message_id = self.update_tg.callback_query.message.message_id
-        # old_text = self.update_tg.callback_query.message.text
-        logger.info(
-            f"{self.log_prefix}Editing message id={message_id} text to '{text}'."
-        )
-        method_tg = EditMessageTextTG(
-            chat_id=chat_id,
-            message_id=message_id,
-            # text=f"<s>{old_text}</s>\n\n{String.YOU_HAVE_CHOSEN}: {string}.",
-            text=text,
-            # parse_mode="HTML",
-        )
-        if html_mode:
-            method_tg.parse_mode = "HTML"
-        return method_tg
-
-    def _build_new_text_message(self, text: str) -> SendMessageTG:
-        return SendMessageTG(
-            chat_id=self.user_db.telegram_uid,
-            text=text,
-        )
-
-    def _build_pick_device_type(
+    def _build_set_device_type_menu(
         self,
         ticket: TicketDB,
         device_types: list[DeviceTypeDB],
         text: str = f"{String.PICK_DEVICE_TYPE}.",
+        device: DeviceDB | None = None,
     ) -> SendMessageTG:
         inline_keyboard: list[list[InlineKeyboardButtonTG]] = []
         for device_type in device_types:
             button_text = String[device_type.name.name]
+            callback_data = (
+                cb.device.set_type(device.id, device_type.id)
+                if device
+                else cb.ticket.create_device(ticket.id, device_type.id)
+            )
             inline_keyboard.append(
                 [
                     InlineKeyboardButtonTG(
                         text=button_text,
-                        callback_data=cb.ticket.create_device(
-                            ticket.id, device_type.id
-                        ),
+                        callback_data=callback_data,
                     )
                 ]
             )
@@ -847,12 +885,19 @@ class Conversation:
                 f"Cannot build {DeviceTypeDB.__name__} "
                 "selection keyboard. Investigate the logic."
             )
-            method_tg = self._drop_state_goto_main_menu(
+            text = (
                 f"{String.CONFIGURATION_ERROR_DETECTED}. "
                 f"{String.NO_ACTIVE_DEVICE_TYPE_AVAILABLE}. "
-                f"{String.CONTACT_THE_ADMINISTRATOR}. "
-                f"{String.PICK_A_FUNCTION}."
+                f"{String.CONTACT_THE_ADMINISTRATOR}"
             )
+            if device:
+                method_tg = self._build_device_view(
+                    ticket, device, f"{text}. {String.AVAILABLE_DEVICE_ACTIONS}."
+                )
+            else:
+                method_tg = self._drop_state_goto_main_menu(
+                    f"{text}. {String.PICK_A_FUNCTION}."
+                )
         else:
             method_tg = SendMessageTG(
                 chat_id=self.user_db.telegram_uid,
@@ -944,7 +989,7 @@ class Conversation:
             )
         return method_tg
 
-    def _build_device_action_menu(
+    def _build_set_device_action_menu(
         self, device_id: int, text: str = f"{String.PICK_INSTALL_OR_RETURN}."
     ) -> SendMessageTG:
         return SendMessageTG(
@@ -973,35 +1018,32 @@ class Conversation:
         )
 
     def _build_ticket_view(
-        self, ticket: TicketDB, text: str = f"{String.PICK_TICKET_ACTION}."
+        self, ticket: TicketDB, text: str = f"{String.AVAILABLE_TICKET_ACTIONS}."
     ) -> SendMessageTG:
         contract_text = (
             f"{String.CONTRACT_NUMBER_BTN} {ticket.contract.number}"  # nbsp
             if ticket.contract
             else f"{String.ATTENTION_ICON} {String.ENTER_CONTRACT_NUMBER}"  # nbsp
         )
-        ticket_number_button: list[InlineKeyboardButtonTG] = [
-            InlineKeyboardButtonTG(
-                text=f"{String.TICKET_NUMBER_BTN} {ticket.number} {String.EDIT}",
-                callback_data=cb.ticket.edit_number(ticket.id),
-            ),
-        ]
-        contract_number_button: list[InlineKeyboardButtonTG] = [
-            InlineKeyboardButtonTG(
-                text=f"{contract_text} {String.EDIT}",
-                callback_data=cb.ticket.edit_contract(ticket.id),
-            ),
-        ]
+        ticket_number_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
+            text=f"{String.TICKET_NUMBER_BTN} {ticket.number} {String.EDIT}",
+            callback_data=cb.ticket.edit_number(ticket.id),
+        )
+        contract_number_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
+            text=f"{contract_text} {String.EDIT}",
+            callback_data=cb.ticket.edit_contract(ticket.id),
+        )
         device_button_rows: list[list[InlineKeyboardButtonTG]] = []
         for index, device in enumerate(ticket.devices):
             device_number = index + 1
-            device_icon = (
-                String.INSTALL_DEVICE_ICON
-                if device.removal is False
-                else String.RETURN_DEVICE_ICON
-                if device.removal is True
-                else String.UNSET_DEVICE_ICON
-            )
+            if (not device.type.is_disposable and device.removal is None) or (
+                device.type.has_serial_number and not device.serial_number
+            ):
+                device_icon = String.ATTENTION_ICON
+            elif device.removal is False:
+                device_icon = String.INSTALL_DEVICE_ICON
+            elif device.removal is True:
+                device_icon = String.RETURN_DEVICE_ICON
             if not isinstance(device.type.name, DeviceTypeName):
                 error_msg = (
                     f"{self.log_prefix}Configuration error: "
@@ -1031,171 +1073,120 @@ class Conversation:
                 ]
             )
         inline_keyboard_rows: list[list[InlineKeyboardButtonTG]] = [
-            ticket_number_button,
-            contract_number_button,
+            [ticket_number_button],
+            [contract_number_button],
             *device_button_rows,
         ]
-        add_device_button: list[InlineKeyboardButtonTG] = [
-            InlineKeyboardButtonTG(
-                text=String.ADD_DEVICE_BTN,
-                callback_data=cb.ticket.add_device(ticket.id),
-            ),
-        ]
-        reopen_ticket_button: list[InlineKeyboardButtonTG] = [
-            InlineKeyboardButtonTG(
-                text=f"{String.OPEN_TICKET_ICON} {String.REOPEN_TICKET_BTN}",  # nbsp
-                callback_data=cb.ticket.reopen(ticket.id),
-            ),
-        ]
-        close_ticket_button: list[InlineKeyboardButtonTG] = [
-            InlineKeyboardButtonTG(
-                text=f"{String.CLOSED_TICKET_ICON} {String.CLOSE_TICKET_BTN}",  # nbsp
-                callback_data=cb.ticket.close(ticket.id),
-            ),
-        ]
-        delete_ticket_button: list[InlineKeyboardButtonTG] = [
-            InlineKeyboardButtonTG(
-                text=f"{String.TRASHCAN_ICON} {String.DELETE_TICKET_BTN}",  # nbsp
-                callback_data=cb.ticket.delete_start(ticket.id),
-            ),
-        ]
-        return_buttons_row: list[InlineKeyboardButtonTG] = [
-            InlineKeyboardButtonTG(
-                text=String.TICKETS,
-                callback_data=cb.ticket.list_page(0),
-            ),
-            InlineKeyboardButtonTG(
-                text=String.MAIN_MENU,
-                callback_data=cb.menu.main(),
-            ),
-        ]
+        add_device_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
+            text=String.ADD_DEVICE_BTN, callback_data=cb.ticket.add_device(ticket.id)
+        )
+        reopen_ticket_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
+            text=f"{String.OPEN_TICKET_ICON} {String.REOPEN_TICKET_BTN}",  # nbsp
+            callback_data=cb.ticket.reopen(ticket.id),
+        )
+        close_ticket_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
+            text=f"{String.CLOSED_TICKET_ICON} {String.CLOSE_TICKET_BTN}",  # nbsp
+            callback_data=cb.ticket.close(ticket.id),
+        )
+        delete_ticket_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
+            text=f"{String.TRASHCAN_ICON} {String.DELETE_TICKET_BTN}",  # nbsp
+            callback_data=cb.ticket.delete_start(ticket.id),
+        )
+        view_tickets_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
+            text=String.ALL_TICKETS, callback_data=cb.ticket.list_page(0)
+        )
+        main_menu_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
+            text=String.MAIN_MENU, callback_data=cb.menu.main()
+        )
         total_devices = len(ticket.devices)
         if total_devices < settings.devices_per_ticket:
-            inline_keyboard_rows.append(add_device_button)
+            inline_keyboard_rows.append([add_device_button])
         if ticket.is_closed:
-            inline_keyboard_rows.append(reopen_ticket_button)
+            inline_keyboard_rows.append([reopen_ticket_button])
         elif total_devices > 0 and ticket.contract and ticket.contract.number:
-            inline_keyboard_rows.append(close_ticket_button)
-        inline_keyboard_rows.append(delete_ticket_button)
-        inline_keyboard_rows.append(return_buttons_row)
+            for device in ticket.devices:
+                if (device.type.has_serial_number and not device.serial_number) or (
+                    device.type.is_disposable and device.removal
+                ):
+                    break
+            else:
+                inline_keyboard_rows.append([close_ticket_button])
+        inline_keyboard_rows.append([delete_ticket_button])
+        inline_keyboard_rows.append([view_tickets_button, main_menu_button])
         return SendMessageTG(
             chat_id=self.user_db.telegram_uid,
             text=text,
             reply_markup=InlineKeyboardMarkupTG(inline_keyboard=inline_keyboard_rows),
         )
 
-    async def _build_device_menu(
-        self, text: str = f"{String.PICK_DEVICE_ACTION}."
+    def _build_device_view(
+        self,
+        ticket: TicketDB,
+        device: DeviceDB,
+        text: str = f"{String.AVAILABLE_DEVICE_ACTIONS}.",
     ) -> SendMessageTG:
-        if self.next_state:
-            current_state = self.next_state
-        elif self.state:
-            current_state = self.state
-        else:
-            raise ValueError("State is missing for building device action menu.")
-        current_ticket_id = current_state.ticket_id
-        current_ticket = await self.session.scalar(
-            select(TicketDB)
-            .where(TicketDB.id == current_ticket_id)
-            .options(
-                selectinload(TicketDB.devices).selectinload(DeviceDB.type),
-            )
-        )
-        if not current_ticket:
-            logger.warning(
-                f"{self.log_prefix}Current ticket "
-                "was not found in the database under "
-                f"id={current_ticket_id}."
-            )
-            logger.info(f"{self.log_prefix}Going back to the main menu.")
-            self.next_state = None
-            self.user_db.state_json = None
-            return self._build_main_menu(
-                f"{String.TICKET_WAS_NOT_FOUND}. {String.PICK_A_FUNCTION}."
-            )
-        device_index = current_state.ticket_device_index
-        devices_list = current_ticket.devices
-        total_devices = len(devices_list)
-        if device_index is None or not (0 <= device_index < total_devices):
-            logger.error(
-                f"{self.log_prefix}Error: "
-                f"device_index={device_index} and "
-                f"total_devices={total_devices}. "
-                "Expected: "
-                "0 <= device_index < total_devices."
-            )
-            logger.info(f"{self.log_prefix}Going back to the main menu.")
-            self.next_state = None
-            self.user_db.state_json = None
-            return self._build_main_menu(
-                f"{String.INCONSISTENT_STATE_DETECTED} "
-                "(incorrect device_index). "
-                f"{String.PICK_A_FUNCTION}."
-            )
         inline_keyboard_rows: list[list[InlineKeyboardButtonTG]] = []
-        device = devices_list[device_index]
         device_type_name = String[device.type.name.name]
         device_serial_number_text = (
-            device.serial_number
+            f"{String.NUMBER_SYMBOL} {device.serial_number}"
             if device.serial_number is not None
             else f"{String.ATTENTION_ICON} {String.ENTER_SERIAL_NUMBER}"  # nbsp
         )
         device_type_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
-            text=f"{device_type_name} {String.EDIT}",
+            text=f"{String.TYPE}: {device_type_name} {String.EDIT}",
             callback_data=cb.device.edit_type(device.id),
         )
         if device.removal is True:
             device_action_text = (
+                f"{String.ACTION}: "
                 f"{String.RETURN_DEVICE_ICON} "  # nbsp
-                f"{String.RETURN_DEVICE_BTN} {String.EDIT}"
+                f"{String.RETURN_DEVICE_BTN}"
             )
-            # device_action_data = CallbackData.RETURN_DEVICE
         elif device.removal is False:
             device_action_text = (
+                f"{String.ACTION}: "
                 f"{String.INSTALL_DEVICE_ICON} "  # nbsp
-                f"{String.INSTALL_DEVICE_BTN} {String.EDIT}"
+                f"{String.INSTALL_DEVICE_BTN}"
             )
-            # device_action_data = CallbackData.INSTALL_DEVICE
         else:
-            logger.error(
-                f"{self.log_prefix}Configuration error: "
-                f"{DeviceDB.__name__} type='{device.type.name.name}' "
-                f"id={device.id} is missing 'removal' bool status. "
-                "Investigate the logic."
-            )
             device_action_text = (
-                f"{String.UNSET_DEVICE_ICON} "  # nbsp
-                f"{String.INSTALL_RETURN_BTN} {String.EDIT}"
+                f"{String.ATTENTION_ICON} "  # nbsp
+                f"{String.PICK_DEVICE_ACTION}"
             )
-            # device_action_data = CallbackData.INSTALL_RETURN
         device_action_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
-            text=device_action_text,
+            text=f"{device_action_text} {String.EDIT}",
             callback_data=cb.device.edit_action(device.id),
         )
         serial_number_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
-            text=f"{device_serial_number_text} {String.EDIT}",
+            text=f"{device_serial_number_text} {String.EDIT}",  # nbsp
             callback_data=cb.device.edit_serial_number(device.id),
         )
-        return_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
-            text=String.RETURN_BTN,
-            callback_data=cb.ticket.view(current_ticket.id),
+        view_ticket_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
+            text=String.TICKET,
+            callback_data=cb.ticket.view(ticket.id),
+        )
+        view_tickets_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
+            text=String.ALL_TICKETS,
+            callback_data=cb.ticket.list_page(0),
         )
         delete_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
             text=String.DELETE_DEVICE_FROM_TICKET,
             callback_data=cb.device.delete(device.id),
         )
-        inline_keyboard_rows.append([device_type_button])
+        main_menu_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
+            text=String.MAIN_MENU,
+            callback_data=cb.menu.main(),
+        )
+        inline_keyboard_rows: list[list[InlineKeyboardButtonTG]] = [
+            [device_type_button]
+        ]
         if not device.type.is_disposable:
             inline_keyboard_rows.append([device_action_button])
         if device.type.has_serial_number:
             inline_keyboard_rows.append([serial_number_button])
-        if (
-            device.type.has_serial_number
-            and device.serial_number is not None
-            or not device.type.has_serial_number
-        ):
-            inline_keyboard_rows.append([return_button])
         inline_keyboard_rows.append([delete_button])
+        inline_keyboard_rows.append([view_ticket_button, view_tickets_button])
+        inline_keyboard_rows.append([main_menu_button])
         return SendMessageTG(
             chat_id=self.user_db.telegram_uid,
             text=text,
@@ -1203,7 +1194,7 @@ class Conversation:
         )
 
     async def _build_pick_writeoff_device(
-        self, text: str = f"{String.PICK_WRITEOFF_DEVICE_ACTION}."
+        self, text: str = f"{String.AVAILABLE_WRITEOFF_DEVICE_ACTIONS}."
     ) -> SendMessageTG:
         if self.next_state:
             current_state = self.next_state
@@ -1222,7 +1213,7 @@ class Conversation:
             return await self._build_pick_writeoff_devices(
                 f"{String.INCONSISTENT_STATE_DETECTED} "
                 "(missing writeoff_device_id). "
-                f"{String.PICK_WRITEOFF_DEVICES_ACTION}."
+                f"{String.AVAILABLE_WRITEOFF_DEVICES_ACTIONS}."
             )
         writeoff_device = await self.session.scalar(
             select(WriteoffDeviceDB)
@@ -1239,7 +1230,7 @@ class Conversation:
             self.next_state = StateJS(action=Action.WRITEOFF_DEVICES)
             return await self._build_pick_writeoff_devices(
                 f"{String.WRITEOFF_DEVICE_NOT_FOUND}. "
-                f"{String.PICK_WRITEOFF_DEVICES_ACTION}."
+                f"{String.AVAILABLE_WRITEOFF_DEVICES_ACTIONS}."
             )
         inline_keyboard_rows: list[list[InlineKeyboardButtonTG]] = []
         device_type_name = String[writeoff_device.type.name.name]
@@ -1256,7 +1247,7 @@ class Conversation:
             method_tg = await self._build_pick_writeoff_devices(
                 f"{String.WRITEOFF_DEVICE_IS_INCORRECT}. "
                 f"{String.CONTACT_THE_ADMINISTRATOR}. "
-                f"{String.PICK_WRITEOFF_DEVICES_ACTION}."
+                f"{String.AVAILABLE_WRITEOFF_DEVICES_ACTIONS}."
             )
         else:
             device_serial_number_text = (
@@ -1298,36 +1289,3 @@ class Conversation:
                 ),
             )
         return method_tg
-
-    def _get_callback_button_text(self) -> str:
-        """Returns text of a button with matching callback data."""
-        if not isinstance(self.update_tg, CallbackQueryUpdateTG):
-            raise TypeError(
-                "This method only works with "
-                f"{CallbackQueryUpdateTG.__name__} update type only."
-            )
-        if self.update_tg.callback_query.message.reply_markup is None:
-            error_msg = (
-                f"{self.log_prefix}This method only works with "
-                "inline keyboard attached."
-            )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        callback_data = self.update_tg.callback_query.data
-        inline_keyboard = (
-            self.update_tg.callback_query.message.reply_markup.inline_keyboard
-        )
-        button_text: str = ""
-        for row in inline_keyboard:
-            for button in row:
-                if button.callback_data == callback_data:
-                    button_text = button.text
-                    logger.info(
-                        f"{self.log_prefix}Button text '{button_text}' "
-                        f"found for callback data '{callback_data}'."
-                    )
-                    break
-            else:
-                continue
-            break
-        return button_text

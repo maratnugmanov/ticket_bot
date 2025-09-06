@@ -173,7 +173,7 @@ def require_writeoff_context(*loader_options: Load, id_must_exist: bool = True):
                         await self._build_pick_writeoff_devices(
                             f"{String.INCONSISTENT_STATE_DETECTED} "
                             "(missing writeoff_device_id). "
-                            f"{String.PICK_WRITEOFF_DEVICES_ACTION}."
+                            f"{String.AVAILABLE_WRITEOFF_DEVICES_ACTIONS}."
                         )
                     ]
                 query = select(WriteoffDeviceDB).where(
@@ -194,7 +194,7 @@ def require_writeoff_context(*loader_options: Load, id_must_exist: bool = True):
                     return [
                         await self._build_pick_writeoff_devices(
                             f"{String.WRITEOFF_DEVICE_NOT_FOUND}. "
-                            f"{String.PICK_WRITEOFF_DEVICES_ACTION}."
+                            f"{String.AVAILABLE_WRITEOFF_DEVICES_ACTIONS}."
                         )
                     ]
                 return await handler_func(
@@ -213,7 +213,7 @@ def require_writeoff_context(*loader_options: Load, id_must_exist: bool = True):
                         await self._build_pick_writeoff_devices(
                             f"{String.INCONSISTENT_STATE_DETECTED} "
                             "(writeoff_device_id should not exist). "
-                            f"{String.PICK_WRITEOFF_DEVICES_ACTION}."
+                            f"{String.AVAILABLE_WRITEOFF_DEVICES_ACTIONS}."
                         )
                     ]
                 return await handler_func(self, *args, **kwargs)

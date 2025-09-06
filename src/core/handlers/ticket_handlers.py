@@ -21,15 +21,17 @@ async def list_tickets(conversation: Conversation, page_str: str = "0") -> list:
     """Handles the command to list tickets."""
     page = int(page_str)
     return [
-        conversation._build_edit_to_text_message(f"{String.TICKETS} >>"),
-        await conversation._build_tickets_list(page, f"{String.PICK_TICKETS_ACTION}."),
+        conversation._build_edit_to_text_message(f"{String.ALL_TICKETS} >>"),
+        await conversation._build_tickets_list(
+            page, f"{String.AVAILABLE_TICKETS_ACTIONS}."
+        ),
     ]
 
 
 @router.route(cb.ticket.VIEW)
 async def view_ticket(conv: Conversation, ticket_id_str: str) -> list:
     methods_tg_list: list[MethodTG] = [
-        conv._build_edit_to_callback_button_text(suffix_text=">>")
+        conv._build_edit_to_callback_button_text(prefix_text=String.TICKET)
     ]
     ticket_id = int(ticket_id_str)
     result = await conv._get_ticket_if_eligible(
@@ -42,7 +44,7 @@ async def view_ticket(conv: Conversation, ticket_id_str: str) -> list:
     if isinstance(result, TicketDB):
         ticket = result
         methods_tg_list.append(
-            conv._build_ticket_view(ticket, f"{String.PICK_TICKET_ACTION}."),
+            conv._build_ticket_view(ticket, f"{String.AVAILABLE_TICKET_ACTIONS}."),
         )
     else:
         methods_tg_list.append(
@@ -76,51 +78,50 @@ async def set_ticket_number(
     conv: Conversation, ticket_id_str: str, new_ticket_number_str: str
 ) -> list:
     ticket_id = int(ticket_id_str)
-    new_ticket_number_str = new_ticket_number_str.strip().lstrip("0")
-    if (
-        re.fullmatch(settings.ticket_number_regex, new_ticket_number_str)
-        and len(new_ticket_number_str) <= settings.ticket_number_max_length
-    ):
-        result = await conv._get_ticket_if_eligible(
-            ticket_id,
-            loader_options=[
-                selectinload(TicketDB.contract),
-                selectinload(TicketDB.devices).selectinload(DeviceDB.type),
-            ],
-        )
-        if isinstance(result, TicketDB):
-            ticket = result
+    result = await conv._get_ticket_if_eligible(
+        ticket_id,
+        loader_options=[
+            selectinload(TicketDB.contract),
+            selectinload(TicketDB.devices).selectinload(DeviceDB.type),
+        ],
+    )
+    if isinstance(result, TicketDB):
+        ticket = result
+        new_ticket_number_str = new_ticket_number_str.strip().lstrip("0")
+        if (
+            re.fullmatch(settings.ticket_number_regex, new_ticket_number_str)
+            and len(new_ticket_number_str) <= settings.ticket_number_max_length
+        ):
             new_ticket_number = int(new_ticket_number_str)
-            if ticket.number == new_ticket_number:
-                status_text = String.TICKET_NUMBER_REMAINS_THE_SAME
-            else:
+            if ticket.number != new_ticket_number:
+                text = String.TICKET_NUMBER_WAS_EDITED
                 ticket.number = new_ticket_number
-                status_text = String.TICKET_NUMBER_WAS_EDITED
-            conv.next_state = None
+            else:
+                text = String.TICKET_NUMBER_REMAINED_THE_SAME
             methods_tg_list = [
                 conv._build_ticket_view(
                     ticket=ticket,
-                    text=f"{status_text}. {String.PICK_TICKET_ACTION}.",
+                    text=f"{text}. {String.AVAILABLE_TICKET_ACTIONS}.",
                 )
             ]
         else:
+            conv.next_state = StateJS(
+                pending_command_prefix=cb.ticket.set_number(ticket_id)
+            )
             methods_tg_list = [
-                conv._drop_state_goto_main_menu(f"{result}. {String.PICK_A_FUNCTION}.")
+                conv._build_new_text_message(
+                    f"{String.INCORRECT_TICKET_NUMBER}. {String.ENTER_NEW_TICKET_NUMBER}."
+                )
             ]
     else:
-        conv.next_state = StateJS(
-            pending_command_prefix=cb.ticket.set_number(ticket_id)
-        )
         methods_tg_list = [
-            conv._build_new_text_message(
-                f"{String.INCORRECT_TICKET_NUMBER}. {String.ENTER_NEW_TICKET_NUMBER}."
-            )
+            conv._drop_state_goto_main_menu(f"{result}. {String.PICK_A_FUNCTION}.")
         ]
     return methods_tg_list
 
 
 @router.route(cb.ticket.EDIT_CONTRACT)
-async def edit_contract_number(conv: Conversation, ticket_id_str: str) -> list:
+async def edit_contract(conv: Conversation, ticket_id_str: str) -> list:
     methods_tg_list: list[MethodTG] = [conv._build_edit_to_callback_button_text()]
     ticket_id = int(ticket_id_str)
     result = await conv._get_ticket_if_eligible(ticket_id)
@@ -140,65 +141,66 @@ async def edit_contract_number(conv: Conversation, ticket_id_str: str) -> list:
 
 
 @router.route(cb.ticket.SET_CONTRACT)
-async def set_contract_number(
+async def set_contract(
     conv: Conversation, ticket_id_str: str, new_contract_number_str: str
 ) -> list:
     ticket_id = int(ticket_id_str)
-    new_contract_number_str = new_contract_number_str.strip().lstrip("0")
-    if (
-        re.fullmatch(settings.contract_number_regex, new_contract_number_str)
-        and len(new_contract_number_str) <= settings.contract_number_max_length
-    ):
-        result = await conv._get_ticket_if_eligible(
-            ticket_id,
-            loader_options=[
-                selectinload(TicketDB.contract),
-                selectinload(TicketDB.devices).selectinload(DeviceDB.type),
-            ],
-        )
-        if isinstance(result, TicketDB):
-            ticket = result
-            new_contract_number = int(new_contract_number_str)
-            if ticket.contract and ticket.contract.number == new_contract_number:
-                status_text = String.CONTRACT_NUMBER_REMAINS_THE_SAME
-            else:
-                existing_contract = await conv.session.scalar(
-                    select(ContractDB).where(ContractDB.number == new_contract_number)
+    result = await conv._get_ticket_if_eligible(
+        ticket_id,
+        loader_options=[
+            selectinload(TicketDB.contract),
+            selectinload(TicketDB.devices).selectinload(DeviceDB.type),
+        ],
+    )
+    if isinstance(result, TicketDB):
+        ticket = result
+        new_contract_number_str = new_contract_number_str.strip().lstrip("0")
+        new_contract_number = int(new_contract_number_str)
+        if (
+            re.fullmatch(settings.contract_number_regex, new_contract_number_str)
+            and len(new_contract_number_str) <= settings.contract_number_max_length
+        ):
+            text = (
+                String.CONTRACT_NUMBER_REMAINED_THE_SAME
+                if ticket.contract and ticket.contract.number == new_contract_number
+                else String.CONTRACT_NUMBER_WAS_EDITED
+            )
+            existing_contract = await conv.session.scalar(
+                select(ContractDB).where(ContractDB.number == new_contract_number)
+            )
+            if existing_contract:
+                logger.info(
+                    f"{conv.log_prefix}Contract number={new_contract_number} "
+                    f"was found under id={existing_contract.id}."
                 )
-                if existing_contract:
-                    logger.info(
-                        f"{conv.log_prefix}Contract number={new_contract_number} "
-                        f"was found in the database under id={existing_contract.id}."
-                    )
-                    ticket.contract = existing_contract
-                else:
-                    logger.info(
-                        f"{conv.log_prefix}Contract number={new_contract_number} "
-                        "was not found in the database and will be added."
-                    )
-                    new_contract = ContractDB(number=new_contract_number)
-                    conv.session.add(new_contract)
-                    ticket.contract = new_contract
-                status_text = String.CONTRACT_NUMBER_WAS_EDITED
-            conv.next_state = None
+                ticket.contract = existing_contract
+            else:
+                logger.info(
+                    f"{conv.log_prefix}Contract number={new_contract_number} "
+                    "was not found and will be added."
+                )
+                new_contract = ContractDB(number=new_contract_number)
+                conv.session.add(new_contract)
+                ticket.contract = new_contract
             methods_tg_list = [
                 conv._build_ticket_view(
                     ticket=ticket,
-                    text=f"{status_text}. {String.PICK_TICKET_ACTION}.",
+                    text=f"{text}. {String.AVAILABLE_TICKET_ACTIONS}.",
                 )
             ]
         else:
+            conv.next_state = StateJS(
+                pending_command_prefix=cb.ticket.set_contract(ticket_id)
+            )
             methods_tg_list = [
-                conv._drop_state_goto_main_menu(f"{result}. {String.PICK_A_FUNCTION}.")
+                conv._build_new_text_message(
+                    f"{String.INCORRECT_CONTRACT_NUMBER}. "
+                    f"{String.ENTER_NEW_CONTRACT_NUMBER}."
+                )
             ]
     else:
-        conv.next_state = StateJS(
-            pending_command_prefix=cb.ticket.set_contract(ticket_id)
-        )
         methods_tg_list = [
-            conv._build_new_text_message(
-                f"{String.INCORRECT_CONTRACT_NUMBER}. {String.ENTER_NEW_CONTRACT_NUMBER}."
-            )
+            conv._drop_state_goto_main_menu(f"{result}. {String.PICK_A_FUNCTION}.")
         ]
     return methods_tg_list
 
@@ -222,7 +224,7 @@ async def add_device(conv: Conversation, ticket_id_str: str) -> list:
             )
             device_types = list(device_types_result)
             methods_tg_list.append(
-                conv._build_pick_device_type(
+                conv._build_set_device_type_menu(
                     ticket, device_types, f"{String.PICK_DEVICE_TYPE}."
                 )
             )
@@ -231,10 +233,8 @@ async def add_device(conv: Conversation, ticket_id_str: str) -> list:
                 conv._build_ticket_view(
                     ticket,
                     (
-                        f"{String.THE_LIMIT_OF} "
-                        f"{settings.devices_per_ticket} "
-                        f"{String.DEVICES_REACHED}. "
-                        f"{String.PICK_TICKET_ACTION}."
+                        f"{String.LIMIT_OF_X_DEVICES_REACHED}. "
+                        f"{String.AVAILABLE_TICKET_ACTIONS}."
                     ),
                 ),
             )
@@ -274,7 +274,7 @@ async def create_device(
                     new_device.removal = False
                     if device_type.has_serial_number:
                         conv.next_state = StateJS(
-                            pending_command_prefix=cb.device.add_serial_number(
+                            pending_command_prefix=cb.device.set_serial_number(
                                 new_device.id
                             )
                         )
@@ -284,27 +284,28 @@ async def create_device(
                             )
                         )
                     else:
+                        await conv.session.refresh(
+                            ticket,
+                            attribute_names=[TicketDB.devices.key],
+                        )
                         methods_tg_list.append(
                             conv._build_ticket_view(
                                 ticket,
                                 (
                                     f"{String.DEVICE_ADDED}: "
                                     f"{String[new_device.type.name.name]}. "
-                                    f"{String.PICK_TICKET_ACTION}."
+                                    f"{String.AVAILABLE_TICKET_ACTIONS}."
                                 ),
                             ),
                         )
                 else:
-                    conv.next_state = StateJS(
-                        pending_command_prefix=cb.device.edit_action(new_device.id)
-                    )
                     methods_tg_list.append(
-                        conv._build_device_action_menu(
+                        conv._build_set_device_action_menu(
                             new_device.id, f"{String.PICK_INSTALL_OR_RETURN}."
                         ),
                     )
             else:
-                status_text = (
+                text = (
                     String.DEVICE_TYPE_NOT_FOUND
                     if not device_type
                     else String.DEVICE_TYPE_IS_DISABLED
@@ -314,10 +315,10 @@ async def create_device(
                 )
                 device_types = list(device_types_result)
                 methods_tg_list.append(
-                    conv._build_pick_device_type(
+                    conv._build_set_device_type_menu(
                         ticket,
                         device_types,
-                        f"{status_text}. {String.PICK_DEVICE_TYPE}.",
+                        f"{text}. {String.PICK_DEVICE_TYPE}.",
                     )
                 )
         else:
@@ -325,10 +326,8 @@ async def create_device(
                 conv._build_ticket_view(
                     ticket,
                     (
-                        f"{String.THE_LIMIT_OF} "
-                        f"{settings.devices_per_ticket} "
-                        f"{String.DEVICES_REACHED}. "
-                        f"{String.PICK_TICKET_ACTION}."
+                        f"{String.LIMIT_OF_X_DEVICES_REACHED}. "
+                        f"{String.AVAILABLE_TICKET_ACTIONS}."
                     ),
                 ),
             )
