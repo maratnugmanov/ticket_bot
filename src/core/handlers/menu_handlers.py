@@ -9,10 +9,10 @@ if TYPE_CHECKING:
 
 
 @router.route(cb.menu.MAIN)
-async def main_menu(conversation: Conversation) -> list:
+async def main_menu(conv: Conversation) -> list:
     """Handles the command to display the main menu, clearing any prior state."""
-    conversation.next_state = None
+    conv.next_state = None
     return [
-        conversation._build_edit_to_callback_button_text(suffix_text=">>"),
-        conversation._build_main_menu(f"{String.PICK_A_FUNCTION}."),
+        conv._build_edit_to_text_message(f"{String.TO_MAIN_MENU} >>"),
+        conv._build_main_menu(f"{String.PICK_A_FUNCTION}."),
     ]

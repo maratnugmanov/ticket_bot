@@ -30,9 +30,7 @@ async def list_tickets(conversation: Conversation, page_str: str = "0") -> list:
 
 @router.route(cb.ticket.VIEW)
 async def view_ticket(conv: Conversation, ticket_id_str: str) -> list:
-    methods_tg_list: list[MethodTG] = [
-        conv._build_edit_to_callback_button_text(prefix_text=String.TICKET)
-    ]
+    methods_tg_list: list[MethodTG] = []
     ticket_id = int(ticket_id_str)
     result = await conv._get_ticket_if_eligible(
         ticket_id,
@@ -43,10 +41,13 @@ async def view_ticket(conv: Conversation, ticket_id_str: str) -> list:
     )
     if isinstance(result, TicketDB):
         ticket = result
+        text = f"{String.TICKET} {conv._get_ticket_overview(ticket)}"
+        methods_tg_list.append(conv._build_edit_to_text_message(text))
         methods_tg_list.append(
             conv._build_ticket_view(ticket, f"{String.AVAILABLE_TICKET_ACTIONS}."),
         )
     else:
+        methods_tg_list.append(conv._build_edit_to_callback_button_text())
         methods_tg_list.append(
             conv._drop_state_goto_main_menu(f"{result}. {String.PICK_A_FUNCTION}."),
         )
@@ -130,9 +131,12 @@ async def edit_contract(conv: Conversation, ticket_id_str: str) -> list:
         conv.next_state = StateJS(
             pending_command_prefix=f"{cb.ticket.set_contract(ticket.id)}"
         )
-        methods_tg_list.append(
-            conv._build_new_text_message(f"{String.ENTER_NEW_CONTRACT_NUMBER}.")
+        text = (
+            String.ENTER_NEW_CONTRACT_NUMBER
+            if ticket.contract_id
+            else String.ENTER_CONTRACT_NUMBER
         )
+        methods_tg_list.append(conv._build_new_text_message(f"{text}."))
     else:
         methods_tg_list.append(
             conv._drop_state_goto_main_menu(f"{result}. {String.PICK_A_FUNCTION}."),
@@ -155,16 +159,18 @@ async def set_contract(
     if isinstance(result, TicketDB):
         ticket = result
         new_contract_number_str = new_contract_number_str.strip().lstrip("0")
-        new_contract_number = int(new_contract_number_str)
         if (
             re.fullmatch(settings.contract_number_regex, new_contract_number_str)
             and len(new_contract_number_str) <= settings.contract_number_max_length
         ):
-            text = (
-                String.CONTRACT_NUMBER_REMAINED_THE_SAME
-                if ticket.contract and ticket.contract.number == new_contract_number
-                else String.CONTRACT_NUMBER_WAS_EDITED
-            )
+            new_contract_number = int(new_contract_number_str)
+            if ticket.contract:
+                if ticket.contract.number == new_contract_number:
+                    text = String.CONTRACT_NUMBER_REMAINED_THE_SAME
+                else:
+                    text = String.CONTRACT_NUMBER_WAS_EDITED
+            else:
+                text = String.CONTRACT_NUMBER_WAS_ADDED
             existing_contract = await conv.session.scalar(
                 select(ContractDB).where(ContractDB.number == new_contract_number)
             )
@@ -192,10 +198,14 @@ async def set_contract(
             conv.next_state = StateJS(
                 pending_command_prefix=cb.ticket.set_contract(ticket_id)
             )
+            text = (
+                String.ENTER_NEW_CONTRACT_NUMBER
+                if ticket.contract
+                else String.ENTER_CONTRACT_NUMBER
+            )
             methods_tg_list = [
                 conv._build_new_text_message(
-                    f"{String.INCORRECT_CONTRACT_NUMBER}. "
-                    f"{String.ENTER_NEW_CONTRACT_NUMBER}."
+                    f"{String.INCORRECT_CONTRACT_NUMBER}. {text}."
                 )
             ]
     else:
@@ -207,7 +217,7 @@ async def set_contract(
 
 @router.route(cb.ticket.ADD_DEVICE)
 async def add_device(conv: Conversation, ticket_id_str: str) -> list:
-    methods_tg_list: list[MethodTG] = [conv._build_edit_to_callback_button_text()]
+    methods_tg_list: list[MethodTG] = []
     ticket_id = int(ticket_id_str)
     result = await conv._get_ticket_if_eligible(
         ticket_id,
@@ -218,6 +228,11 @@ async def add_device(conv: Conversation, ticket_id_str: str) -> list:
     )
     if isinstance(result, TicketDB):
         ticket = result
+        text = (
+            f"{String.PLUS_ICON} {String.ADD_DEVICE_TO_TICKET} "
+            f"{String.NUMBER_SYMBOL} {ticket.number}"
+        )
+        methods_tg_list.append(conv._build_edit_to_text_message(text))
         if len(ticket.devices) < settings.devices_per_ticket:
             device_types_result = await conv.session.scalars(
                 select(DeviceTypeDB).where(DeviceTypeDB.is_active == True)  # noqa: E712
@@ -239,9 +254,10 @@ async def add_device(conv: Conversation, ticket_id_str: str) -> list:
                 ),
             )
     else:
-        methods_tg_list = [
+        methods_tg_list.append(conv._build_edit_to_callback_button_text())
+        methods_tg_list.append(
             conv._drop_state_goto_main_menu(f"{result}. {String.PICK_A_FUNCTION}.")
-        ]
+        )
     return methods_tg_list
 
 
