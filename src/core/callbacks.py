@@ -1,4 +1,5 @@
 from __future__ import annotations
+from src.core.enums import DeviceStatus
 
 
 class _MenuCallback:
@@ -107,14 +108,17 @@ class _DeviceCallback:
     def edit_action(self, id: int) -> str:  # for editing install/return
         return f"{self.EDIT_ACTION}:{id}"
 
-    def set_action(self, id: str, removal: bool) -> str:
-        return f"{self.SET_ACTION}:{id}:{int(removal)}"
+    def set_action(self, id: str, status: DeviceStatus) -> str:
+        return f"{self.SET_ACTION}:{id}:{status}"
 
-    def set_action_install(self, id) -> str:
-        return self.set_action(id, removal=False)
+    def set_action_rented(self, id) -> str:
+        return self.set_action(id, status=DeviceStatus.RENTED)
 
-    def set_action_return(self, id) -> str:
-        return self.set_action(id, removal=True)
+    def set_action_sold(self, id) -> str:
+        return self.set_action(id, status=DeviceStatus.SOLD)
+
+    def set_action_returned(self, id) -> str:
+        return self.set_action(id, status=DeviceStatus.RETURNED)
 
     # def add_serial_number(self, id: int) -> str:
     #     return f"{self.ADD_SERIAL_NUMBER}:{id}"

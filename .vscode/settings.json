@@ -12,11 +12,13 @@
         "ondelete",
         "onupdate",
         "pydantic",
+        "sberbox",
         "selectin",
         "selectinload",
         "sessionmaker",
         "sqlalchemy",
         "uselist",
-        "РГКС"
+        "РГКС",
+        "Сбер"
     ]
 }

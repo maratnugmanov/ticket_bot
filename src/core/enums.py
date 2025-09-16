@@ -14,8 +14,15 @@ class DeviceTypeName(enum.StrEnum):
     ROUTER = enum.auto()
     IP_DEVICE = enum.auto()
     TVE_DEVICE = enum.auto()
+    SBERBOX = enum.auto()
     POWER_UNIT = enum.auto()
     NETWORK_HUB = enum.auto()
+
+
+class DeviceStatus(enum.StrEnum):
+    RENTED = enum.auto()
+    SOLD = enum.auto()
+    RETURNED = enum.auto()
 
 
 class ValidationMode(enum.StrEnum):
@@ -165,6 +172,7 @@ class String(enum.StrEnum):
     ROUTER = "Роутер"
     IP_DEVICE = "IP-приставка"
     TVE_DEVICE = "TVE-приставка"
+    SBERBOX = "СберБокс"
     POWER_UNIT = "Блок питания"
     NETWORK_HUB = "Свитч"
 
@@ -237,18 +245,24 @@ class String(enum.StrEnum):
     GOT_DATA_NOT_CONTRACT_NUMBER = (
         "Вы нажали кнопку, а должны были ввести номер договора"
     )
+    READONLY_MODE = "Просмотр в режиме чтения"
+    CANNOT_EDIT_CLOSED_TICKET = (
+        "Нельзя вносить изменения в закрытую заявку, сначала верните ее в работу"
+    )
     # Common Icons
     EDIT_ICON = "✏️"
     ATTENTION_ICON = "❗"
     TRASHCAN_ICON = "🗑"
     PLUS_ICON = "➕"
     # Device Buttons
-    INSTALL_DEVICE_ICON = "✅"
-    RETURN_DEVICE_ICON = "↪️"
-    UNSET_DEVICE_ICON = "❗"  # ❓
-    INSTALL_DEVICE_BTN = "Установка"
+    RENTED_DEVICE_ICON = "🔄"
+    SOLD_DEVICE_ICON = "✅"
+    RETURNED_DEVICE_ICON = "🆘"  # ↪️
+    UNSET_DEVICE_ICON = "❗"
+    RENT_DEVICE_BTN = "Аренда"
+    SELL_DEVICE_BTN = "Продажа"
     RETURN_DEVICE_BTN = "Возврат"
-    INSTALL_RETURN_BTN = "Установка/Возврат"
+    RENT_SELL_RETURN_BTN = "Аренда/Продажа/Возврат"
     # Common Tags
     EDIT = "[ Ред ]"
     ERROR = "[ Ошибка ]"
@@ -269,6 +283,7 @@ class String(enum.StrEnum):
     TYPE = "Тип"
     ACTION = "Действие"
     PICK_DEVICE_ACTION = "Выберите действие с устройством"
+    UNRECOGNIZED_DEVICE_ACTION = "Неопознанное действие с устройством"
     ALL_TICKETS = "Все заявки"
     MAIN_MENU = "Главное меню"
     # Common Buttons
@@ -298,6 +313,7 @@ class String(enum.StrEnum):
     DEVICE_ADDED = "Устройство добавлено"
     DEVICE_NOT_FOUND = "Устройство не найдено, возможно оно было удалено"
     DEVICE_TYPE_NOT_FOUND = "Тип устройства не найден"
+    DEVICE_TYPE_HAS_NO_ACTIONS = "Выбранный тип устройства не имеет доступных действий"
     DEVICE_TYPE_HAS_NO_SERIAL_NUMBER = (
         "Серийный номер для этого типа устройства не предусмотрен"
     )
@@ -320,7 +336,6 @@ class String(enum.StrEnum):
     SERIAL_NUMBER_EDITED = "Серийный номер изменен"
     SERIAL_NUMBER_REMOVED = "Серийный номер удален"
     SERIAL_NUMBER_REMAINED_THE_SAME = "Серийный номер остался прежним"
-    PICK_INSTALL_OR_RETURN = "Выберите установку или возврат устройства"
     # SERIAL_NUMBER_RECOGNIZED = (
     #     "Серийный номер опознан: устройство с домашнего склада. Выберите действие."
     # )

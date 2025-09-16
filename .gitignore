@@ -13,6 +13,7 @@ wheels/
 src/*/*_old.*
 src/*/*_bak.*
 .mypy_cache/
+.vscode
 .env
 *.db
 db/schemas.py

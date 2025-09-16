@@ -19,21 +19,48 @@ async def create_db_and_tables():
 async def create_device_types(session: AsyncSession):
     logger.info("Initializing device types...")
     router = DeviceTypeDB(
-        name=DeviceTypeName.ROUTER, is_disposable=False, has_serial_number=True
+        name=DeviceTypeName.ROUTER,
+        rentable=True,
+        sellable=True,
+        returnable=True,
+        has_serial_number=True,
     )
     ip_device = DeviceTypeDB(
-        name=DeviceTypeName.IP_DEVICE, is_disposable=False, has_serial_number=True
+        name=DeviceTypeName.IP_DEVICE,
+        rentable=True,
+        sellable=False,
+        returnable=True,
+        has_serial_number=True,
     )
     tve_device = DeviceTypeDB(
-        name=DeviceTypeName.TVE_DEVICE, is_disposable=False, has_serial_number=True
+        name=DeviceTypeName.TVE_DEVICE,
+        rentable=True,
+        sellable=False,
+        returnable=True,
+        has_serial_number=True,
+    )
+    sberbox = DeviceTypeDB(
+        name=DeviceTypeName.SBERBOX,
+        rentable=False,
+        sellable=True,
+        returnable=True,
+        has_serial_number=True,
     )
     power_unit = DeviceTypeDB(
-        name=DeviceTypeName.POWER_UNIT, is_disposable=True, has_serial_number=False
+        name=DeviceTypeName.POWER_UNIT,
+        rentable=True,
+        sellable=False,
+        returnable=False,
+        has_serial_number=False,
     )
     network_hub = DeviceTypeDB(
-        name=DeviceTypeName.NETWORK_HUB, is_disposable=True, has_serial_number=True
+        name=DeviceTypeName.NETWORK_HUB,
+        rentable=True,
+        sellable=False,
+        returnable=False,
+        has_serial_number=True,
     )
-    device_types = [router, ip_device, tve_device, power_unit, network_hub]
+    device_types = [router, ip_device, tve_device, sberbox, power_unit, network_hub]
     for device_type in device_types:
         existing_device_type = await session.scalar(
             select(DeviceTypeDB.id).where(DeviceTypeDB.name == device_type.name)
