@@ -1,5 +1,6 @@
 from __future__ import annotations
 import inspect
+from contextlib import asynccontextmanager
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Coroutine
@@ -7,7 +8,7 @@ from zoneinfo import ZoneInfo
 import httpx
 from pydantic import ValidationError
 from sqlalchemy import select, exists, func
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 from src.core.config import settings
 from src.core.logger import logger
 from src.core.router import router
@@ -16,8 +17,8 @@ from src.core.decorators import require_ticket_context, require_writeoff_context
 from src.core.ticket_service import TicketService
 from src.core.enums import (
     RoleName,
-    DeviceTypeName,
     DeviceStatus,
+    DeviceTypeName,
     ValidationMode,
     CallbackData,
     String,
@@ -50,6 +51,7 @@ from src.db.models import (
     WriteoffDeviceDB,
     DeviceDB,
     DeviceTypeDB,
+    DeviceStatusDB,
 )
 
 
@@ -154,6 +156,12 @@ class Conversation:
                 "from happening."
             )
             return None
+        if not user_db.is_active:
+            logger.info(
+                f"{update_tg._log}User {user_db.full_name} is inactive "
+                "and will be ignored."
+            )
+            return None
         if len(user_db.roles) == 1:
             if guest_role is None:
                 guest_role = await session.scalar(
@@ -170,8 +178,7 @@ class Conversation:
             if user_db.roles[0].id == guest_role.id:
                 logger.info(
                     f"{update_tg._log}User {user_db.full_name} has "
-                    f"only '{RoleName.GUEST}' role and won't get any "
-                    "reply."
+                    f"only '{RoleName.GUEST}' role and will be ignored."
                 )
                 return None
         logger.info(f"{update_tg._log}Validated user {user_db.full_name} as employee.")
@@ -419,6 +426,62 @@ class Conversation:
             result = ticket
         return result
 
+    @asynccontextmanager
+    async def ticket_edit_session(self, ticket_id_str: str):
+        """An async context manager for editing a ticket.
+        Yields TicketDB if the ticket is found, eligible, and open.
+        Yields list[MethodTG] with explanation of denial otherwise."""
+        ticket_id = int(ticket_id_str)
+        loader_options = [
+            joinedload(TicketDB.contract),
+            joinedload(TicketDB.devices)
+            .selectinload(DeviceDB.type)
+            .selectinload(DeviceTypeDB.statuses),
+        ]
+        result = await self._get_ticket_if_eligible(ticket_id, loader_options)
+        if isinstance(result, TicketDB):
+            ticket = result
+            if not ticket.is_closed:
+                yield ticket
+            else:
+                yield [
+                    self._build_ticket_view(
+                        ticket,
+                        (
+                            f"{String.ATTENTION_ICON} "  # nbsp
+                            f"{String.READONLY_MODE}. "
+                            f"{String.CANNOT_EDIT_CLOSED_TICKET}."
+                        ),
+                    )
+                ]
+        else:
+            yield [
+                self._drop_state_goto_main_menu(f"{result}. {String.PICK_A_FUNCTION}.")
+            ]
+
+    @asynccontextmanager
+    async def device_edit_session(self, device_id_str: str):
+        """An async context manager for editing a device. It internally
+        validates the parent ticket. Yields tuple[DeviceDB, TicketDB]
+        if the device and ticket are found and editable. Yields
+        list[MethodTG] if the device is not found, or the ticket
+        is closed/inaccessible."""
+        device_id = int(device_id_str)
+        device = await self.session.get(DeviceDB, device_id)
+        if device:
+            async with self.ticket_edit_session(str(device.ticket_id)) as result:
+                if isinstance(result, TicketDB):
+                    ticket = result
+                    yield device, ticket
+                else:
+                    yield result
+        else:
+            yield [
+                self._drop_state_goto_main_menu(
+                    f"{String.DEVICE_NOT_FOUND}. {String.PICK_A_FUNCTION}."
+                )
+            ]
+
     def _build_new_text_message(self, text: str) -> SendMessageTG:
         return SendMessageTG(
             chat_id=self.user_db.telegram_uid,
@@ -590,6 +653,8 @@ class Conversation:
         return self._build_main_menu()
 
     def _get_ticket_overview(self, ticket: TicketDB) -> str:
+        """Returns a string with ticket icon, ticket number,
+        and ticket creation date."""
         user_timezone = ZoneInfo(self.user_db.timezone)
         months = {
             1: String.JAN,
@@ -605,7 +670,7 @@ class Conversation:
             11: String.NOV,
             12: String.DEC,
         }
-        closed_status = (
+        ticket_icon = (
             String.CLOSED_TICKET_ICON if ticket.is_closed else String.ATTENTION_ICON
         )
         ticket_created_at_local_timestamp = ticket.created_at.astimezone(user_timezone)
@@ -613,59 +678,42 @@ class Conversation:
         month_number = ticket_created_at_local_timestamp.month
         hh_mm = ticket_created_at_local_timestamp.strftime("%H:%M")
         return (
-            f"{closed_status} "  # nbsp
+            f"{ticket_icon} "  # nbsp
             f"{String.NUMBER_SYMBOL} "  # nbsp
-            f"{ticket.number} {String.FROM_X.value} "
+            f"{ticket.number} {String.FROM_X} "
             f"{day_number} {months[month_number]} "  # nbsp
             f"{hh_mm} >>"  # nbsp
         )
 
-    def _get_device_type_statuses(
-        self, device_type: DeviceTypeDB
-    ) -> dict[DeviceStatus, tuple[String, String]]:
-        """Returns a dictionary of status enum as a key
-        and its icon and its localized name as a value tuple."""
-        device_type_all_flags = {
-            DeviceStatus.RENTED: (
-                device_type.rentable,
-                String.RENTED_DEVICE_ICON,
-                String.RENT_DEVICE_BTN,
-            ),
-            DeviceStatus.SOLD: (
-                device_type.sellable,
-                String.SOLD_DEVICE_ICON,
-                String.SELL_DEVICE_BTN,
-            ),
-            DeviceStatus.RETURNED: (
-                device_type.returnable,
-                String.RETURNED_DEVICE_ICON,
-                String.RETURN_DEVICE_BTN,
-            ),
+    def _get_device_status_icon(self, status: DeviceStatusDB | None) -> String:
+        """Returns the icon for a given status.
+        Returns an attention icon if the status is missing
+        or a question mark icon if it is unknown."""
+        if not status:
+            return String.ATTENTION_ICON
+        status_icons = {
+            DeviceStatus.RENT: String.RENT_DEVICE_ICON,
+            DeviceStatus.SALE: String.SALE_DEVICE_ICON,
+            DeviceStatus.RETURN: String.RETURN_DEVICE_ICON,
         }
-        return {
-            status: (status_icon, status_name)
-            for status, (
-                is_possible,
-                status_icon,
-                status_name,
-            ) in device_type_all_flags.items()
-            if is_possible
-        }
+        return status_icons.get(status.name, String.QUESTION_MARK_ICON)
 
     def _device_status_icon_if_valid_for_ticket_closing(
         self, device: DeviceDB
     ) -> String | None:
-        device_type_statuses = self._get_device_type_statuses(device.type)
+        """Returns device status icon if the device is complete,
+        otherwise returns None."""
         if (
-            device.status is not None
-            and device.status in device_type_statuses
-            and bool(device.serial_number) == device.type.has_serial_number
+            device.status is None
+            or device.status not in device.type.statuses
+            or bool(device.serial_number) != device.type.has_serial_number
         ):
-            return device_type_statuses[device.status][0]
-        else:
             return None
+        return self._get_device_status_icon(device.status)
 
     def _ticket_valid_for_closing(self, ticket: TicketDB) -> bool:
+        """Returns True if a ticket is valid for closing,
+        otherwise returns False."""
         if not (
             ticket.number
             and ticket.contract
@@ -681,6 +729,8 @@ class Conversation:
     async def _build_tickets_list(
         self, page: int = 0, text: str = f"{String.AVAILABLE_TICKETS_ACTIONS}."
     ) -> SendMessageTG:
+        """Returns a telegram message object
+        with a list ot recent tickets."""
         lookback_days = settings.tickets_history_lookback_days
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=lookback_days)
         total_recent_tickets = (
@@ -709,11 +759,12 @@ class Conversation:
         elif page > last_page:
             page = last_page
         logger.info(f"{self.log_prefix}User is on page {page + 1} of {total_pages}.")
+        inline_keyboard: list[list[InlineKeyboardButtonTG]] = []
         add_ticket_button = InlineKeyboardButtonTG(
             text=String.ADD_TICKET_BTN,
             callback_data=cb.ticket.create_start(),
         )
-        inline_keyboard: list[list[InlineKeyboardButtonTG]] = [[add_ticket_button]]
+        inline_keyboard.append([add_ticket_button])
         recent_ticket_index_offset = page * tickets_per_page
         current_page_tickets_result = await self.session.scalars(
             select(TicketDB)
@@ -727,13 +778,11 @@ class Conversation:
         )
         current_page_tickets = list(current_page_tickets_result)
         for ticket in current_page_tickets:
-            ticket_button = [
-                InlineKeyboardButtonTG(
-                    text=self._get_ticket_overview(ticket),
-                    callback_data=cb.ticket.view(ticket.id),
-                ),
-            ]
-            inline_keyboard.append(ticket_button)
+            ticket_button = InlineKeyboardButtonTG(
+                text=self._get_ticket_overview(ticket),
+                callback_data=cb.ticket.view(ticket.id),
+            )
+            inline_keyboard.append([ticket_button])
         prev_next_buttons_row: list[InlineKeyboardButtonTG] = []
         if total_recent_tickets > tickets_per_page:
             prev_button = InlineKeyboardButtonTG(
@@ -764,23 +813,35 @@ class Conversation:
     def _build_ticket_view(
         self, ticket: TicketDB, text: str = f"{String.AVAILABLE_TICKET_ACTIONS}."
     ) -> SendMessageTG:
+        """Returns a telegram message object
+        with ticket devices and available ticket actions.
+        It does NOT check if ticket is foreign."""
+        inline_keyboard: list[list[InlineKeyboardButtonTG]] = []
         ticket_number_button = InlineKeyboardButtonTG(
-            text=f"{String.TICKET} {String.NUMBER_SYMBOL} {ticket.number} {String.EDIT}",
+            text=(
+                f"{String.TICKET} "
+                f"{String.NUMBER_SYMBOL} "  # nbsp
+                f"{ticket.number} {String.EDIT}"
+            ),
             callback_data=cb.ticket.edit_number(ticket.id),
         )
-        contract_text = (
-            f"{String.CONTRACT} {String.NUMBER_SYMBOL} {ticket.contract.number}"  # nbsp
-            if ticket.contract
-            else f"{String.ATTENTION_ICON} {String.ENTER_CONTRACT_NUMBER}"  # nbsp
-        )
+        inline_keyboard.append([ticket_number_button])
+        if ticket.contract:
+            contract_text = (
+                f"{String.CONTRACT} "
+                f"{String.NUMBER_SYMBOL} "  # nbsp
+                f"{ticket.contract.number}"
+            )
+        else:
+            contract_text = (
+                f"{String.ATTENTION_ICON} "  # nbsp
+                f"{String.ENTER_CONTRACT_NUMBER}"
+            )
         contract_number_button = InlineKeyboardButtonTG(
             text=f"{contract_text} {String.EDIT}",
             callback_data=cb.ticket.edit_contract(ticket.id),
         )
-        inline_keyboard: list[list[InlineKeyboardButtonTG]] = [
-            [ticket_number_button],
-            [contract_number_button],
-        ]
+        inline_keyboard.append([contract_number_button])
         for index, device in enumerate(ticket.devices):
             device_number = index + 1
             device_icon = (
@@ -825,7 +886,7 @@ class Conversation:
             text=f"{String.TRASHCAN_ICON} {String.DELETE_TICKET_PERMANENTLY}",  # nbsp
             callback_data=cb.ticket.delete_start(ticket.id),
         )
-        view_tickets_button = InlineKeyboardButtonTG(
+        all_tickets_button = InlineKeyboardButtonTG(
             text=String.ALL_TICKETS, callback_data=cb.ticket.list_page(0)
         )
         main_menu_button = InlineKeyboardButtonTG(
@@ -840,12 +901,41 @@ class Conversation:
             if self._ticket_valid_for_closing(ticket):
                 inline_keyboard.append([close_ticket_button])
         inline_keyboard.append([delete_ticket_button])
-        inline_keyboard.append([view_tickets_button, main_menu_button])
+        inline_keyboard.append([all_tickets_button, main_menu_button])
         return SendMessageTG(
             chat_id=self.user_db.telegram_uid,
             text=text,
             reply_markup=InlineKeyboardMarkupTG(inline_keyboard=inline_keyboard),
         )
+
+    def _build_confirm_ticket_deletion_menu(
+        self, ticket_id: int, text: str = f"{String.CONFIRM_TICKET_DELETION}."
+    ) -> SendMessageTG:
+        """Returns a telegram message object
+        with ticket removal confirmation options.
+        It does NOT check if ticket is foreign."""
+        method_tg = SendMessageTG(
+            chat_id=self.user_db.telegram_uid,
+            text=text,
+            reply_markup=InlineKeyboardMarkupTG(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButtonTG(
+                            text=(
+                                f"{String.WARNING_ICON} "  # nbsp
+                                f"{String.CONFIRM_DELETE_TICKET}"
+                            ),
+                            callback_data=cb.ticket.delete_confirm(ticket_id),
+                        ),
+                        InlineKeyboardButtonTG(
+                            text=String.CHANGED_MY_MIND,
+                            callback_data=cb.ticket.view(ticket_id),
+                        ),
+                    ],
+                ]
+            ),
+        )
+        return method_tg
 
     def _build_set_device_type_menu(
         self,
@@ -854,6 +944,10 @@ class Conversation:
         text: str = f"{String.PICK_DEVICE_TYPE}.",
         device: DeviceDB | None = None,
     ) -> SendMessageTG:
+        """Returns a telegram message object with a list of device types
+        to choose from to create a new device or to edit an existing one
+        if one was provided.
+        It does NOT check if ticket is closed or foreign."""
         inline_keyboard: list[list[InlineKeyboardButtonTG]] = []
         for device_type in device_types:
             button_text = String[device_type.name.name]
@@ -871,7 +965,7 @@ class Conversation:
                 ]
             )
         if not inline_keyboard:
-            logger.error(
+            logger.warning(
                 f"{self.log_prefix}Configuration error: "
                 "Not a single eligible (active) "
                 f"{DeviceTypeDB.__name__} was found in the database. "
@@ -888,8 +982,8 @@ class Conversation:
                     ticket, device, f"{text}. {String.AVAILABLE_DEVICE_ACTIONS}."
                 )
             else:
-                method_tg = self._drop_state_goto_main_menu(
-                    f"{text}. {String.PICK_A_FUNCTION}."
+                method_tg = self._build_ticket_view(
+                    ticket, f"{text}. {String.AVAILABLE_TICKET_ACTIONS}."
                 )
         else:
             method_tg = SendMessageTG(
@@ -899,40 +993,24 @@ class Conversation:
             )
         return method_tg
 
-    def _build_set_device_action_menu(
+    def _build_set_device_status_menu(
         self,
         device_id: int,
         device_type: DeviceTypeDB,
         text: str = f"{String.PICK_DEVICE_ACTION}.",
     ) -> SendMessageTG:
-        rent_button = InlineKeyboardButtonTG(
-            text=(
-                f"{String.RENTED_DEVICE_ICON} "  # nbsp
-                f"{String.RENT_DEVICE_BTN}"
-            ),
-            callback_data=cb.device.set_action_rented(device_id),
-        )
-        sell_button = InlineKeyboardButtonTG(
-            text=(
-                f"{String.SOLD_DEVICE_ICON} "  # nbsp
-                f"{String.SELL_DEVICE_BTN}"
-            ),
-            callback_data=cb.device.set_action_sold(device_id),
-        )
-        return_button = InlineKeyboardButtonTG(
-            text=(
-                f"{String.RETURNED_DEVICE_ICON} "  # nbsp
-                f"{String.RETURN_DEVICE_BTN}"
-            ),
-            callback_data=cb.device.set_action_returned(device_id),
-        )
+        """Returns a telegram message object with a list of device
+        statuses to choose from to edit an existing device.
+        It does NOT check if ticket is closed or foreign."""
         inline_keyboard: list[list[InlineKeyboardButtonTG]] = []
-        if device_type.rentable:
-            inline_keyboard.append([rent_button])
-        if device_type.sellable:
-            inline_keyboard.append([sell_button])
-        if device_type.returnable:
-            inline_keyboard.append([return_button])
+        for status in device_type.statuses:
+            status_icon = self._get_device_status_icon(status)
+            status_name_str = String[status.name.name]
+            button = InlineKeyboardButtonTG(
+                text=f"{status_icon} {status_name_str}",  # nbsp
+                callback_data=cb.device.set_status(device_id, status.name),
+            )
+            inline_keyboard.append([button])
         return SendMessageTG(
             chat_id=self.user_db.telegram_uid,
             text=text,
@@ -945,43 +1023,39 @@ class Conversation:
         device: DeviceDB,
         text: str = f"{String.AVAILABLE_DEVICE_ACTIONS}.",
     ) -> SendMessageTG:
+        """Returns a telegram message object
+        with device details and available device actions.
+        It does NOT check if ticket is foreign."""
+        inline_keyboard: list[list[InlineKeyboardButtonTG]] = []
         device_type_name = String[device.type.name.name]
-        device_serial_number_text = (
-            f"{String.NUMBER_SYMBOL} {device.serial_number}"
-            if device.serial_number is not None
-            else f"{String.ATTENTION_ICON} {String.ENTER_SERIAL_NUMBER}"  # nbsp
-        )
         device_type_button = InlineKeyboardButtonTG(
             text=f"{String.TYPE}: {device_type_name} {String.EDIT}",
             callback_data=cb.device.edit_type(device.id),
         )
-        device_type_statuses = self._get_device_type_statuses(device.type)
-        status_tuple = None
+        status_icon = self._get_device_status_icon(device.status)
         if device.status:
-            status_tuple = device_type_statuses.get(device.status)
-            if status_tuple:
-                status_icon, status_name = status_tuple
-                device_action_text = (
-                    f"{String.ACTION}: "
-                    f"{status_icon} "  # nbsp
-                    f"{status_name}"
-                )
-            else:
-                device_action_text = (
-                    f"{String.ATTENTION_ICON} "  # nbsp
-                    f"{String.UNRECOGNIZED_DEVICE_ACTION}"
-                )
+            status_name = String[device.status.name.name]
+            device_status_text = (
+                f"{String.ACTION}: "
+                f"{status_icon} "  # nbsp
+                f"{status_name}"
+            )
         else:
-            device_action_text = (
-                f"{String.ATTENTION_ICON} "  # nbsp
+            device_status_text = (
+                f"{status_icon} "  # nbsp
                 f"{String.PICK_DEVICE_ACTION}"
             )
-        device_action_button = InlineKeyboardButtonTG(
-            text=f"{device_action_text} {String.EDIT}",
-            callback_data=cb.device.edit_action(device.id),
+        device_status_button = InlineKeyboardButtonTG(
+            text=f"{device_status_text} {String.EDIT}",
+            callback_data=cb.device.edit_status(device.id),
+        )
+        device_serial_number_text = (
+            f"{String.NUMBER_SYMBOL} {device.serial_number}"  # nbsp
+            if device.serial_number is not None
+            else f"{String.ATTENTION_ICON} {String.ENTER_SERIAL_NUMBER}"  # nbsp
         )
         serial_number_button = InlineKeyboardButtonTG(
-            text=f"{device_serial_number_text} {String.EDIT}",  # nbsp
+            text=f"{device_serial_number_text} {String.EDIT}",
             callback_data=cb.device.edit_serial_number(device.id),
         )
         view_ticket_button = InlineKeyboardButtonTG(
@@ -993,30 +1067,29 @@ class Conversation:
             callback_data=cb.ticket.list_page(0),
         )
         delete_button = InlineKeyboardButtonTG(
-            text=f"{String.TRASHCAN_ICON} {String.DELETE_DEVICE_FROM_TICKET}",
+            text=f"{String.TRASHCAN_ICON} {String.DELETE_DEVICE_FROM_TICKET}",  # nbsp
             callback_data=cb.device.delete(device.id),
         )
         main_menu_button = InlineKeyboardButtonTG(
             text=String.MAIN_MENU,
             callback_data=cb.menu.main(),
         )
-        inline_keyboard_rows: list[list[InlineKeyboardButtonTG]] = [
-            [device_type_button]
-        ]
-        possible_statuses_count = len(device_type_statuses)
+        inline_keyboard.append([device_type_button])
+        possible_statuses_count = len(device.type.statuses)
         if possible_statuses_count > 1 or (
-            possible_statuses_count == 1 and (not device.status or not status_tuple)
+            possible_statuses_count == 1
+            and (not device.status or device.status not in device.type.statuses)
         ):
-            inline_keyboard_rows.append([device_action_button])
+            inline_keyboard.append([device_status_button])
         if device.type.has_serial_number:
-            inline_keyboard_rows.append([serial_number_button])
-        inline_keyboard_rows.append([delete_button])
-        inline_keyboard_rows.append([view_ticket_button, view_tickets_button])
-        inline_keyboard_rows.append([main_menu_button])
+            inline_keyboard.append([serial_number_button])
+        inline_keyboard.append([delete_button])
+        inline_keyboard.append([view_ticket_button, view_tickets_button])
+        inline_keyboard.append([main_menu_button])
         return SendMessageTG(
             chat_id=self.user_db.telegram_uid,
             text=text,
-            reply_markup=InlineKeyboardMarkupTG(inline_keyboard=inline_keyboard_rows),
+            reply_markup=InlineKeyboardMarkupTG(inline_keyboard=inline_keyboard),
         )
 
     async def _build_pick_writeoff_devices(
@@ -1123,7 +1196,7 @@ class Conversation:
                     text=(
                         f"{writeoff_device_number}. "
                         f"{writeoff_device_icon} "
-                        f"{device_type_name.value}"
+                        f"{device_type_name}"
                         f"{writeoff_device_serial_number_string}"
                         f"{writeoff_device_is_disposable_check_string}"
                     ),
@@ -1162,29 +1235,6 @@ class Conversation:
             text=text,
             reply_markup=InlineKeyboardMarkupTG(inline_keyboard=inline_keyboard_rows),
         )
-
-    def _build_pick_confirm_delete_ticket_message(
-        self, text: str = f"{String.CONFIRM_TICKET_DELETION}."
-    ) -> SendMessageTG:
-        method_tg = SendMessageTG(
-            chat_id=self.user_db.telegram_uid,
-            text=text,
-            reply_markup=InlineKeyboardMarkupTG(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButtonTG(
-                            text=String.CONFIRM_DELETE_TICKET,
-                            callback_data="placeholder",
-                        ),
-                        InlineKeyboardButtonTG(
-                            text=String.CHANGED_MY_MIND,
-                            callback_data="placeholder",
-                        ),
-                    ],
-                ]
-            ),
-        )
-        return method_tg
 
     async def _build_pick_writeoff_device_type(
         self, text: str = f"{String.PICK_WRITEOFF_DEVICE_TYPE}."
@@ -1306,7 +1356,7 @@ class Conversation:
             device_serial_number_text = (
                 writeoff_device.serial_number
                 if writeoff_device.serial_number is not None
-                else String.ENTER_SERIAL_NUMBER.value
+                else String.ENTER_SERIAL_NUMBER
             )
             device_type_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
                 text=f"{device_type_name} {String.EDIT}",

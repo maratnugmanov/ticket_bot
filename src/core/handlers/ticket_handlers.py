@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 import re
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 from src.core.config import settings
 from src.core.logger import logger
 from src.core.router import router
@@ -10,21 +10,19 @@ from src.core.callbacks import cb
 from src.core.enums import DeviceStatus, String
 from src.core.models import StateJS
 from src.tg.models import MethodTG
-from src.db.models import ContractDB, TicketDB, DeviceDB, DeviceTypeDB
+from src.db.models import ContractDB, TicketDB, DeviceDB, DeviceStatusDB, DeviceTypeDB
 
 if TYPE_CHECKING:
     from src.core.conversation import Conversation
 
 
 @router.route(cb.ticket.LIST)
-async def list_tickets(conversation: Conversation, page_str: str = "0") -> list:
+async def list_tickets(conv: Conversation, page_str: str = "0") -> list:
     """Handles the command to list tickets."""
     page = int(page_str)
     return [
-        conversation._build_edit_to_text_message(f"{String.ALL_TICKETS} >>"),
-        await conversation._build_tickets_list(
-            page, f"{String.AVAILABLE_TICKETS_ACTIONS}."
-        ),
+        conv._build_edit_to_text_message(f"{String.ALL_TICKETS} >>"),
+        await conv._build_tickets_list(page, f"{String.AVAILABLE_TICKETS_ACTIONS}."),
     ]
 
 
@@ -35,15 +33,17 @@ async def view_ticket(conv: Conversation, ticket_id_str: str) -> list:
     result = await conv._get_ticket_if_eligible(
         ticket_id,
         loader_options=[
-            selectinload(TicketDB.contract),
-            selectinload(TicketDB.devices).selectinload(DeviceDB.type),
+            joinedload(TicketDB.contract),
+            joinedload(TicketDB.devices)
+            .selectinload(DeviceDB.type)
+            .selectinload(DeviceTypeDB.statuses),
         ],
     )
     if isinstance(result, TicketDB):
         ticket = result
         ticket_overview_text = f"{String.TICKET} {conv._get_ticket_overview(ticket)}"
         methods_tg_list.append(conv._build_edit_to_text_message(ticket_overview_text))
-        ticket_view_text = (
+        text = (
             f"{String.AVAILABLE_TICKET_ACTIONS}."
             if not ticket.is_closed
             else (
@@ -53,8 +53,105 @@ async def view_ticket(conv: Conversation, ticket_id_str: str) -> list:
             )
         )
         methods_tg_list.append(
-            conv._build_ticket_view(ticket, ticket_view_text),
+            conv._build_ticket_view(ticket, text),
         )
+    else:
+        methods_tg_list.append(conv._build_edit_to_callback_button_text())
+        methods_tg_list.append(
+            conv._drop_state_goto_main_menu(f"{result}. {String.PICK_A_FUNCTION}."),
+        )
+    return methods_tg_list
+
+
+@router.route(cb.ticket.DELETE_START)
+async def delete_ticket_start(conv: Conversation, ticket_id_str: str) -> list:
+    methods_tg_list: list[MethodTG] = [conv._build_edit_to_callback_button_text()]
+    ticket_id = int(ticket_id_str)
+    result = await conv._get_ticket_if_eligible(
+        ticket_id,
+        loader_options=[
+            selectinload(TicketDB.contract),
+            selectinload(TicketDB.devices)
+            .selectinload(DeviceDB.type)
+            .selectinload(DeviceTypeDB.statuses),
+        ],
+    )
+    if isinstance(result, TicketDB):
+        ticket = result
+        if not ticket.is_closed:
+            ticket_overview_text = conv._get_ticket_overview(ticket)
+            text = (
+                f"{String.TICKET} "
+                f"{ticket_overview_text}. "
+                f"{String.CONFIRM_TICKET_DELETION}."
+            )
+            methods_tg_list.append(
+                conv._build_confirm_ticket_deletion_menu(ticket.id, text)
+            )
+        else:
+            methods_tg_list.append(
+                conv._build_ticket_view(
+                    ticket,
+                    (
+                        f"{String.ATTENTION_ICON} "  # nbsp
+                        f"{String.READONLY_MODE}. "
+                        f"{String.CANNOT_EDIT_CLOSED_TICKET}."
+                    ),
+                ),
+            )
+    else:
+        methods_tg_list.append(
+            conv._drop_state_goto_main_menu(f"{result}. {String.PICK_A_FUNCTION}."),
+        )
+    return methods_tg_list
+
+
+@router.route(cb.ticket.DELETE_CONFIRM)
+async def delete_ticket_confirm(conv: Conversation, ticket_id_str: str) -> list:
+    methods_tg_list: list[MethodTG] = []
+    ticket_id = int(ticket_id_str)
+    result = await conv._get_ticket_if_eligible(
+        ticket_id,
+        loader_options=[
+            selectinload(TicketDB.contract),
+            selectinload(TicketDB.devices)
+            .selectinload(DeviceDB.type)
+            .selectinload(DeviceTypeDB.statuses),
+        ],
+    )
+    if isinstance(result, TicketDB):
+        ticket = result
+        ticket_overview_text = conv._get_ticket_overview(ticket)
+        text = (
+            f"{String.WARNING_ICON} "  # nbsp
+            f"{String.CONFIRM_DELETE_TICKET} "
+            f"{ticket_overview_text}"
+        )
+        methods_tg_list.append(conv._build_edit_to_text_message(text))
+        if not ticket.is_closed:
+            await conv.session.delete(ticket)
+            await conv.session.flush()
+            methods_tg_list.append(
+                await conv._build_tickets_list(
+                    text=(
+                        f"{String.TRASHCAN_ICON} "  # nbsp
+                        f"{String.TICKET_DELETED} "
+                        f"{ticket_overview_text}. "
+                        f"{String.AVAILABLE_TICKETS_ACTIONS}."
+                    ),
+                ),
+            )
+        else:
+            methods_tg_list.append(
+                conv._build_ticket_view(
+                    ticket,
+                    (
+                        f"{String.ATTENTION_ICON} "  # nbsp
+                        f"{String.READONLY_MODE}. "
+                        f"{String.CANNOT_EDIT_CLOSED_TICKET}."
+                    ),
+                ),
+            )
     else:
         methods_tg_list.append(conv._build_edit_to_callback_button_text())
         methods_tg_list.append(
@@ -71,7 +168,9 @@ async def edit_ticket_number(conv: Conversation, ticket_id_str: str) -> list:
         ticket_id,
         loader_options=[
             selectinload(TicketDB.contract),
-            selectinload(TicketDB.devices).selectinload(DeviceDB.type),
+            selectinload(TicketDB.devices)
+            .selectinload(DeviceDB.type)
+            .selectinload(DeviceTypeDB.statuses),
         ],
     )
     if isinstance(result, TicketDB):
@@ -111,7 +210,9 @@ async def set_ticket_number(
         ticket_id,
         loader_options=[
             selectinload(TicketDB.contract),
-            selectinload(TicketDB.devices).selectinload(DeviceDB.type),
+            selectinload(TicketDB.devices)
+            .selectinload(DeviceDB.type)
+            .selectinload(DeviceTypeDB.statuses),
         ],
     )
     if isinstance(result, TicketDB):
@@ -169,7 +270,9 @@ async def edit_contract(conv: Conversation, ticket_id_str: str) -> list:
         ticket_id,
         loader_options=[
             selectinload(TicketDB.contract),
-            selectinload(TicketDB.devices).selectinload(DeviceDB.type),
+            selectinload(TicketDB.devices)
+            .selectinload(DeviceDB.type)
+            .selectinload(DeviceTypeDB.statuses),
         ],
     )
     if isinstance(result, TicketDB):
@@ -212,7 +315,9 @@ async def set_contract(
         ticket_id,
         loader_options=[
             selectinload(TicketDB.contract),
-            selectinload(TicketDB.devices).selectinload(DeviceDB.type),
+            selectinload(TicketDB.devices)
+            .selectinload(DeviceDB.type)
+            .selectinload(DeviceTypeDB.statuses),
         ],
     )
     if isinstance(result, TicketDB):
@@ -294,44 +399,35 @@ async def add_device(conv: Conversation, ticket_id_str: str) -> list:
         ticket_id,
         loader_options=[
             selectinload(TicketDB.contract),
-            selectinload(TicketDB.devices).selectinload(DeviceDB.type),
+            selectinload(TicketDB.devices)
+            .selectinload(DeviceDB.type)
+            .selectinload(DeviceTypeDB.statuses),
         ],
     )
     if isinstance(result, TicketDB):
         ticket = result
+        text = (
+            f"{String.PLUS_ICON} {String.ADD_DEVICE_TO_TICKET} "  # nbsp
+            f"{String.NUMBER_SYMBOL} {ticket.number}"  # nbsp
+        )
+        methods_tg_list.append(conv._build_edit_to_text_message(text))
         if not ticket.is_closed:
-            text = (
-                f"{String.PLUS_ICON} {String.ADD_DEVICE_TO_TICKET} "  # nbsp
-                f"{String.NUMBER_SYMBOL} {ticket.number}"  # nbsp
-            )
-            methods_tg_list.append(conv._build_edit_to_text_message(text))
-            if not ticket.is_closed:
-                if len(ticket.devices) < settings.devices_per_ticket:
-                    device_types_result = await conv.session.scalars(
-                        select(DeviceTypeDB).where(DeviceTypeDB.is_active == True)  # noqa: E712
+            if len(ticket.devices) < settings.devices_per_ticket:
+                device_types_result = await conv.session.scalars(
+                    select(DeviceTypeDB).where(DeviceTypeDB.is_active == True)  # noqa: E712
+                )
+                device_types = list(device_types_result)
+                methods_tg_list.append(
+                    conv._build_set_device_type_menu(
+                        ticket, device_types, f"{String.PICK_DEVICE_TYPE}."
                     )
-                    device_types = list(device_types_result)
-                    methods_tg_list.append(
-                        conv._build_set_device_type_menu(
-                            ticket, device_types, f"{String.PICK_DEVICE_TYPE}."
-                        )
-                    )
-                else:
-                    methods_tg_list.append(
-                        conv._build_ticket_view(
-                            ticket,
-                            (
-                                f"{String.LIMIT_OF_X_DEVICES_REACHED}. "
-                                f"{String.AVAILABLE_TICKET_ACTIONS}."
-                            ),
-                        ),
-                    )
+                )
             else:
                 methods_tg_list.append(
                     conv._build_ticket_view(
                         ticket,
                         (
-                            f"{String.CANNOT_EDIT_CLOSED_TICKET}. "
+                            f"{String.LIMIT_OF_X_DEVICES_REACHED}. "
                             f"{String.AVAILABLE_TICKET_ACTIONS}."
                         ),
                     ),
@@ -345,7 +441,7 @@ async def add_device(conv: Conversation, ticket_id_str: str) -> list:
                         f"{String.READONLY_MODE}. "
                         f"{String.CANNOT_EDIT_CLOSED_TICKET}."
                     ),
-                )
+                ),
             )
     else:
         methods_tg_list.append(conv._build_edit_to_callback_button_text())
@@ -365,7 +461,9 @@ async def create_device(
         ticket_id,
         loader_options=[
             selectinload(TicketDB.contract),
-            selectinload(TicketDB.devices).selectinload(DeviceDB.type),
+            selectinload(TicketDB.devices)
+            .selectinload(DeviceDB.type)
+            .selectinload(DeviceTypeDB.statuses),
         ],
     )
     if isinstance(result, TicketDB):
@@ -381,7 +479,7 @@ async def create_device(
                     )
                     conv.session.add(new_device)
                     await conv.session.flush()
-                    device_type_statuses = conv._get_device_type_statuses(device_type)
+                    device_type_statuses = conv._get_device_status_icon(device_type)
                     if len(device_type_statuses) == 1:
                         status = list(device_type_statuses.keys())[0]
                         icon = list(device_type_statuses.values())[0][0]
@@ -416,7 +514,7 @@ async def create_device(
                             )
                     elif device_type_statuses:
                         methods_tg_list.append(
-                            conv._build_set_device_action_menu(
+                            conv._build_set_device_status_menu(
                                 new_device.id,
                                 device_type,
                                 f"{String.PICK_DEVICE_ACTION}.",

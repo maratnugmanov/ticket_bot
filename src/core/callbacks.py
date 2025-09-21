@@ -89,8 +89,8 @@ class _DeviceCallback:
     VIEW = "device:view"
     EDIT_TYPE = "device:edit:type"
     SET_TYPE = "device:set:type"
-    EDIT_ACTION = "device:edit:action"
-    SET_ACTION = "device:set:action"
+    EDIT_STATUS = "device:edit:status"
+    SET_STATUS = "device:set:status"
     # ADD_SERIAL_NUMBER = "device:add:serial_number"
     SET_SERIAL_NUMBER = "device:set:serial_number"
     EDIT_SERIAL_NUMBER = "device:edit:serial_number"
@@ -105,20 +105,20 @@ class _DeviceCallback:
     def set_type(self, id: int, device_type_id: int) -> str:
         return f"{self.SET_TYPE}:{id}:{device_type_id}"
 
-    def edit_action(self, id: int) -> str:  # for editing install/return
-        return f"{self.EDIT_ACTION}:{id}"
+    def edit_status(self, id: int) -> str:  # for editing install/return
+        return f"{self.EDIT_STATUS}:{id}"
 
-    def set_action(self, id: str, status: DeviceStatus) -> str:
-        return f"{self.SET_ACTION}:{id}:{status}"
+    def set_status(self, id: str, status: DeviceStatus) -> str:
+        return f"{self.SET_STATUS}:{id}:{status.value}"
 
-    def set_action_rented(self, id) -> str:
-        return self.set_action(id, status=DeviceStatus.RENTED)
+    def set_status_rent(self, id) -> str:
+        return self.set_status(id, status=DeviceStatus.RENT)
 
-    def set_action_sold(self, id) -> str:
-        return self.set_action(id, status=DeviceStatus.SOLD)
+    def set_status_sale(self, id) -> str:
+        return self.set_status(id, status=DeviceStatus.SALE)
 
-    def set_action_returned(self, id) -> str:
-        return self.set_action(id, status=DeviceStatus.RETURNED)
+    def set_status_return(self, id) -> str:
+        return self.set_status(id, status=DeviceStatus.RETURN)
 
     # def add_serial_number(self, id: int) -> str:
     #     return f"{self.ADD_SERIAL_NUMBER}:{id}"

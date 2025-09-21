@@ -4,12 +4,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 import src.core.handlers  # noqa: F401
 from src.core.logger import logger
-from src.core.enums import DeviceTypeName, RoleName, String
+from src.core.enums import DeviceTypeName, DeviceStatus, RoleName, String
 from src.db.engine import AsyncSessionFactory, backup_db
 from src.db.seed import (
     create_db_and_tables,
     create_user_roles,
     create_main_users,
+    create_device_statuses,
     create_device_types,
 )
 
@@ -23,6 +24,7 @@ def _check_enum_consistency() -> None:
     logger.info("Verifying Enum consistency...")
     enum_pairs_to_check: list[tuple[type[enum.Enum], type[enum.Enum], str]] = [
         (DeviceTypeName, String, f"{DeviceTypeName.__name__} -> {String.__name__}"),
+        (DeviceStatus, String, f"{DeviceStatus.__name__} -> {String.__name__}"),
         (RoleName, String, f"{RoleName.__name__} -> {String.__name__}"),
     ]
     for source_enum, target_enum, description in enum_pairs_to_check:
@@ -44,7 +46,8 @@ async def lifespan(app: FastAPI):
     _check_enum_consistency()
     await create_db_and_tables()
     async with AsyncSessionFactory() as session_db:
-        await create_device_types(session_db)
+        status_map = await create_device_statuses(session_db)
+        await create_device_types(session_db, status_map)
         await create_user_roles(session_db)
         await create_main_users(session_db)
         await session_db.commit()

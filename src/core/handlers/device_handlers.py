@@ -128,73 +128,58 @@ async def set_type_action(
         )
         if isinstance(result, TicketDB):
             ticket = result
-            device_types_result = await conv.session.scalars(
-                select(DeviceTypeDB).where(DeviceTypeDB.is_active == True)  # noqa: E712
-            )
-            device_types = list(device_types_result)
-            new_device_type_id = int(device_type_id_str)
-            new_device_type = next(
-                (dt for dt in device_types if dt.id == new_device_type_id), None
-            )
-            if new_device_type:
-                if new_device_type.is_active:
-                    if device.type.id != new_device_type.id:
-                        text = (
-                            f"{String.DEVICE_TYPE_WAS_CHANGED_FOR} "
-                            f"{String[new_device_type.name.name]}"
-                        )
-                        old_device_type = device.type
-                        device.type = new_device_type
-                        if device.type.returnable:
-                            if device.status:
-                                text = f"{text}. {String.RETURN_CHANGED_TO_INSTALL}"
-                            elif device.status is None:
-                                text = f"{text}. {String.DEVICE_ACTION_SET_TO_INSTALL}"
-                            device.status = False
-                            if device.type.has_serial_number:
-                                if device.serial_number:
-                                    methods_tg_list.append(
-                                        conv._build_device_view(
-                                            ticket,
-                                            device,
-                                            f"{text}. {String.AVAILABLE_DEVICE_ACTIONS}.",
-                                        ),
-                                    )
-                                else:
-                                    conv.next_state = StateJS(
-                                        pending_command_prefix=cb.device.set_serial_number(
-                                            device.id
-                                        )
-                                    )
-                                    methods_tg_list.append(
-                                        conv._build_new_text_message(
-                                            f"{text}. {String.ENTER_SERIAL_NUMBER}."
-                                        )
-                                    )
-                            else:
-                                if device.serial_number:
-                                    text = f"{text}. {String.SERIAL_NUMBER_REMOVED}"
-                                    device.serial_number = None
-                                methods_tg_list.append(
-                                    conv._build_device_view(
-                                        ticket,
-                                        device,
-                                        f"{text}. {String.AVAILABLE_DEVICE_ACTIONS}.",
-                                    ),
-                                )
-                        else:
-                            if old_device_type.returnable:
-                                device.status = None
-                            if device.status is None:
-                                methods_tg_list.append(
-                                    conv._build_set_device_action_menu(
-                                        device.id,
-                                        f"{text}. {String.PICK_DEVICE_ACTION}.",
-                                    )
-                                )
-                            else:
-                                if device.type.has_serial_number:
-                                    if device.serial_number:
+            if not ticket.is_closed:
+                device_types_result = await conv.session.scalars(
+                    select(DeviceTypeDB).where(DeviceTypeDB.is_active == True)  # noqa: E712
+                )
+                device_types = list(device_types_result)
+                new_device_type_id = int(device_type_id_str)
+                new_device_type = next(
+                    (dt for dt in device_types if dt.id == new_device_type_id), None
+                )
+                if new_device_type:
+                    if new_device_type.is_active:
+                        if device.type.id != new_device_type.id:
+                            text = (
+                                f"{String.DEVICE_TYPE_WAS_CHANGED_FOR} "
+                                f"{String[new_device_type.name.name]}"
+                            )
+                            old_device_type = device.type
+                            device.type = new_device_type
+                            device_type_statuses = conv._get_device_status_icon(
+                                device.type
+                            )
+                            if len(device_type_statuses) == 1:
+                                if device.type.returnable:
+                                    if device.status:
+                                        text = f"{text}. {String.RETURN_CHANGED_TO_INSTALL}"
+                                    elif device.status is None:
+                                        text = f"{text}. {String.DEVICE_ACTION_SET_TO_INSTALL}"
+                                    device.status = False
+                                    if device.type.has_serial_number:
+                                        if device.serial_number:
+                                            methods_tg_list.append(
+                                                conv._build_device_view(
+                                                    ticket,
+                                                    device,
+                                                    f"{text}. {String.AVAILABLE_DEVICE_ACTIONS}.",
+                                                ),
+                                            )
+                                        else:
+                                            conv.next_state = StateJS(
+                                                pending_command_prefix=cb.device.set_serial_number(
+                                                    device.id
+                                                )
+                                            )
+                                            methods_tg_list.append(
+                                                conv._build_new_text_message(
+                                                    f"{text}. {String.ENTER_SERIAL_NUMBER}."
+                                                )
+                                            )
+                                    else:
+                                        if device.serial_number:
+                                            text = f"{text}. {String.SERIAL_NUMBER_REMOVED}"
+                                            device.serial_number = None
                                         methods_tg_list.append(
                                             conv._build_device_view(
                                                 ticket,
@@ -202,35 +187,67 @@ async def set_type_action(
                                                 f"{text}. {String.AVAILABLE_DEVICE_ACTIONS}.",
                                             ),
                                         )
-                                    else:
-                                        conv.next_state = StateJS(
-                                            pending_command_prefix=cb.device.set_serial_number(
-                                                device.id
-                                            )
-                                        )
-                                        methods_tg_list.append(
-                                            conv._build_new_text_message(
-                                                f"{text}. {String.ENTER_SERIAL_NUMBER}."
-                                            )
-                                        )
-                                else:
-                                    if device.serial_number:
-                                        text = f"{text}. {String.SERIAL_NUMBER_REMOVED}"
-                                        device.serial_number = None
+                            else:
+                                if old_device_type.returnable:
+                                    device.status = None
+                                if device.status is None:
                                     methods_tg_list.append(
-                                        conv._build_device_view(
-                                            ticket,
-                                            device,
-                                            f"{text}. {String.AVAILABLE_DEVICE_ACTIONS}.",
-                                        ),
+                                        conv._build_set_device_status_menu(
+                                            device.id,
+                                            f"{text}. {String.PICK_DEVICE_ACTION}.",
+                                        )
                                     )
+                                else:
+                                    if device.type.has_serial_number:
+                                        if device.serial_number:
+                                            methods_tg_list.append(
+                                                conv._build_device_view(
+                                                    ticket,
+                                                    device,
+                                                    f"{text}. {String.AVAILABLE_DEVICE_ACTIONS}.",
+                                                ),
+                                            )
+                                        else:
+                                            conv.next_state = StateJS(
+                                                pending_command_prefix=cb.device.set_serial_number(
+                                                    device.id
+                                                )
+                                            )
+                                            methods_tg_list.append(
+                                                conv._build_new_text_message(
+                                                    f"{text}. {String.ENTER_SERIAL_NUMBER}."
+                                                )
+                                            )
+                                    else:
+                                        if device.serial_number:
+                                            text = f"{text}. {String.SERIAL_NUMBER_REMOVED}"
+                                            device.serial_number = None
+                                        methods_tg_list.append(
+                                            conv._build_device_view(
+                                                ticket,
+                                                device,
+                                                f"{text}. {String.AVAILABLE_DEVICE_ACTIONS}.",
+                                            ),
+                                        )
+                        else:
+                            text = String.DEVICE_TYPE_REMAINED_THE_SAME
+                            methods_tg_list.append(
+                                conv._build_device_view(
+                                    ticket,
+                                    device,
+                                    f"{text}. {String.AVAILABLE_DEVICE_ACTIONS}.",
+                                ),
+                            )
                     else:
-                        text = String.DEVICE_TYPE_REMAINED_THE_SAME
                         methods_tg_list.append(
-                            conv._build_device_view(
+                            conv._build_set_device_type_menu(
                                 ticket,
+                                device_types,
+                                (
+                                    f"{String.DEVICE_TYPE_IS_DISABLED}. "
+                                    f"{String.PICK_NEW_DEVICE_TYPE}."
+                                ),
                                 device,
-                                f"{text}. {String.AVAILABLE_DEVICE_ACTIONS}.",
                             ),
                         )
                 else:
@@ -239,7 +256,7 @@ async def set_type_action(
                             ticket,
                             device_types,
                             (
-                                f"{String.DEVICE_TYPE_IS_DISABLED}. "
+                                f"{String.DEVICE_TYPE_NOT_FOUND}. "
                                 f"{String.PICK_NEW_DEVICE_TYPE}."
                             ),
                             device,
@@ -247,14 +264,13 @@ async def set_type_action(
                     )
             else:
                 methods_tg_list.append(
-                    conv._build_set_device_type_menu(
+                    conv._build_ticket_view(
                         ticket,
-                        device_types,
                         (
-                            f"{String.DEVICE_TYPE_NOT_FOUND}. "
-                            f"{String.PICK_NEW_DEVICE_TYPE}."
+                            f"{String.ATTENTION_ICON} "  # nbsp
+                            f"{String.READONLY_MODE}. "
+                            f"{String.CANNOT_EDIT_CLOSED_TICKET}."
                         ),
-                        device,
                     ),
                 )
         else:
@@ -270,7 +286,7 @@ async def set_type_action(
     return methods_tg_list
 
 
-@router.route(cb.device.EDIT_ACTION)
+@router.route(cb.device.EDIT_STATUS)
 async def edit_device_action(conv: Conversation, device_id_str: str) -> list:
     methods_tg_list: list[MethodTG] = [conv._build_edit_to_callback_button_text()]
     device_id = int(device_id_str)
@@ -281,7 +297,7 @@ async def edit_device_action(conv: Conversation, device_id_str: str) -> list:
         result = await conv._get_ticket_if_eligible(device.ticket_id)
         if isinstance(result, TicketDB):
             methods_tg_list.append(
-                conv._build_set_device_action_menu(
+                conv._build_set_device_status_menu(
                     device_id,
                     f"{String.PICK_DEVICE_ACTION}.",
                 ),
@@ -299,7 +315,7 @@ async def edit_device_action(conv: Conversation, device_id_str: str) -> list:
     return methods_tg_list
 
 
-@router.route(cb.device.SET_ACTION)
+@router.route(cb.device.SET_STATUS)
 async def set_device_action(
     conv: Conversation, device_id_str: str, removal_str: str
 ) -> list:
@@ -537,8 +553,8 @@ async def delete_action(conv: Conversation, device_id_str: str) -> list:
                 conv._build_ticket_view(
                     ticket,
                     (
-                        f"{String.TRASHCAN_ICON} "
-                        f"{String.DEVICE_WAS_DELETED_FROM_TICKET}: "
+                        f"{String.TRASHCAN_ICON} "  # nbsp
+                        f"{String.TICKET_DELETED}: "
                         f"{String[device_type_name]}. "
                         f"{String.AVAILABLE_TICKET_ACTIONS}."
                     ),

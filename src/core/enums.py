@@ -10,6 +10,12 @@ class RoleName(enum.StrEnum):
     GUEST = enum.auto()
 
 
+class DeviceStatus(enum.StrEnum):
+    RENT = enum.auto()
+    SALE = enum.auto()
+    RETURN = enum.auto()
+
+
 class DeviceTypeName(enum.StrEnum):
     ROUTER = enum.auto()
     IP_DEVICE = enum.auto()
@@ -17,12 +23,6 @@ class DeviceTypeName(enum.StrEnum):
     SBERBOX = enum.auto()
     POWER_UNIT = enum.auto()
     NETWORK_HUB = enum.auto()
-
-
-class DeviceStatus(enum.StrEnum):
-    RENTED = enum.auto()
-    SOLD = enum.auto()
-    RETURNED = enum.auto()
 
 
 class ValidationMode(enum.StrEnum):
@@ -232,10 +232,11 @@ class String(enum.StrEnum):
     TICKET_REOPENED = "Заявка возвращена в работу"
     TICKET_CLOSED = "Заявка закрыта"
     CLOSE_TICKET_NUMBER_X = "Удалить заявку №"
-    CONFIRM_TICKET_DELETION = "Подтвердите удаление текущей заявки"
+    CONFIRM_TICKET_DELETION = "Подтвердите удаление заявки"
     DELETE_TICKET_ACTION_WAS_NOT_PICKED = (
         "Вы не выбрали удаление заявки или возврат к работе с ней"
     )
+    TICKET_DELETED = "Заявка удалена"
     TICKET_DELETED = "Заявка удалена"
     TICKET_DELETION_CANCELLED = "Удаление заявки отменено"
     # Ticket Error Strings
@@ -252,17 +253,19 @@ class String(enum.StrEnum):
     # Common Icons
     EDIT_ICON = "✏️"
     ATTENTION_ICON = "❗"
+    WARNING_ICON = "❌"
     TRASHCAN_ICON = "🗑"
     PLUS_ICON = "➕"
+    QUESTION_MARK_ICON = "❓"
     # Device Buttons
-    RENTED_DEVICE_ICON = "🔄"
-    SOLD_DEVICE_ICON = "✅"
-    RETURNED_DEVICE_ICON = "🆘"  # ↪️
+    RENT_DEVICE_ICON = "🔄"
+    SALE_DEVICE_ICON = "✅"
+    RETURN_DEVICE_ICON = "🆘"  # ↪️
     UNSET_DEVICE_ICON = "❗"
-    RENT_DEVICE_BTN = "Аренда"
-    SELL_DEVICE_BTN = "Продажа"
-    RETURN_DEVICE_BTN = "Возврат"
-    RENT_SELL_RETURN_BTN = "Аренда/Продажа/Возврат"
+    RENT = "Аренда"
+    SALE = "Продажа"
+    RETURN = "Возврат"
+    RENT_SALE_RETURN_BTN = "Аренда/Продажа/Возврат"
     # Common Tags
     EDIT = "[ Ред ]"
     ERROR = "[ Ошибка ]"
@@ -360,7 +363,7 @@ class String(enum.StrEnum):
     QUIT_WITHOUT_SAVING_BTN = "🗑 Выйти без сохранения"
     ARE_YOU_SURE_YOU_WANT_TO_QUIT_WITHOUT_SAVING = "‼ВНИМАНИЕ‼: Все несохраненные данные будут потеряны, вы уверены что хотите выйти без сохранения"
     QUIT_WITHOUT_SAVING_ACTION_WAS_NOT_PICKED = "Вы не выбрали выйти или остаться"
-    CONFIRM_DELETE_TICKET = "❌ Да, удалить заявку"
+    CONFIRM_DELETE_TICKET = "Да, удалить заявку"
     CHANGED_MY_MIND = "Я передумал"
     YOU_QUIT_WITHOUT_SAVING = "Вы вышли без сохранения текущей заявки"
     YOU_LEFT_TICKET = "Вы закончили работу с заявкой"

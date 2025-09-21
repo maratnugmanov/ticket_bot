@@ -67,6 +67,7 @@ class TimestampMixinDB:
 class BaseDB(AsyncAttrs, DeclarativeBase, MappedAsDataclass):
     type_annotation_map = {
         RoleName: SQLAlchemyEnum(RoleName, native_enum=False, length=128, validate_strings=True),
+        DeviceStatus: SQLAlchemyEnum(DeviceStatus, native_enum=False, length=128, validate_strings=True),
         DeviceTypeName: SQLAlchemyEnum(DeviceTypeName, native_enum=False, length=128, validate_strings=True),
     }
 
@@ -152,7 +153,6 @@ class WriteoffDeviceDB(BaseDB, TimestampMixinDB):
     type_id: Mapped[int] = mapped_column(ForeignKey("device_types.id", ondelete="RESTRICT"), index=True)
     type: Mapped[DeviceTypeDB] = relationship(back_populates="writeoff_devices", init=False)
     serial_number: Mapped[str | None] = mapped_column(default=None, index=True)
-    # is_draft: Mapped[bool] = mapped_column(default=True, index=True)
 
     # __table_args__ = (UniqueConstraint("device_id", "user_id", name="unique_device_user_pair"),)
 
@@ -164,19 +164,31 @@ class DeviceDB(BaseDB, TimestampMixinDB):
     ticket: Mapped[TicketDB] = relationship(back_populates="devices", init=False)
     type_id: Mapped[int] = mapped_column(ForeignKey("device_types.id", ondelete="RESTRICT"), index=True)
     type: Mapped[DeviceTypeDB] = relationship(back_populates="devices", init=False)
-    status: Mapped[DeviceStatus | None] = mapped_column(default=None, index=True)
+    status_id: Mapped[int | None] = mapped_column(ForeignKey("device_statuses.id", ondelete="SET NULL"), default=None, index=True)
+    status: Mapped[DeviceStatusDB | None] = relationship(back_populates="devices", init=False)
     serial_number: Mapped[str | None] = mapped_column(default=None, index=True)
-    # is_draft: Mapped[bool] = mapped_column(default=True, index=True)
 
 
 class DeviceTypeDB(BaseDB, TimestampMixinDB):
     __tablename__ = "device_types"
     id: Mapped[int] = mapped_column(init=False, primary_key=True)
     name: Mapped[DeviceTypeName] = mapped_column(index=True, unique=True)
-    rentable: Mapped[bool] = mapped_column(index=True)
-    sellable: Mapped[bool] = mapped_column(index=True)
-    returnable: Mapped[bool] = mapped_column(index=True)
     has_serial_number: Mapped[bool] = mapped_column(index=True)
     is_active: Mapped[bool] = mapped_column(default=True, index=True)
+    statuses: Mapped[list[DeviceStatusDB]] = relationship(default_factory=list, secondary="device_types_device_statuses_link", back_populates="device_types", init=False)
     devices: Mapped[list[DeviceDB]] = relationship(default_factory=list, back_populates="type", init=False)
     writeoff_devices: Mapped[list[WriteoffDeviceDB]] = relationship(default_factory=list, back_populates="type", init=False)
+
+
+class DeviceTypeDeviceStatusLinkDB(BaseDB):
+    __tablename__ = "device_types_device_statuses_link"
+    device_type_id: Mapped[int] = mapped_column(ForeignKey("device_types.id", ondelete="CASCADE"), primary_key=True)
+    device_status_id: Mapped[int] = mapped_column(ForeignKey("device_statuses.id", ondelete="CASCADE"), primary_key=True, index=True)
+
+
+class DeviceStatusDB(BaseDB, TimestampMixinDB):
+    __tablename__ = "device_statuses"
+    id: Mapped[int] = mapped_column(init=False, primary_key=True)
+    name: Mapped[DeviceStatus] = mapped_column(index=True, unique=True)
+    device_types: Mapped[list[DeviceTypeDB]] = relationship(default_factory=list, secondary="device_types_device_statuses_link", back_populates="statuses", init=False)
+    devices: Mapped[list[DeviceDB]] = relationship(default_factory=list, back_populates="status", init=False)
