@@ -108,7 +108,7 @@ class _DeviceCallback:
     def edit_status(self, id: int) -> str:  # for editing install/return
         return f"{self.EDIT_STATUS}:{id}"
 
-    def set_status(self, id: str, status: DeviceStatus) -> str:
+    def set_status(self, id: int, status: DeviceStatus) -> str:
         return f"{self.SET_STATUS}:{id}:{status.value}"
 
     def set_status_rent(self, id) -> str:

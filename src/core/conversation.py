@@ -426,11 +426,9 @@ class Conversation:
             result = ticket
         return result
 
-    @asynccontextmanager
-    async def ticket_edit_session(self, ticket_id_str: str):
-        """An async context manager for editing a ticket.
-        Yields TicketDB if the ticket is found, eligible, and open.
-        Yields list[MethodTG] with explanation of denial otherwise."""
+    async def _get_ticket_for_editing(self, ticket_id_str: str):
+        """Returns TicketDB if the ticket is found, eligible, and open.
+        Returns SendMessageTG with explanation of denial otherwise."""
         ticket_id = int(ticket_id_str)
         loader_options = [
             joinedload(TicketDB.contract),
@@ -438,55 +436,80 @@ class Conversation:
             .selectinload(DeviceDB.type)
             .selectinload(DeviceTypeDB.statuses),
         ]
-        result = await self._get_ticket_if_eligible(ticket_id, loader_options)
-        if isinstance(result, TicketDB):
-            ticket = result
+        ticket_or_string = await self._get_ticket_if_eligible(ticket_id, loader_options)
+        result: TicketDB | SendMessageTG | None = None
+        if isinstance(ticket_or_string, TicketDB):
+            ticket = ticket_or_string
             if not ticket.is_closed:
-                yield ticket
+                result = ticket
             else:
-                yield [
-                    self._build_ticket_view(
-                        ticket,
-                        (
-                            f"{String.ATTENTION_ICON} "  # nbsp
-                            f"{String.READONLY_MODE}. "
-                            f"{String.CANNOT_EDIT_CLOSED_TICKET}."
-                        ),
-                    )
-                ]
+                result = self._build_ticket_view(
+                    ticket,
+                    (
+                        f"{String.ATTENTION_ICON} "  # nbsp
+                        f"{String.READONLY_MODE}. "
+                        f"{String.CANNOT_EDIT_CLOSED_TICKET}."
+                    ),
+                )
         else:
-            yield [
-                self._drop_state_goto_main_menu(f"{result}. {String.PICK_A_FUNCTION}.")
-            ]
+            string = ticket_or_string
+            result = self._drop_state_goto_main_menu(
+                f"{string}. {String.PICK_A_FUNCTION}."
+            )
+        return result
 
-    @asynccontextmanager
-    async def device_edit_session(self, device_id_str: str):
-        """An async context manager for editing a device. It internally
-        validates the parent ticket. Yields tuple[DeviceDB, TicketDB]
-        if the device and ticket are found and editable. Yields
-        list[MethodTG] if the device is not found, or the ticket
-        is closed/inaccessible."""
+    async def _get_device_for_editing(self, device_id_str: str):
+        """Returns tuple[TicketDB, DeviceDB] if the device and ticket
+        are found and editable. Returns SendMessageTG if the device is
+        not found, or the ticket is closed/inaccessible."""
         device_id = int(device_id_str)
         device = await self.session.get(DeviceDB, device_id)
+        result: tuple[TicketDB, DeviceDB] | SendMessageTG | None = None
         if device:
-            async with self.ticket_edit_session(str(device.ticket_id)) as result:
-                if isinstance(result, TicketDB):
-                    ticket = result
-                    yield device, ticket
-                else:
-                    yield result
+            ticket_or_method_tg = await self._get_ticket_for_editing(
+                str(device.ticket_id)
+            )
+            if isinstance(ticket_or_method_tg, TicketDB):
+                ticket = ticket_or_method_tg
+                result = ticket, device
+            else:
+                result = ticket_or_method_tg
         else:
-            yield [
-                self._drop_state_goto_main_menu(
-                    f"{String.DEVICE_NOT_FOUND}. {String.PICK_A_FUNCTION}."
-                )
-            ]
+            result = self._drop_state_goto_main_menu(
+                f"{String.DEVICE_NOT_FOUND}. {String.PICK_A_FUNCTION}."
+            )
+        return result
 
     def _build_new_text_message(self, text: str) -> SendMessageTG:
         return SendMessageTG(
             chat_id=self.user_db.telegram_uid,
             text=text,
         )
+
+    def _process_device_serial_number(
+        self, ticket: TicketDB, device: DeviceDB, text: str
+    ) -> SendMessageTG:
+        """Returns message requesting serial number from the user and
+        prepares state for awaiting serial number if device type has
+        serial number. Otherwise returns message with device menu and
+        ensures device serial number is set to None."""
+        if device.type.has_serial_number:
+            if not device.serial_number:
+                self.next_state = StateJS(
+                    pending_command_prefix=cb.device.set_serial_number(device.id)
+                )
+                text = f"{text}. {String.ENTER_SERIAL_NUMBER}."
+                method_tg = self._build_new_text_message(text)
+            else:
+                text = f"{text}. {String.AVAILABLE_DEVICE_ACTIONS}."
+                method_tg = self._build_device_view(ticket, device, text)
+        else:
+            if device.serial_number:
+                text = f"{text}. {String.SERIAL_NUMBER_REMOVED}"
+                device.serial_number = None
+            text = f"{text}. {String.AVAILABLE_DEVICE_ACTIONS}."
+            method_tg = self._build_device_view(ticket, device, text)
+        return method_tg
 
     def _build_edit_to_text_message(
         self, text: str, html_mode: bool = False
@@ -995,20 +1018,19 @@ class Conversation:
 
     def _build_set_device_status_menu(
         self,
-        device_id: int,
-        device_type: DeviceTypeDB,
+        device: DeviceDB,
         text: str = f"{String.PICK_DEVICE_ACTION}.",
     ) -> SendMessageTG:
         """Returns a telegram message object with a list of device
         statuses to choose from to edit an existing device.
         It does NOT check if ticket is closed or foreign."""
         inline_keyboard: list[list[InlineKeyboardButtonTG]] = []
-        for status in device_type.statuses:
+        for status in device.type.statuses:
             status_icon = self._get_device_status_icon(status)
             status_name_str = String[status.name.name]
             button = InlineKeyboardButtonTG(
                 text=f"{status_icon} {status_name_str}",  # nbsp
-                callback_data=cb.device.set_status(device_id, status.name),
+                callback_data=cb.device.set_status(device.id, status.name),
             )
             inline_keyboard.append([button])
         return SendMessageTG(
