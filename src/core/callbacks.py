@@ -40,10 +40,11 @@ class _TicketCallback:
     ADD_DEVICE = "ticket:device:add"
     CREATE_DEVICE = "ticket:device:create"
     CREATE_START = "ticket:create:start"
+    CREATE_CONFIRM = "ticket:create:confirm"
     DELETE_START = "ticket:delete:start"
     DELETE_CONFIRM = "ticket:delete:confirm"
 
-    def list_page(self, page: int = 0) -> str:
+    def list_page(self, page: int) -> str:
         return f"{self.LIST}:{page}"
 
     def view(self, id: int) -> str:
@@ -64,8 +65,8 @@ class _TicketCallback:
     def edit_contract(self, id: int) -> str:
         return f"{self.EDIT_CONTRACT}:{id}"
 
-    def set_contract(self, id: int) -> str:
-        return f"{self.SET_CONTRACT}:{id}"
+    def set_contract(self, ticket_id: int) -> str:
+        return f"{self.SET_CONTRACT}:{ticket_id}"
 
     def add_device(self, id: int) -> str:
         return f"{self.ADD_DEVICE}:{id}"
@@ -75,6 +76,9 @@ class _TicketCallback:
 
     def create_start(self) -> str:
         return self.CREATE_START
+
+    def create_confirm(self) -> str:
+        return self.CREATE_CONFIRM
 
     def delete_start(self, id: int) -> str:
         return f"{self.DELETE_START}:{id}"
@@ -91,9 +95,8 @@ class _DeviceCallback:
     SET_TYPE = "device:set:type"
     EDIT_STATUS = "device:edit:status"
     SET_STATUS = "device:set:status"
-    # ADD_SERIAL_NUMBER = "device:add:serial_number"
-    SET_SERIAL_NUMBER = "device:set:serial_number"
     EDIT_SERIAL_NUMBER = "device:edit:serial_number"
+    SET_SERIAL_NUMBER = "device:set:serial_number"
     DELETE = "device:delete"
 
     def view(self, id: int) -> str:
@@ -120,14 +123,11 @@ class _DeviceCallback:
     def set_status_return(self, id) -> str:
         return self.set_status(id, status=DeviceStatus.RETURN)
 
-    # def add_serial_number(self, id: int) -> str:
-    #     return f"{self.ADD_SERIAL_NUMBER}:{id}"
+    def edit_serial_number(self, id: int) -> str:
+        return f"{self.EDIT_SERIAL_NUMBER}:{id}"
 
     def set_serial_number(self, id: int) -> str:
         return f"{self.SET_SERIAL_NUMBER}:{id}"
-
-    def edit_serial_number(self, id: int) -> str:
-        return f"{self.EDIT_SERIAL_NUMBER}:{id}"
 
     def delete(self, id: int) -> str:
         return f"{self.DELETE}:{id}"
@@ -136,18 +136,46 @@ class _DeviceCallback:
 class _WriteoffCallback:
     """Callback strings for writeoff-related actions."""
 
-    VIEW = "writeoff:view"
     LIST = "writeoffs:list"
+    VIEW = "writeoff:view"
+    EDIT_TYPE = "writeoff:edit:type"
+    SET_TYPE = "writeoff:set:type"
+    EDIT_SERIAL_NUMBER = "writeoff:edit:serial_number"
+    SET_SERIAL_NUMBER = "writeoff:set:serial_number"
     CREATE_START = "writeoff:create:start"
+    CREATE_CONFIRM = "writeoff:create:confirm"
+    DELETE_START = "writeoff:delete:start"
+    DELETE_CONFIRM = "writeoff:delete:confirm"
+
+    def list_page(self, page: int) -> str:
+        return f"{self.LIST}:{page}"
 
     def view(self, id: int) -> str:
         return f"{self.VIEW}:{id}"
 
-    def list_page(self, page: int = 0) -> str:
-        return f"{self.LIST}:{page}"
+    def edit_type(self, id: int) -> str:
+        return f"{self.EDIT_TYPE}:{id}"
+
+    def set_type(self, id: int, device_type_id: int) -> str:
+        return f"{self.SET_TYPE}:{id}:{device_type_id}"
+
+    def edit_serial_number(self, id: int) -> str:
+        return f"{self.EDIT_SERIAL_NUMBER}:{id}"
+
+    def set_serial_number(self, id: int) -> str:
+        return f"{self.SET_SERIAL_NUMBER}:{id}"
 
     def create_start(self) -> str:
         return self.CREATE_START
+
+    def create_confirm(self, device_type_id: int) -> str:
+        return f"{self.CREATE_CONFIRM}:{device_type_id}"
+
+    def delete_start(self, id: int) -> str:
+        return f"{self.DELETE_START}:{id}"
+
+    def delete_confirm(self, id: int) -> str:
+        return f"{self.DELETE_CONFIRM}:{id}"
 
 
 class _ReportCallback:

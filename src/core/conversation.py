@@ -107,7 +107,8 @@ class Conversation:
         user_db: UserDB | None = await session.scalar(
             select(UserDB)
             .where(UserDB.telegram_uid == user_tg.id)
-            .options(selectinload(UserDB.roles))
+            # Swap for selectinload when querying more than one user.
+            .options(joinedload(UserDB.roles))
         )
         guest_role: RoleDB | None = None
         if user_db is None:
@@ -411,15 +412,16 @@ class Conversation:
         return success
 
     async def _get_ticket_if_eligible(
-        self, ticket_id: int, loader_options: list | None = None
+        self, ticket_id_str: str, loader_options: list | None = None
     ) -> TicketDB | String:
+        ticket_id = int(ticket_id_str)
         ticket = await self.session.get(
             TicketDB,
             ticket_id,
             options=loader_options,
         )
         if not ticket:
-            result: TicketDB | String = String.TICKET_WAS_NOT_FOUND
+            result: TicketDB | String = String.TICKET_NOT_FOUND
         elif not (ticket.user_id == self.user_db.id or self.user_db.is_manager):
             result = String.FOREIGN_TICKET
         else:
@@ -429,14 +431,16 @@ class Conversation:
     async def _get_ticket_for_editing(self, ticket_id_str: str):
         """Returns TicketDB if the ticket is found, eligible, and open.
         Returns SendMessageTG with explanation of denial otherwise."""
-        ticket_id = int(ticket_id_str)
         loader_options = [
             joinedload(TicketDB.contract),
-            joinedload(TicketDB.devices)
-            .selectinload(DeviceDB.type)
-            .selectinload(DeviceTypeDB.statuses),
+            joinedload(TicketDB.devices).options(
+                joinedload(DeviceDB.type).selectinload(DeviceTypeDB.statuses),
+                joinedload(DeviceDB.status),
+            ),
         ]
-        ticket_or_string = await self._get_ticket_if_eligible(ticket_id, loader_options)
+        ticket_or_string = await self._get_ticket_if_eligible(
+            ticket_id_str, loader_options
+        )
         result: TicketDB | SendMessageTG | None = None
         if isinstance(ticket_or_string, TicketDB):
             ticket = ticket_or_string
@@ -464,14 +468,14 @@ class Conversation:
         not found, or the ticket is closed/inaccessible."""
         device_id = int(device_id_str)
         device = await self.session.get(DeviceDB, device_id)
-        result: tuple[TicketDB, DeviceDB] | SendMessageTG | None = None
+        result: tuple[DeviceDB, TicketDB] | SendMessageTG | None = None
         if device:
             ticket_or_method_tg = await self._get_ticket_for_editing(
                 str(device.ticket_id)
             )
             if isinstance(ticket_or_method_tg, TicketDB):
                 ticket = ticket_or_method_tg
-                result = ticket, device
+                result = device, ticket
             else:
                 result = ticket_or_method_tg
         else:
@@ -480,19 +484,111 @@ class Conversation:
             )
         return result
 
+    async def _get_writeoff_if_eligible(
+        self, writeoff_id_str: str, loader_options: list | None = None
+    ) -> WriteoffDeviceDB | String:
+        writeoff_id = int(writeoff_id_str)
+        writeoff = await self.session.get(
+            WriteoffDeviceDB, writeoff_id, options=loader_options
+        )
+        if not writeoff:
+            result: WriteoffDeviceDB | String = String.WRITEOFF_DEVICE_NOT_FOUND
+        elif not (writeoff.user_id == self.user_db.id or self.user_db.is_manager):
+            result = String.FOREIGN_WRITEOFF
+        else:
+            result = writeoff
+        return result
+
+    async def _get_writeoff_for_editing(
+        self, writeoff_id_str: str
+    ) -> WriteoffDeviceDB | SendMessageTG:
+        """Returns WriteoffDeviceDB if it is found and eligible.
+        Returns SendMessageTG with explanation of denial otherwise."""
+        loader_options = [
+            # Swap for selectinload(DeviceTypeDB.statuses) when querying more than one.
+            joinedload(WriteoffDeviceDB.type).joinedload(DeviceTypeDB.statuses)
+        ]
+        writeoff_or_string = await self._get_writeoff_if_eligible(
+            writeoff_id_str, loader_options
+        )
+        result: WriteoffDeviceDB | SendMessageTG | None = None
+        if isinstance(writeoff_or_string, WriteoffDeviceDB):
+            result = writeoff_or_string
+        else:
+            string = writeoff_or_string
+            result = self._drop_state_goto_main_menu(
+                f"{string}. {String.PICK_A_FUNCTION}."
+            )
+        return result
+
+    async def _get_active_device_types(
+        self, with_statuses: bool = False
+    ) -> list[DeviceTypeDB]:
+        """Returns a list of all active device types."""
+        query = (
+            select(DeviceTypeDB).where(DeviceTypeDB.is_active == True)  # noqa: E712
+        )
+        if with_statuses:
+            query = query.options(selectinload(DeviceTypeDB.statuses))
+        return list(await self.session.scalars(query))
+
+    async def _get_active_writeoff_device_types(
+        self, with_statuses: bool = False
+    ) -> list[DeviceTypeDB]:
+        """Returns a list of active device types
+        eligible for writeoffs."""
+        query = (
+            select(DeviceTypeDB)
+            .join(DeviceTypeDB.statuses)
+            .where(
+                DeviceTypeDB.is_active == True,  # noqa: E712
+                DeviceStatusDB.name == DeviceStatus.RETURN,
+            )
+        )
+        if with_statuses:
+            query = query.options(selectinload(DeviceTypeDB.statuses))
+        return list(await self.session.scalars(query))
+
     def _build_new_text_message(self, text: str) -> SendMessageTG:
         return SendMessageTG(
             chat_id=self.user_db.telegram_uid,
             text=text,
         )
 
-    def _process_device_serial_number(
-        self, ticket: TicketDB, device: DeviceDB, text: str
+    def _handle_device_status_update(
+        self,
+        new_device_status: DeviceStatusDB,
+        device: DeviceDB,
+        ticket: TicketDB,
+        prefix_text: str | None = None,
     ) -> SendMessageTG:
-        """Returns message requesting serial number from the user and
-        prepares state for awaiting serial number if device type has
-        serial number. Otherwise returns message with device menu and
-        ensures device serial number is set to None."""
+        """Updates device status and then determines the next step. If
+        device requires serial number and doesn't have one, it returns
+        message prompting for it. Otherwise returns message with
+        device menu and ensures device serial number is set to None."""
+        new_status_icon = self._get_device_status_icon(new_device_status)
+        old_device_status = device.status
+        if not old_device_status or old_device_status.id != new_device_status.id:
+            device.status = new_device_status
+            if old_device_status:
+                old_status_icon = self._get_device_status_icon(old_device_status)
+                text = (
+                    f"{String.DEVICE_ACTION_CHANGED}: "
+                    f"{old_status_icon} {String[old_device_status.name.name]} >> "  # nbsp
+                    f"{new_status_icon} {String[new_device_status.name.name]}"  # nbsp
+                )
+            else:
+                text = (
+                    f"{String.DEVICE_ACTION_SET_TO}: "
+                    f"{new_status_icon} {String[new_device_status.name.name]}"  # nbsp
+                )
+        else:
+            text = (
+                f"{String.DEVICE_ACTION_REMAINED_THE_SAME}: "
+                f"{new_status_icon} {String[new_device_status.name.name]}"  # nbsp
+            )
+        if prefix_text:
+            text = f"{prefix_text}. {text}"
         if device.type.has_serial_number:
             if not device.serial_number:
                 self.next_state = StateJS(
@@ -502,13 +598,13 @@ class Conversation:
                 method_tg = self._build_new_text_message(text)
             else:
                 text = f"{text}. {String.AVAILABLE_DEVICE_ACTIONS}."
-                method_tg = self._build_device_view(ticket, device, text)
+                method_tg = self._build_device_view(device, ticket, text)
         else:
             if device.serial_number:
                 text = f"{text}. {String.SERIAL_NUMBER_REMOVED}"
                 device.serial_number = None
             text = f"{text}. {String.AVAILABLE_DEVICE_ACTIONS}."
-            method_tg = self._build_device_view(ticket, device, text)
+            method_tg = self._build_device_view(device, ticket, text)
         return method_tg
 
     def _build_edit_to_text_message(
@@ -655,7 +751,6 @@ class Conversation:
 
         main_menu_keyboard_rows = _build_main_menu_keyboard_rows()
         if main_menu_keyboard_rows:
-            text = text
             reply_markup = InlineKeyboardMarkupTG(
                 inline_keyboard=main_menu_keyboard_rows
             )
@@ -677,7 +772,7 @@ class Conversation:
 
     def _get_ticket_overview(self, ticket: TicketDB) -> str:
         """Returns a string with ticket icon, ticket number,
-        and ticket creation date."""
+        ticket creation date, and >> symbol."""
         user_timezone = ZoneInfo(self.user_db.timezone)
         months = {
             1: String.JAN,
@@ -724,15 +819,61 @@ class Conversation:
     def _device_status_icon_if_valid_for_ticket_closing(
         self, device: DeviceDB
     ) -> String | None:
-        """Returns device status icon if the device is complete,
+        """Returns device status icon if device is complete,
         otherwise returns None."""
+        possible_status_ids = {status.id for status in device.type.statuses}
         if (
             device.status is None
-            or device.status not in device.type.statuses
+            or device.status.id not in possible_status_ids
             or bool(device.serial_number) != device.type.has_serial_number
         ):
             return None
         return self._get_device_status_icon(device.status)
+
+    def _get_device_overview(
+        self, device: DeviceDB, ticket: TicketDB | None = None
+    ) -> str:
+        """Returns a string with device index (if ticket is provided),
+        device status icon, device type name, and device serial number
+        (if exist)."""
+        device_icon = (
+            self._device_status_icon_if_valid_for_ticket_closing(device)
+            or String.ATTENTION_ICON
+        )
+        device_type_name = String[device.type.name.name]
+        device_overview_text = f"{device_icon} {device_type_name}"  # nbsp
+        if ticket:
+            try:
+                device_index = ticket.devices.index(device)
+                device_overview_text = (
+                    f"{device_index + 1}. {device_overview_text}"  # nbsp
+                )
+            except ValueError:
+                logger.warning(
+                    f"{self.log_prefix}Device with id={device.id} "
+                    f"not found in ticket id={ticket.id}. "
+                    "Omitting device number."
+                )
+        if device.serial_number is not None:
+            device_overview_text = f"{device_overview_text} {device.serial_number}"
+        return device_overview_text
+
+    def _get_writeoff_overview(self, writeoff: WriteoffDeviceDB) -> str:
+        """Returns a string with writeoff device icon (writeoff icon if
+        complete or attention icon if incomplete), device type name,
+        and device serial number (if exist)."""
+        writeoff_icon = (
+            String.WRITEOFF_ICON
+            if bool(writeoff.serial_number) == writeoff.type.has_serial_number
+            else String.ATTENTION_ICON
+        )
+        device_type_name = String[writeoff.type.name.name]
+        writeoff_overview_text = f"{writeoff_icon} {device_type_name}"  # nbsp
+        if writeoff.serial_number is not None:
+            writeoff_overview_text = (
+                f"{writeoff_overview_text} {writeoff.serial_number}"
+            )
+        return writeoff_overview_text
 
     def _ticket_valid_for_closing(self, ticket: TicketDB) -> bool:
         """Returns True if a ticket is valid for closing,
@@ -749,11 +890,33 @@ class Conversation:
                 return False
         return True
 
-    async def _build_tickets_list(
-        self, page: int = 0, text: str = f"{String.AVAILABLE_TICKETS_ACTIONS}."
-    ) -> SendMessageTG:
-        """Returns a telegram message object
-        with a list ot recent tickets."""
+    def _pagination_helper(
+        self, elements_total: int, elements_per_page: int, page: int
+    ) -> tuple[int, int]:
+        """Checks if page index is not negative and not exceeding
+        possible last page index. Returns a tuple of corrected page and
+        last page index."""
+        total_pages = max(
+            1,
+            (elements_total + elements_per_page - 1) // elements_per_page,
+        )
+        last_page = total_pages - 1
+        if page < 0:
+            logger.warning(
+                f"{self.log_prefix}Current elements list page "
+                f"is negative (page={page}). Setting it to 0. "
+            )
+            page = 0
+        elif page > last_page:
+            page = last_page
+        logger.info(f"{self.log_prefix}User is on page {page + 1} of {total_pages}.")
+        return page, last_page
+
+    async def _get_paginated_tickets(
+        self,
+        page: int,
+    ) -> tuple[list[TicketDB], int, int]:
+        """Fetches a paginated list of recent tickets for the user."""
         lookback_days = settings.tickets_history_lookback_days
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=lookback_days)
         total_recent_tickets = (
@@ -768,46 +931,49 @@ class Conversation:
             or 0  # Mypy fix
         )
         tickets_per_page = settings.tickets_per_page
-        total_pages = max(
-            1,
-            (total_recent_tickets + tickets_per_page - 1) // tickets_per_page,
+        page, last_page = self._pagination_helper(
+            total_recent_tickets, tickets_per_page, page
         )
-        last_page = total_pages - 1
-        if page < 0:
-            logger.warning(
-                f"{self.log_prefix}Current tickets list page "
-                f"is negative (page={page}). Setting it to 0. "
-            )
-            page = 0
-        elif page > last_page:
-            page = last_page
-        logger.info(f"{self.log_prefix}User is on page {page + 1} of {total_pages}.")
-        inline_keyboard: list[list[InlineKeyboardButtonTG]] = []
-        add_ticket_button = InlineKeyboardButtonTG(
-            text=String.ADD_TICKET_BTN,
-            callback_data=cb.ticket.create_start(),
-        )
-        inline_keyboard.append([add_ticket_button])
-        recent_ticket_index_offset = page * tickets_per_page
-        current_page_tickets_result = await self.session.scalars(
+        offset = page * tickets_per_page
+        tickets_result = await self.session.scalars(
             select(TicketDB)
             .where(
                 TicketDB.user_id == self.user_db.id,
                 TicketDB.created_at >= cutoff_date,
             )
             .order_by(TicketDB.created_at.desc())
-            .offset(recent_ticket_index_offset)
+            .offset(offset)
             .limit(tickets_per_page)
         )
-        current_page_tickets = list(current_page_tickets_result)
-        for ticket in current_page_tickets:
-            ticket_button = InlineKeyboardButtonTG(
-                text=self._get_ticket_overview(ticket),
-                callback_data=cb.ticket.view(ticket.id),
+        tickets = list(tickets_result)
+        return tickets, page, last_page
+
+    def _build_tickets_list(
+        self,
+        tickets: list[TicketDB],
+        page: int,
+        last_page: int,
+        text: str = f"{String.AVAILABLE_TICKETS_ACTIONS}.",
+    ) -> SendMessageTG:
+        """Returns a telegram message object
+        with a list of recent tickets."""
+        inline_keyboard: list[list[InlineKeyboardButtonTG]] = []
+        add_ticket_button = InlineKeyboardButtonTG(
+            text=String.ADD_TICKET_BTN,
+            callback_data=cb.ticket.create_start(),
+        )
+        inline_keyboard.append([add_ticket_button])
+        for ticket in tickets:
+            inline_keyboard.append(
+                [
+                    InlineKeyboardButtonTG(
+                        text=self._get_ticket_overview(ticket),
+                        callback_data=cb.ticket.view(ticket.id),
+                    )
+                ]
             )
-            inline_keyboard.append([ticket_button])
         prev_next_buttons_row: list[InlineKeyboardButtonTG] = []
-        if total_recent_tickets > tickets_per_page:
+        if last_page > 0:
             prev_button = InlineKeyboardButtonTG(
                 text=f"{String.PREV_ONES}",
                 callback_data=cb.ticket.list_page(page + 1),
@@ -865,26 +1031,9 @@ class Conversation:
             callback_data=cb.ticket.edit_contract(ticket.id),
         )
         inline_keyboard.append([contract_number_button])
-        for index, device in enumerate(ticket.devices):
-            device_number = index + 1
-            device_icon = (
-                self._device_status_icon_if_valid_for_ticket_closing(device)
-                or String.ATTENTION_ICON
-            )
-            device_type_name = String[device.type.name.name]
-            if device.serial_number is not None:
-                device_button_text = (
-                    f"{device_number}. "  # nbsp
-                    f"{device_icon} {device_type_name} "  # nbsp
-                    f"{device.serial_number} "
-                    ">>"
-                )
-            else:
-                device_button_text = (
-                    f"{device_number}. "  # nbsp
-                    f"{device_icon} {device_type_name} "  # nbsp
-                    ">>"
-                )
+        for device in ticket.devices:
+            device_overview_text = self._get_device_overview(device, ticket)
+            device_button_text = f"{device_overview_text} >>"
             inline_keyboard.append(
                 [
                     InlineKeyboardButtonTG(
@@ -906,7 +1055,7 @@ class Conversation:
             callback_data=cb.ticket.close(ticket.id),
         )
         delete_ticket_button = InlineKeyboardButtonTG(
-            text=f"{String.TRASHCAN_ICON} {String.DELETE_TICKET_PERMANENTLY}",  # nbsp
+            text=f"{String.TRASHCAN_ICON} {String.DELETE_TICKET}",  # nbsp
             callback_data=cb.ticket.delete_start(ticket.id),
         )
         all_tickets_button = InlineKeyboardButtonTG(
@@ -916,13 +1065,13 @@ class Conversation:
             text=String.MAIN_MENU, callback_data=cb.menu.main()
         )
         total_devices = len(ticket.devices)
-        if total_devices < settings.devices_per_ticket:
-            inline_keyboard.append([add_device_button])
-        if ticket.is_closed:
-            inline_keyboard.append([reopen_ticket_button])
-        else:
+        if not ticket.is_closed:
+            if total_devices < settings.devices_per_ticket:
+                inline_keyboard.append([add_device_button])
             if self._ticket_valid_for_closing(ticket):
                 inline_keyboard.append([close_ticket_button])
+        else:
+            inline_keyboard.append([reopen_ticket_button])
         inline_keyboard.append([delete_ticket_button])
         inline_keyboard.append([all_tickets_button, main_menu_button])
         return SendMessageTG(
@@ -1002,7 +1151,7 @@ class Conversation:
             )
             if device:
                 method_tg = self._build_device_view(
-                    ticket, device, f"{text}. {String.AVAILABLE_DEVICE_ACTIONS}."
+                    device, ticket, f"{text}. {String.AVAILABLE_DEVICE_ACTIONS}."
                 )
             else:
                 method_tg = self._build_ticket_view(
@@ -1041,8 +1190,8 @@ class Conversation:
 
     def _build_device_view(
         self,
-        ticket: TicketDB,
         device: DeviceDB,
+        ticket: TicketDB,
         text: str = f"{String.AVAILABLE_DEVICE_ACTIONS}.",
     ) -> SendMessageTG:
         """Returns a telegram message object
@@ -1097,10 +1246,11 @@ class Conversation:
             callback_data=cb.menu.main(),
         )
         inline_keyboard.append([device_type_button])
-        possible_statuses_count = len(device.type.statuses)
-        if possible_statuses_count > 1 or (
-            possible_statuses_count == 1
-            and (not device.status or device.status not in device.type.statuses)
+        possible_status_ids = {status.id for status in device.type.statuses}
+        possible_status_count = len(possible_status_ids)
+        if possible_status_count > 1 or (
+            possible_status_count == 1
+            and (not device.status or device.status.id not in possible_status_ids)
         ):
             inline_keyboard.append([device_status_button])
         if device.type.has_serial_number:
@@ -1114,41 +1264,11 @@ class Conversation:
             reply_markup=InlineKeyboardMarkupTG(inline_keyboard=inline_keyboard),
         )
 
-    async def _build_pick_writeoff_devices(
-        self, text: str = f"{String.AVAILABLE_WRITEOFF_DEVICES_ACTIONS}."
-    ) -> SendMessageTG:
-        if self.next_state:
-            current_state = self.next_state
-        elif self.state:
-            current_state = self.state
-        else:
-            logger.error(
-                f"{self.log_prefix}As a fallback option, "
-                "'self.state' cannot be None if "
-                "'self.next_state' is None too."
-            )
-            logger.info(f"{self.log_prefix}Going back to the main menu.")
-            return self._build_main_menu(
-                f"{String.CONFIGURATION_ERROR_DETECTED} "
-                "(missing both self.next_state and self.state). "
-                f"{String.CONTACT_THE_ADMINISTRATOR}. "
-                f"{String.PICK_A_FUNCTION}."
-            )
-        page_index = current_state.writeoff_devices_page
-        if page_index is not None and page_index < 0:
-            logger.error(
-                f"{self.log_prefix}Configuration error: "
-                "Current writeoff devices list page has negative index."
-            )
-            self.next_state = None
-            self.user_db.state_json = None
-            return self._build_main_menu(
-                f"{String.CONFIGURATION_ERROR_DETECTED} "
-                "(negative writeoff devices page_index). "
-                f"{String.CONTACT_THE_ADMINISTRATOR}. "
-                f"{String.PICK_A_FUNCTION}."
-            )
-        total_writeoff_devices = (
+    async def _get_paginated_writeoffs(
+        self, page: int
+    ) -> tuple[list[WriteoffDeviceDB], int, int, int]:
+        """Fetches a paginated list of recent writeoffs for the user."""
+        total_writeoffs = (
             await self.session.scalar(
                 select(func.count())
                 .select_from(WriteoffDeviceDB)
@@ -1157,260 +1277,218 @@ class Conversation:
             or 0  # Mypy fix
         )
         writeoffs_per_page = settings.writeoffs_per_page
-        total_pages = max(
-            1,
-            (total_writeoff_devices + writeoffs_per_page - 1) // writeoffs_per_page,
+        page, last_page = self._pagination_helper(
+            total_writeoffs, writeoffs_per_page, page
         )
-        last_page_index = total_pages - 1
-        if page_index is None:
-            page_index = 0
-        elif page_index > last_page_index:
-            page_index = last_page_index
-        logger.info(
-            f"{self.log_prefix}The user is on page {page_index + 1} of {total_pages}."
-        )
-        logger.debug(
-            f"page_index={page_index}, "
-            f"last_page_index={last_page_index}, "
-            f"total_pages={total_pages}."
-        )
-        inline_keyboard_rows: list[list[InlineKeyboardButtonTG]] = []
-        add_writeoff_device_button_row: list[InlineKeyboardButtonTG] = [
-            InlineKeyboardButtonTG(
-                text=f"{String.ADD_WRITEOFF_DEVICE_BTN}",
-                callback_data=cb.writeoff.create_start(),
-            ),
-        ]
-        inline_keyboard_rows.append(add_writeoff_device_button_row)
-        existing_writeoff_devices_button_rows: list[list[InlineKeyboardButtonTG]] = []
-        writeoff_device_index_offset = page_index * writeoffs_per_page
-        current_page_writeoff_devices_result = await self.session.scalars(
+        offset = page * writeoffs_per_page
+        writeoffs_result = await self.session.scalars(
             select(WriteoffDeviceDB)
             .where(WriteoffDeviceDB.user_id == self.user_db.id)
-            .options(selectinload(WriteoffDeviceDB.type))
+            .options(joinedload(WriteoffDeviceDB.type))
             .order_by(WriteoffDeviceDB.id.desc())
-            .offset(writeoff_device_index_offset)
+            .offset(offset)
             .limit(writeoffs_per_page)
         )
-        current_page_writeoff_devices = list(current_page_writeoff_devices_result)
-        writeoff_devices_dict: dict[int, int] = {}
-        for index, writeoff_device in enumerate(current_page_writeoff_devices):
-            writeoff_device_number = (
-                total_writeoff_devices - writeoff_device_index_offset - index
-            )
-            if (
-                writeoff_device.type.has_serial_number
-                and writeoff_device.serial_number is not None
-            ):
-                writeoff_device_serial_number_string = (
-                    f" {writeoff_device.serial_number}"
-                )
-            else:
-                writeoff_device_serial_number_string = ""
-            writeoff_device_icon = "💩"
-            device_type_name = String[writeoff_device.type.name.name]
-            if writeoff_device.type.returnable:
-                writeoff_device_is_disposable_check_string = f" {String.DISPOSABLE}"
-            else:
-                writeoff_device_is_disposable_check_string = " >>"
-            writeoff_device_button = [
-                InlineKeyboardButtonTG(
-                    text=(
-                        f"{writeoff_device_number}. "
-                        f"{writeoff_device_icon} "
-                        f"{device_type_name}"
-                        f"{writeoff_device_serial_number_string}"
-                        f"{writeoff_device_is_disposable_check_string}"
+        writeoffs = list(writeoffs_result)
+        return writeoffs, page, last_page, total_writeoffs
+
+    def _build_writeoff_devices_list(
+        self,
+        writeoffs: list[WriteoffDeviceDB],
+        page: int,
+        last_page: int,
+        total_writeoffs: int,
+        text: str = f"{String.AVAILABLE_WRITEOFF_DEVICES_ACTIONS}.",
+    ) -> SendMessageTG:
+        """Returns a telegram message object
+        with a list of recent writeoff devices."""
+        inline_keyboard: list[list[InlineKeyboardButtonTG]] = []
+        add_writeoff_device_button = InlineKeyboardButtonTG(
+            text=f"{String.ADD_WRITEOFF_DEVICE_BTN}",
+            callback_data=cb.writeoff.create_start(),
+        )
+        inline_keyboard.append([add_writeoff_device_button])
+        offset = page * settings.writeoffs_per_page
+        for index, writeoff_device in enumerate(writeoffs):
+            writeoff_device_index = total_writeoffs - offset - index
+            writeoff_overview_text = self._get_writeoff_overview(writeoff_device)
+            writeoff_button_text = f"{writeoff_overview_text} >>"
+            inline_keyboard.append(
+                [
+                    InlineKeyboardButtonTG(
+                        text=(
+                            f"{writeoff_device_index}. "  # nbsp
+                            f"{writeoff_button_text}"
+                        ),
+                        callback_data=cb.writeoff.view(writeoff_device.id),
                     ),
-                    callback_data=cb.writeoff.view(writeoff_device.id),
-                ),
-            ]
-            writeoff_devices_dict[index] = writeoff_device.id
-            existing_writeoff_devices_button_rows.append(writeoff_device_button)
-        inline_keyboard_rows.extend(existing_writeoff_devices_button_rows)
+                ]
+            )
         prev_next_buttons_row: list[InlineKeyboardButtonTG] = []
-        if total_writeoff_devices > writeoffs_per_page:
+        if last_page > 0:
             prev_button = InlineKeyboardButtonTG(
                 text=f"{String.PREV_ONES}",
-                callback_data=cb.writeoff.list_page(page_index + 1),
+                callback_data=cb.writeoff.list_page(page + 1),
             )
             next_button = InlineKeyboardButtonTG(
                 text=f"{String.NEXT_ONES}",
-                callback_data=cb.writeoff.list_page(page_index - 1),
+                callback_data=cb.writeoff.list_page(page - 1),
             )
-            if page_index < last_page_index:
+            if page < last_page:
                 prev_next_buttons_row.append(prev_button)
-            if page_index > 0:
+            if page > 0:
                 prev_next_buttons_row.append(next_button)
         if prev_next_buttons_row:
-            inline_keyboard_rows.append(prev_next_buttons_row)
-        return_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
-            text=String.DONE_BTN,
+            inline_keyboard.append(prev_next_buttons_row)
+        return_button = InlineKeyboardButtonTG(
+            text=String.MAIN_MENU,
             callback_data=cb.menu.main(),
         )
-        inline_keyboard_rows.append([return_button])
-        if self.next_state:
-            self.next_state.writeoff_devices_page = page_index
-            self.next_state.writeoff_devices_dict = writeoff_devices_dict
+        inline_keyboard.append([return_button])
         return SendMessageTG(
             chat_id=self.user_db.telegram_uid,
             text=text,
-            reply_markup=InlineKeyboardMarkupTG(inline_keyboard=inline_keyboard_rows),
+            reply_markup=InlineKeyboardMarkupTG(inline_keyboard=inline_keyboard),
         )
 
-    async def _build_pick_writeoff_device_type(
-        self, text: str = f"{String.PICK_WRITEOFF_DEVICE_TYPE}."
+    def _build_writeoff_view(
+        self,
+        writeoff: WriteoffDeviceDB,
+        text: str = f"{String.AVAILABLE_WRITEOFF_DEVICE_ACTIONS}.",
     ) -> SendMessageTG:
-        device_types = await self.session.scalars(
-            select(DeviceTypeDB).where(DeviceTypeDB.returnable == False)  # noqa: E712
-        )
+        """Returns a telegram message object
+        with writeoff device details and available device actions.
+        It does NOT check if writeoff device is foreign."""
         inline_keyboard: list[list[InlineKeyboardButtonTG]] = []
-        for device_type in device_types:
-            try:
-                button_text = String[device_type.name.name]
-                # button_callback_data = CallbackData[device_type.name.name]
-                inline_keyboard.append(
+        device_type_name = String[writeoff.type.name.name]
+        device_type_button = InlineKeyboardButtonTG(
+            text=f"{String.TYPE}: {device_type_name} {String.EDIT}",
+            callback_data=cb.writeoff.edit_type(writeoff.id),
+        )
+        writeoff_serial_number_text = (
+            f"{String.NUMBER_SYMBOL} {writeoff.serial_number}"  # nbsp
+            if writeoff.serial_number is not None
+            else f"{String.ATTENTION_ICON} {String.ENTER_SERIAL_NUMBER}"  # nbsp
+        )
+        serial_number_button = InlineKeyboardButtonTG(
+            text=f"{writeoff_serial_number_text} {String.EDIT}",
+            callback_data=cb.writeoff.edit_serial_number(writeoff.id),
+        )
+        delete_button = InlineKeyboardButtonTG(
+            text=f"{String.TRASHCAN_ICON} {String.DELETE_DEVICE_FROM_WRITEOFF}",  # nbsp
+            callback_data=cb.writeoff.delete_start(writeoff.id),
+        )
+        view_writeoffs_button = InlineKeyboardButtonTG(
+            text=String.ALL_WRITEOFFS,
+            callback_data=cb.writeoff.list_page(0),
+        )
+        main_menu_button = InlineKeyboardButtonTG(
+            text=String.MAIN_MENU,
+            callback_data=cb.menu.main(),
+        )
+        inline_keyboard.append([device_type_button])
+        if writeoff.type.has_serial_number:
+            inline_keyboard.append([serial_number_button])
+        inline_keyboard.append([delete_button])
+        inline_keyboard.append([view_writeoffs_button, main_menu_button])
+        return SendMessageTG(
+            chat_id=self.user_db.telegram_uid,
+            text=text,
+            reply_markup=InlineKeyboardMarkupTG(inline_keyboard=inline_keyboard),
+        )
+
+    def _build_confirm_writeoff_deletion_menu(
+        self,
+        writeoff_id: int,
+        text: str = f"{String.CONFIRM_WRITEOFF_DEVICE_DELETION}.",
+    ) -> SendMessageTG:
+        """Returns a telegram message object
+        with writeoff device removal confirmation options.
+        It does NOT check if writeoff device is foreign."""
+        method_tg = SendMessageTG(
+            chat_id=self.user_db.telegram_uid,
+            text=text,
+            reply_markup=InlineKeyboardMarkupTG(
+                inline_keyboard=[
                     [
                         InlineKeyboardButtonTG(
-                            text=button_text,
-                            callback_data="placeholder",
-                        )
-                    ]
-                )
-            except KeyError as e:
-                missing_member_value = device_type.name.name
-                logger.error(
-                    f"{self.log_prefix}Configuration error: Missing "
-                    f"{String.__name__} enum member for "
-                    f"{DeviceTypeName.__name__} "
-                    f"'{missing_member_value}'. Original error: {e}"
-                )
-                logger.info(f"{self.log_prefix}Going back to the main menu.")
-                self.next_state = None
-                self.user_db.state_json = None
-                method_tg = self._build_main_menu(
-                    f"{String.CONFIGURATION_ERROR_DETECTED} (missing "
-                    f"{String.__name__}.{missing_member_value}). "
-                    f"{String.CONTACT_THE_ADMINISTRATOR}. "
-                    f"{String.PICK_A_FUNCTION}."
-                )
-                return method_tg
+                            text=(
+                                f"{String.WARNING_ICON} "  # nbsp
+                                f"{String.CONFIRM_DELETE_WRITEOFF}"
+                            ),
+                            callback_data=cb.writeoff.delete_confirm(writeoff_id),
+                        ),
+                        InlineKeyboardButtonTG(
+                            text=String.CHANGED_MY_MIND,
+                            callback_data=cb.writeoff.list_page(0),
+                        ),
+                    ],
+                ]
+            ),
+        )
+        return method_tg
+
+    async def _build_set_writeoff_device_type_menu(
+        self,
+        device_types: list[DeviceTypeDB],
+        text: str = f"{String.PICK_WRITEOFF_DEVICE_TYPE}.",
+        writeoff: WriteoffDeviceDB | None = None,
+    ) -> SendMessageTG:
+        """Returns a telegram message object with a list of device types
+        to choose from to create a new writeoff device or to edit
+        an existing one if one was provided.
+        It does NOT check if writeoff device is foreign."""
+        inline_keyboard: list[list[InlineKeyboardButtonTG]] = []
+        for device_type in device_types:
+            button_text = String[device_type.name.name]
+            callback_data = (
+                cb.writeoff.set_type(writeoff.id, device_type.id)
+                if writeoff
+                else cb.writeoff.create_confirm(device_type.id)
+            )
+            inline_keyboard.append(
+                [
+                    InlineKeyboardButtonTG(
+                        text=button_text,
+                        callback_data=callback_data,
+                    )
+                ]
+            )
         if not inline_keyboard:
             logger.warning(
-                f"{self.log_prefix}Warning: Not a single eligible "
-                f"(not disposable) {DeviceTypeDB.__name__} was found in the "
-                f"database. Cannot build {DeviceTypeDB.__name__} "
-                "selection keyboard."
+                f"{self.log_prefix}Configuration error: "
+                "Not a single eligible (active) writeoff "
+                f"{DeviceTypeDB.__name__} was found in the database. "
+                f"Cannot build {DeviceTypeDB.__name__} "
+                "selection keyboard. Investigate the logic."
             )
-            logger.info(f"{self.log_prefix}Going back to the main menu.")
-            self.next_state = None
-            self.user_db.state_json = None
-            method_tg = self._build_main_menu(
+            text = (
+                f"{String.CONFIGURATION_ERROR_DETECTED}. "
                 f"{String.NO_WRITEOFF_DEVICE_TYPE_AVAILABLE}. "
-                f"{String.CONTACT_THE_ADMINISTRATOR}. "
-                f"{String.PICK_A_FUNCTION}."
+                f"{String.CONTACT_THE_ADMINISTRATOR}"
             )
+            if writeoff:
+                method_tg = self._build_writeoff_view(
+                    writeoff, f"{text}. {String.AVAILABLE_WRITEOFF_DEVICE_ACTIONS}."
+                )
+            else:
+                (
+                    writeoffs,
+                    page,
+                    last_page,
+                    total_writeoffs,
+                ) = await self._get_paginated_writeoffs(0)
+                method_tg = self._build_writeoff_devices_list(
+                    writeoffs,
+                    page,
+                    last_page,
+                    total_writeoffs,
+                    f"{text}. {String.AVAILABLE_WRITEOFF_DEVICES_ACTIONS}.",
+                )
         else:
             method_tg = SendMessageTG(
                 chat_id=self.user_db.telegram_uid,
                 text=text,
                 reply_markup=InlineKeyboardMarkupTG(inline_keyboard=inline_keyboard),
-            )
-        return method_tg
-
-    async def _build_pick_writeoff_device(
-        self, text: str = f"{String.AVAILABLE_WRITEOFF_DEVICE_ACTIONS}."
-    ) -> SendMessageTG:
-        if self.next_state:
-            current_state = self.next_state
-        elif self.state:
-            current_state = self.state
-        else:
-            raise ValueError("State is missing for building writeoff device menu.")
-        writeoff_device_id = current_state.writeoff_device_id
-        if not writeoff_device_id:  # Both None and 0 are covered this way.
-            logger.error(
-                f"{self.log_prefix}{self.user_db.full_name} "
-                "is not working on any writeoff device."
-            )
-            logger.info(f"{self.log_prefix}Going back to the writeoff devices menu.")
-            self.next_state = StateJS(action=Action.WRITEOFF_DEVICES)
-            return await self._build_pick_writeoff_devices(
-                f"{String.INCONSISTENT_STATE_DETECTED} "
-                "(missing writeoff_device_id). "
-                f"{String.AVAILABLE_WRITEOFF_DEVICES_ACTIONS}."
-            )
-        writeoff_device = await self.session.scalar(
-            select(WriteoffDeviceDB)
-            .where(WriteoffDeviceDB.id == writeoff_device_id)
-            .options(selectinload(WriteoffDeviceDB.type))
-        )
-        if not writeoff_device:
-            logger.error(
-                f"{self.log_prefix}Current writeoff device "
-                "was not found in the database under "
-                f"id={writeoff_device_id}. Cannot edit it."
-            )
-            logger.info(f"{self.log_prefix}Going back to the writeoff devices menu.")
-            self.next_state = StateJS(action=Action.WRITEOFF_DEVICES)
-            return await self._build_pick_writeoff_devices(
-                f"{String.WRITEOFF_DEVICE_NOT_FOUND}. "
-                f"{String.AVAILABLE_WRITEOFF_DEVICES_ACTIONS}."
-            )
-        inline_keyboard_rows: list[list[InlineKeyboardButtonTG]] = []
-        device_type_name = String[writeoff_device.type.name.name]
-        if writeoff_device.type.returnable:
-            logger.error(
-                f"{self.log_prefix}Configuration error: "
-                f"{DeviceTypeDB.__name__} '{device_type_name}' "
-                "is not an eligible writeoff device type "
-                "as it is disposable. You shouldn't be seeing "
-                "this ever."
-            )
-            logger.info(f"{self.log_prefix}Going back to the writeoff devices menu.")
-            self.next_state = StateJS(action=Action.WRITEOFF_DEVICES)
-            method_tg = await self._build_pick_writeoff_devices(
-                f"{String.WRITEOFF_DEVICE_IS_INCORRECT}. "
-                f"{String.CONTACT_THE_ADMINISTRATOR}. "
-                f"{String.AVAILABLE_WRITEOFF_DEVICES_ACTIONS}."
-            )
-        else:
-            device_serial_number_text = (
-                writeoff_device.serial_number
-                if writeoff_device.serial_number is not None
-                else String.ENTER_SERIAL_NUMBER
-            )
-            device_type_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
-                text=f"{device_type_name} {String.EDIT}",
-                callback_data="placeholder",
-            )
-            serial_number_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
-                text=f"{device_serial_number_text} {String.EDIT}",
-                callback_data="placeholder",
-            )
-            return_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
-                text=String.RETURN_BTN,
-                callback_data="placeholder",
-            )
-            delete_button: InlineKeyboardButtonTG = InlineKeyboardButtonTG(
-                text=String.DELETE_DEVICE_FROM_WRITEOFF,
-                callback_data="placeholder",
-            )
-            inline_keyboard_rows.append([device_type_button])
-            if writeoff_device.type.has_serial_number:
-                inline_keyboard_rows.append([serial_number_button])
-            if (
-                writeoff_device.type.has_serial_number
-                and writeoff_device.serial_number is not None
-                or not writeoff_device.type.has_serial_number
-            ):
-                inline_keyboard_rows.append([return_button])
-            inline_keyboard_rows.append([delete_button])
-            method_tg = SendMessageTG(
-                chat_id=self.user_db.telegram_uid,
-                text=text,
-                reply_markup=InlineKeyboardMarkupTG(
-                    inline_keyboard=inline_keyboard_rows
-                ),
             )
         return method_tg

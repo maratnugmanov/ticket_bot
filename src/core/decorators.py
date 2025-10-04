@@ -75,7 +75,7 @@ def require_ticket_context(
                     )
                     return [
                         self._drop_state_goto_main_menu(
-                            f"{String.TICKET_WAS_NOT_FOUND}. {String.PICK_A_FUNCTION}."
+                            f"{String.TICKET_NOT_FOUND}. {String.PICK_A_FUNCTION}."
                         )
                     ]
                 if validate_device_index:
@@ -170,7 +170,7 @@ def require_writeoff_context(*loader_options: Load, id_must_exist: bool = True):
                     )
                     self.next_state = StateJS(action=Action.WRITEOFF_DEVICES)
                     return [
-                        await self._build_pick_writeoff_devices(
+                        await self._build_writeoff_devices_list(
                             f"{String.INCONSISTENT_STATE_DETECTED} "
                             "(missing writeoff_device_id). "
                             f"{String.AVAILABLE_WRITEOFF_DEVICES_ACTIONS}."
@@ -192,7 +192,7 @@ def require_writeoff_context(*loader_options: Load, id_must_exist: bool = True):
                     )
                     self.next_state = StateJS(action=Action.WRITEOFF_DEVICES)
                     return [
-                        await self._build_pick_writeoff_devices(
+                        await self._build_writeoff_devices_list(
                             f"{String.WRITEOFF_DEVICE_NOT_FOUND}. "
                             f"{String.AVAILABLE_WRITEOFF_DEVICES_ACTIONS}."
                         )
@@ -210,7 +210,7 @@ def require_writeoff_context(*loader_options: Load, id_must_exist: bool = True):
                     )
                     self.next_state = StateJS(action=Action.WRITEOFF_DEVICES)
                     return [
-                        await self._build_pick_writeoff_devices(
+                        await self._build_writeoff_devices_list(
                             f"{String.INCONSISTENT_STATE_DETECTED} "
                             "(writeoff_device_id should not exist). "
                             f"{String.AVAILABLE_WRITEOFF_DEVICES_ACTIONS}."
