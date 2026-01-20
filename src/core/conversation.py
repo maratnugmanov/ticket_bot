@@ -33,6 +33,10 @@ from src.tg.models import (
     MessageTG,
     CallbackQueryTG,
     UserTG,
+    MessageOriginUserTG,
+    MessageOriginHiddenUserTG,
+    MessageOriginChatTG,
+    MessageOriginChannelTG,
     SendMessageTG,
     InlineKeyboardMarkupTG,
     InlineKeyboardButtonTG,
@@ -362,6 +366,7 @@ class Conversation:
     async def process(self) -> bool:
         initial_state_json = self.user_db.state_json
         command_string: str | None = None
+        methods_tg_list: list[MethodTG] = []
         if isinstance(self.update_tg, CallbackQueryUpdateTG):
             command_string = self.update_tg.callback_query.data
             logger.info(f"{self.log_prefix}Got callback data '{command_string}'.")
@@ -381,9 +386,19 @@ class Conversation:
                     logger.info(f"{self.log_prefix}Got message with no text.")
                     text = ""
                 command_string = f"{self.state.pending_command_prefix}:{text}"
+            elif self.update_tg.message.forward_origin and self.user_db.is_manager:
+                logger.info(
+                    f"{self.log_prefix}Manager {self.user_db.full_name} "
+                    "forwarded a message."
+                )
+                methods_tg_list = await self._process_forwarded_message()
+                if methods_tg_list:
+                    return await self._make_delivery(methods_tg_list)
+                else:
+                    # If it returns an empty list, it means it was handled but no message is needed.
+                    return True
             elif self.update_tg.message.text == "/start":
                 command_string = cb.menu.main()
-        methods_tg_list: list[MethodTG] = []
         if command_string:
             methods_tg_list = await router.process(command_string, self)
         if not methods_tg_list:
@@ -410,6 +425,179 @@ class Conversation:
                     f"{initial_state_json} to {final_state_json}."
                 )
         return success
+
+    async def _process_forwarded_message(self) -> list[MethodTG]:
+        """Processes a forwarded message from a manager to create
+        tickets."""
+        if (
+            not isinstance(self.update_tg, MessageUpdateTG)
+            or not self.update_tg.message.forward_origin
+        ):
+            return []
+        message = self.update_tg.message
+        if isinstance(message.forward_origin, MessageOriginUserTG):
+            op_user_tg = message.forward_origin.sender_user
+            op_user_db: UserDB | None = await self.session.scalar(
+                select(UserDB)
+                .where(UserDB.telegram_uid == op_user_tg.id)
+                # Swap for selectinload when querying more than one user.
+                .options(joinedload(UserDB.roles))
+            )
+            if op_user_db:
+                logger.info(
+                    f"{self.log_prefix}Forwarded message is from "
+                    f"existing user {op_user_db.full_name}."
+                )
+            else:
+                logger.info(
+                    f"{self.log_prefix}Forwarded message is from "
+                    f"new user {op_user_tg.full_name}. "
+                    "Creating as an engineer."
+                )
+                op_user_db = await self._create_forwarded_message_author(op_user_tg)
+                if not op_user_db:
+                    return [
+                        self._build_new_text_message(
+                            f"{String.TICKET_PARSING_FAILED}: "
+                            f"{String.ENGINEER_CREATION_FAILED} "
+                            f"({op_user_tg.full_name})."
+                        )
+                    ]
+        elif isinstance(message.forward_origin, MessageOriginHiddenUserTG):
+            op_hidden_user_name = message.forward_origin.sender_user_name
+            logger.info(
+                f"{self.log_prefix}Forwarded message is from hidden "
+                f"user '{op_hidden_user_name}'. Ignoring."
+            )
+            return [
+                self._build_new_text_message(
+                    f"{String.FORWARDED_MESSAGE_FROM_HIDDEN_USER} "
+                    f"({op_hidden_user_name})."
+                )
+            ]
+        else:  # MessageOriginChatTG, MessageOriginChannelTG
+            logger.info(
+                f"{self.log_prefix}Forwarded message is from chat "
+                "or channel, not a user. Ignoring."
+            )
+            return [
+                self._build_new_text_message(
+                    f"{String.FORWARDED_MESSAGE_NOT_FROM_USER}."
+                )
+            ]
+        text = message.text
+        if not text:
+            logger.info(
+                f"{self.log_prefix}Forwarded message from user "
+                f"{op_user_db.full_name} has no text. Ignoring."
+            )
+            return [
+                self._build_new_text_message(f"{String.FORWARDED_MESSAGE_HAS_NO_TEXT}.")
+            ]
+        logger.info(
+            f"{self.log_prefix}Processing forwarded message from user "
+            f"{op_user_db.full_name} with text: '{text.replace('\n', ' ')}'"
+        )
+        all_tokens = text.split()
+        if not (
+            all_tokens
+            and re.fullmatch(r"\d{9,10}", all_tokens[0])
+            and (first_ticket_number := int(all_tokens[0])) >= 250_000_000
+        ):
+            logger.info(
+                f"{self.log_prefix}Message does not start with a valid ticket number."
+            )
+            return [
+                self._build_new_text_message(
+                    f"{String.FORWARDED_MESSAGE_INVALID_START}."
+                )
+            ]
+        ticket_matches = []
+        proximity = 200_000
+        for match in re.finditer(r"\b(\d{9,10})\b", text):
+            number = int(match.group(1))
+            if abs(number - first_ticket_number) <= proximity:
+                ticket_matches.append((number, match.start()))
+        chunks = []
+        for i in range(len(ticket_matches)):
+            ticket_number, start_pos = ticket_matches[i]
+            end_pos = ticket_matches[i + 1][1] if i + 1 < len(ticket_matches) else None
+            chunk_text = text[start_pos:end_pos].strip()
+            chunks.append((ticket_number, chunk_text))
+            logger.info(
+                f"{self.log_prefix}Found ticket chunk for user "
+                f"'{op_user_db.full_name}': ticket_number={ticket_number}, "
+                f"text='{chunk_text.replace('\n', ' ')}'."
+            )
+        for ticket_number, chunk_text in chunks:
+            # Check for a recent existing ticket from the same user
+            original_message_date: datetime = message.forward_origin.date
+            cutoff_date = original_message_date - timedelta(days=1)
+            future_cutoff_date = original_message_date + timedelta(days=1)
+            existing_ticket = await self.session.scalar(
+                select(TicketDB)
+                .where(
+                    TicketDB.number == ticket_number,
+                    TicketDB.user_id == op_user_db.id,
+                    TicketDB.created_at >= cutoff_date,
+                    # TicketDB.is_closed == False,  # noqa: E712
+                    TicketDB.created_at <= future_cutoff_date,
+                )
+                .order_by(TicketDB.created_at.desc())
+            )
+            if existing_ticket:
+                logger.info(
+                    f"{self.log_prefix}Found existing ticket "
+                    f"id={existing_ticket.id} number={ticket_number}. "
+                    "Will add actions to it."
+                )
+                # Placeholder for adding devices to the existing ticket
+            else:
+                logger.info(
+                    f"{self.log_prefix}Creating new ticket number={ticket_number}."
+                )
+                new_ticket = TicketDB(number=ticket_number, user_id=op_user_db.id)
+                new_ticket.created_at = original_message_date
+                self.session.add(new_ticket)
+                # Placeholder for parsing chunk_text and adding devices
+        # split_text = re.split(r"[\s,.]+", text)
+        # --- Placeholder for future implementation ---
+        # 1. Find or create engineer UserDB from `original_author` if it's not None.
+        # 2. Use re.findall(r'\b\d{9}\b', text) to get all ticket numbers.
+        # 3. Split the text into chunks based on ticket numbers.
+        # 4. For each chunk, tokenize the text (e.g., text.split()).
+        # 5. Iterate through tokens, classifying them as device types, statuses, or serials.
+        # 6. If an unknown token is found, store it and prepare to ask the manager for clarification.
+        # 7. Create/update TicketDB and DeviceDB objects.
+        self.next_state = None  # Ensure we clear any pending state
+        return [self._build_new_text_message(f"{String.FORWARDED_MESSAGE_PROCESSED}.")]
+
+    async def _create_forwarded_message_author(
+        self, op_user_tg: UserTG
+    ) -> UserDB | None:
+        """Creates a new user with Engineer and Guest roles."""
+        engineer_role_enums = [RoleName.ENGINEER, RoleName.GUEST]
+        engineer_roles_result = await self.session.scalars(
+            select(RoleDB).where(RoleDB.name.in_(engineer_role_enums))
+        )
+        engineer_roles = list(engineer_roles_result)
+        if len(engineer_roles) != len(engineer_role_enums):
+            logger.error(
+                f"{self.log_prefix}Not all engineer user roles "
+                "found in the database. Found: "
+                f"{[role.name for role in engineer_roles]}."
+            )
+            return None
+        op_user_db = UserDB(
+            telegram_uid=op_user_tg.id,
+            first_name=op_user_tg.first_name,
+            last_name=op_user_tg.last_name,
+            timezone=settings.user_default_timezone,
+        )
+        op_user_db.roles.extend(engineer_roles)
+        self.session.add(op_user_db)
+        await self.session.flush()
+        return op_user_db
 
     async def _get_ticket_if_eligible(
         self, ticket_id_str: str, loader_options: list | None = None

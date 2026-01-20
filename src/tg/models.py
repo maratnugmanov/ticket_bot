@@ -34,9 +34,9 @@ class MessageTG(BaseModel):
         | MessageOriginChatTG
         | MessageOriginChannelTG
         | None
-    ) = None
-    forward_from: UserTG | None = None
-    forward_date: AwareDatetime | None = None
+    ) = Field(default=None, discriminator="type")
+    # forward_from: UserTG | None = None  # deprecated
+    # forward_date: AwareDatetime | None = None  # deprecated
     reply_to_message: MessageTG | None = None  # Same chat reply
     is_from_offline: bool | None = None  # Scheduled message
     text: str | None = None
@@ -86,19 +86,23 @@ class MessageOriginTG(BaseModel):
 
 
 class MessageOriginUserTG(MessageOriginTG):
+    type: Literal["user"]
     sender_user: UserTG
 
 
 class MessageOriginHiddenUserTG(MessageOriginTG):
+    type: Literal["hidden_user"]
     sender_user_name: str
 
 
 class MessageOriginChatTG(MessageOriginTG):
+    type: Literal["chat"]
     sender_chat: ChatTG
     author_signature: str | None = None
 
 
 class MessageOriginChannelTG(MessageOriginTG):
+    type: Literal["channel"]
     chat: ChatTG
     message_id: int
     author_signature: str | None = None

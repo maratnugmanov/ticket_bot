@@ -409,9 +409,25 @@ class String(enum.StrEnum):
     HIRING_DISABLED_TIP = "Если найм закрыт у всех менеджеров, то все незарегистрированные соискатели будут удалены из базы данных"
     HIRING_DISABLED = f"Найм закрыт. {HIRING_DISABLED_TIP}"
     HIRING_ALREADY_DISABLED = f"Найм уже закрыт. {HIRING_DISABLED_TIP}"
-    # YOU_HAVE_PICKED = "Вы выбрали"
-
     ADD_WRITEOFF_DEVICE_BTN = "➕ Добавить брак"
+    # YOU_HAVE_PICKED = "Вы выбрали"
+    # Parser
+    FORWARDED_MESSAGE_DETECTED = (
+        "Обнаружено пересланное сообщение. Начинаю обработку..."
+    )
+    FORWARDED_MESSAGE_PROCESSED = "Пересланное сообщение обработано"
+    FORWARDED_MESSAGE_HAS_NO_TEXT = (
+        "Пересланное сообщение не содержит текста и будет проигнорировано"
+    )
+    FORWARDED_MESSAGE_FROM_UNKNOWN_USER = "Пересланное сообщение проигнорировано, так как отправлено неизвестным пользователем"
+    FORWARDED_MESSAGE_FROM_HIDDEN_USER = "Пересланное сообщение проигнорировано, так как отправлено скрытым пользователем"
+    FORWARDED_MESSAGE_NOT_FROM_USER = "Пересланное сообщение проигнорировано, так как отправлено чатом либо каналом, а не пользователем"
+    FORWARDED_MESSAGE_HAS_NO_TICKETS = (
+        "В пересланном сообщении не найдено ни одного номера заявки"
+    )
+    FORWARDED_MESSAGE_INVALID_START = "Пересланное сообщение должно начинаться с номера заявки (длина не менее 9 цифр, значение не менее 250.000.000)"
+    TICKET_PARSING_FAILED = "Ошибка при обработке заявки"
+    ENGINEER_CREATION_FAILED = "невозможно зарегистрировать нового монтажника"
 
 
 class Script(enum.StrEnum):

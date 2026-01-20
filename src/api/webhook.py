@@ -42,6 +42,7 @@ async def handle_telegram_webhook(
             break
         except ValidationError as e:
             validation_errors[model.__name__] = e.errors()
+    logger.info(f"Raw JSON request {request_data}.")
     if update_tg and validated_model_name:
         logger.info(
             f"{update_tg._log}Received and validated the update as {validated_model_name}."
